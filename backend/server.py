@@ -30,6 +30,10 @@ from call_pipeline import (
     generate_twiml_stream_response, provision_phone_number,
     validate_twilio_request,
 )
+from test_mode import (
+    get_test_mode_status, get_test_scenarios, get_scenario_by_id,
+    is_sandbox_mode, SAMPLE_CUSTOMER_SCENARIOS,
+)
 
 # Create the main app
 app = FastAPI(title="RingAI API", version="1.0.0")
