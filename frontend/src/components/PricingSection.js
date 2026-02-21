@@ -178,13 +178,40 @@ export const PricingSection = () => {
                   ))}
                 </ul>
 
-                <Button
-                  variant={plan.popular ? "premium" : "outline"}
-                  size="lg"
-                  className="w-full mt-auto"
-                >
-                  {plan.cta}
-                </Button>
+                {plan.cta === "Contact Sales" ? (
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="w-full mt-auto"
+                    onClick={() => handleCTA(plan.cta)}
+                  >
+                    {plan.cta}
+                  </Button>
+                ) : (
+                  <>
+                    <SignedOut>
+                      <SignInButton mode="modal" forceRedirectUrl="/onboarding">
+                        <Button
+                          variant={plan.popular ? "premium" : "outline"}
+                          size="lg"
+                          className="w-full mt-auto"
+                        >
+                          {plan.cta}
+                        </Button>
+                      </SignInButton>
+                    </SignedOut>
+                    <SignedIn>
+                      <Button
+                        variant={plan.popular ? "premium" : "outline"}
+                        size="lg"
+                        className="w-full mt-auto"
+                        onClick={() => navigate("/onboarding")}
+                      >
+                        {plan.cta}
+                      </Button>
+                    </SignedIn>
+                  </>
+                )}
               </Card>
             </motion.div>
           ))}
