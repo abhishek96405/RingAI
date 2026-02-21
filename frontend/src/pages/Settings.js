@@ -19,6 +19,7 @@ import {
   X,
   Save,
   Volume2,
+  AlertTriangle,
 } from "lucide-react";
 import { getRestaurant, updateRestaurant, getConfig, updateConfig } from "@/lib/api";
 import { toast } from "sonner";
