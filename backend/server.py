@@ -34,6 +34,10 @@ from test_mode import (
     get_test_mode_status, get_test_scenarios, get_scenario_by_id,
     is_sandbox_mode, SAMPLE_CUSTOMER_SCENARIOS,
 )
+from pos_integration import (
+    PosFactory, OrderProcessor, encrypt_token, decrypt_token,
+    SquareAdapter,
+)
 
 # Create the main app
 app = FastAPI(title="RingAI API", version="1.0.0")
@@ -42,6 +46,9 @@ api_router = APIRouter(prefix="/api")
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Order processor instance
+order_processor = OrderProcessor(db)
 
 # ============================================================
 # PYDANTIC MODELS
