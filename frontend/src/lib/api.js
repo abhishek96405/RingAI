@@ -34,11 +34,19 @@ export const toggleMenuItem = (itemId) => api.patch(`/menu/${itemId}/toggle`);
 // Calls
 export const getCalls = (id, params) => api.get(`/restaurants/${id || DEMO_RESTAURANT_ID}/calls`, { params });
 export const getCall = (callId) => api.get(`/calls/${callId}`);
+export const reanalyseCall = (callId) => api.post(`/calls/${callId}/analyse`);
 
 // Analytics
 export const getAnalyticsSummary = (id) => api.get(`/restaurants/${id || DEMO_RESTAURANT_ID}/analytics/summary`);
 
-// Demo
+// Status & Test Mode
+export const getStatus = () => api.get(`/status`);
+export const getTestModeStatus = () => api.get(`/test-mode/status`);
+export const getTestScenarios = () => api.get(`/test-mode/scenarios`);
+export const runTestScenario = (id, scenarioId) => 
+  api.post(`/test-mode/run-scenario?restaurant_id=${id || DEMO_RESTAURANT_ID}&scenario_id=${scenarioId}`);
+
+// Legacy Demo (for backward compatibility)
 export const simulateCall = (id) => api.post(`/demo/simulate-call?restaurant_id=${id || DEMO_RESTAURANT_ID}`);
 export const seedData = (id) => api.post(`/demo/seed?restaurant_id=${id || DEMO_RESTAURANT_ID}`);
 
