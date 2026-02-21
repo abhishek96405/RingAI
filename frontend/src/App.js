@@ -14,7 +14,7 @@ import Onboarding from "@/pages/Onboarding";
 const ProtectedRoute = ({ children }) => (
   <>
     <SignedIn>{children}</SignedIn>
-    <SignedOut><RedirectToSignIn /></SignedOut>
+    <SignedOut><RedirectToSignIn redirectUrl="/dashboard" /></SignedOut>
   </>
 );
 
