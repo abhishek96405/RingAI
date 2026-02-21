@@ -1001,6 +1001,140 @@ async def reanalyse_call(call_id: str):
 
 
 # ============================================================
+# TEST MODE ENDPOINTS
+# ============================================================
+
+@api_router.get("/test-mode/status")
+async def get_test_mode():
+    """Get detailed test mode status for all integrations."""
+    return get_test_mode_status()
+
+
+@api_router.get("/test-mode/scenarios")
+async def get_test_call_scenarios():
+    """Get available test call scenarios."""
+    return {"scenarios": get_test_scenarios()}
+
+
+@api_router.post("/test-mode/run-scenario")
+async def run_test_scenario(restaurant_id: str = Query(...), scenario_id: int = Query(0)):
+    """Run a specific test scenario with real Gemini AI."""
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    
+    scenario = get_scenario_by_id(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=400, detail="Invalid scenario ID")
+    
+    menu_items = await db.menu_items.find(
+        {"restaurant_id": restaurant_id, "available": True}, {"_id": 0}
+    ).to_list(100)
+    
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    
+    # Build system prompt for AI
+    system_prompt = build_system_prompt(
+        restaurant_name=restaurant.get("name", "the restaurant"),
+        cuisine_type=restaurant.get("cuisine_type", ""),
+        persona=config.get("persona", "friendly") if config else "friendly",
+        business_rules=config.get("business_rules", []) if config else [],
+        escalation_rules=config.get("escalation_rules", []) if config else [],
+        menu_items=menu_items,
+        disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
+        upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        delivery_enabled=config.get("delivery_enabled", True) if config else True,
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+    )
+    
+    # Run conversation with Gemini
+    transcript = []
+    timestamp_counter = 0
+    
+    # AI greeting
+    greeting = await get_conversation_response(system_prompt, [], "")
+    transcript.append({
+        "role": "ai",
+        "text": greeting or f"Hi! I'm the AI assistant for {restaurant.get('name')}. How can I help you?",
+        "timestamp": f"00:{timestamp_counter:02d}"
+    })
+    timestamp_counter += 3
+    
+    # Run through scenario messages
+    for customer_msg in scenario["messages"]:
+        transcript.append({
+            "role": "customer",
+            "text": customer_msg,
+            "timestamp": f"00:{timestamp_counter:02d}"
+        })
+        timestamp_counter += 2
+        
+        ai_response = await get_conversation_response(system_prompt, transcript, customer_msg)
+        transcript.append({
+            "role": "ai",
+            "text": ai_response or "I'd be happy to help with that!",
+            "timestamp": f"00:{timestamp_counter:02d}"
+        })
+        timestamp_counter += 3
+    
+    # Build order based on expected items
+    order_items = []
+    total = 0
+    for item_name in scenario.get("expected_items", []):
+        menu_item = next((m for m in menu_items if item_name.lower() in m["name"].lower()), None)
+        if menu_item:
+            price = menu_item.get("price", 999)
+            order_items.append({
+                "name": menu_item["name"],
+                "quantity": 1,
+                "price": price,
+                "modifiers": [],
+                "subtotal": price,
+            })
+            total += price
+    
+    order_json = {
+        "items": order_items,
+        "total": total,
+        "type": scenario.get("order_type", "pickup"),
+        "special_instructions": "",
+    } if order_items else None
+    
+    # Run AI analysis
+    analysis = await analyse_call_transcript(transcript, order_json, menu_items)
+    
+    # Save to database
+    now = datetime.now(timezone.utc)
+    call = CallRecord(
+        restaurant_id=restaurant_id,
+        caller_number=f"+1555{random.randint(1000000, 9999999)}",
+        caller_name=scenario["caller_name"],
+        started_at=now.isoformat(),
+        ended_at=(now + timedelta(seconds=timestamp_counter)).isoformat(),
+        duration_seconds=timestamp_counter,
+        status="ESCALATED" if scenario.get("order_type") == "escalation" else "COMPLETED",
+        contained_by_ai=scenario.get("order_type") != "escalation",
+        escalated_to_human=scenario.get("order_type") == "escalation",
+        transcript=transcript,
+        order_json=order_json,
+        quality_score=analysis.get("quality_score", 85),
+        analysis_json=analysis,
+        order_total=total,
+    )
+    
+    await db.call_records.insert_one(call.model_dump())
+    
+    return {
+        "call": call.model_dump(),
+        "scenario": {
+            "id": scenario_id,
+            "name": scenario["name"],
+        },
+        "ai_powered": is_gemini_available(),
+    }
+
+
+# ============================================================
 # INCLUDE ROUTER & MIDDLEWARE
 # ============================================================
 
