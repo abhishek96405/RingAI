@@ -963,8 +963,74 @@ async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)
     return Response(content=twiml, media_type="application/xml")
 
 
+@app.post("/api/twilio/call-status")
+async def twilio_call_status(request: Request):
+    """
+    Twilio status callback - called when call ends.
+    Saves the call transcript and analysis to the database.
+    """
+    form = await request.form()
+    call_sid = form.get("CallSid", "")
+    call_status = form.get("CallStatus", "")
+    duration = int(form.get("CallDuration", "0") or "0")
+    
+    logger.info(f"Call status update: {call_sid} -> {call_status} (duration: {duration}s)")
+    
+    if call_status in ["completed", "busy", "no-answer", "failed"]:
+        # Get the active call data with transcript
+        active_call = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
+        
+        if active_call:
+            transcript = active_call.get("transcript", [])
+            restaurant_id = active_call.get("restaurant_id", "demo-restaurant-001")
+            
+            # Get menu items for analysis
+            menu_items = await db.menu_items.find(
+                {"restaurant_id": restaurant_id, "available": True}, {"_id": 0}
+            ).to_list(100)
+            
+            # Run AI analysis on the transcript
+            analysis = await analyse_call_transcript(transcript, None, menu_items)
+            
+            # Determine status
+            status_map = {
+                "completed": "COMPLETED",
+                "busy": "FAILED",
+                "no-answer": "FAILED",
+                "failed": "FAILED",
+            }
+            
+            # Create call record
+            call_record = CallRecord(
+                restaurant_id=restaurant_id,
+                twilio_call_sid=call_sid,
+                caller_number=active_call.get("caller_number", ""),
+                caller_name=f"Caller {active_call.get('caller_number', '')[-4:]}",
+                started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
+                ended_at=datetime.now(timezone.utc).isoformat(),
+                duration_seconds=duration,
+                status=status_map.get(call_status, "COMPLETED"),
+                contained_by_ai=call_status == "completed",
+                escalated_to_human=False,
+                transcript=transcript,
+                quality_score=analysis.get("quality_score", 85),
+                analysis_json=analysis,
+                order_total=0,
+            )
+            
+            # Save to database
+            await db.call_records.insert_one(call_record.model_dump())
+            
+            # Clean up active call
+            await db.active_calls.delete_one({"call_sid": call_sid})
+            
+            logger.info(f"Saved call record for {call_sid}")
+        else:
+            logger.warning(f"No active call found for {call_sid}")
+    
+    return Response(content="OK", media_type="text/plain")
 
-@app.websocket("/api/twilio/media-stream")
+
 async def twilio_media_stream(websocket: WebSocket):
     """
     WebSocket endpoint for Twilio media streams.
