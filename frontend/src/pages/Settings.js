@@ -320,6 +320,145 @@ export default function Settings() {
             </Button>
           </TabsContent>
 
+          {/* Integrations Tab */}
+          <TabsContent value="integrations" className="mt-4 space-y-4">
+            <Card className="p-6 border-border bg-card">
+              <h3 className="text-base font-heading font-semibold text-foreground mb-4 flex items-center gap-2">
+                <Key className="w-4 h-4" /> Integration Status
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Current mode: <Badge variant="secondary" className={`ml-1 ${
+                  testMode?.mode === 'sandbox' ? 'bg-primary/10 text-primary' : 
+                  testMode?.mode === 'live' ? 'bg-success/10 text-success' : 
+                  'bg-muted'
+                } border-0`}>{testMode?.mode || 'simulation'}</Badge>
+              </p>
+              
+              <div className="space-y-3">
+                {/* Gemini */}
+                <div className="flex items-center justify-between p-4 rounded-lg border border-border">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      testMode?.integrations?.gemini?.configured ? 'bg-success/10' : 'bg-muted'
+                    }`}>
+                      <Sparkles className={`w-5 h-5 ${
+                        testMode?.integrations?.gemini?.configured ? 'text-success' : 'text-muted-foreground'
+                      }`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Gemini AI</p>
+                      <p className="text-xs text-muted-foreground">{testMode?.integrations?.gemini?.message || 'Not configured'}</p>
+                    </div>
+                  </div>
+                  {testMode?.integrations?.gemini?.configured ? (
+                    <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Active
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-muted gap-1">
+                      <XCircle className="w-3 h-3" /> Not Set
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Twilio */}
+                <div className="flex items-center justify-between p-4 rounded-lg border border-border">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      testMode?.integrations?.twilio?.configured ? 'bg-success/10' : 'bg-muted'
+                    }`}>
+                      <Phone className={`w-5 h-5 ${
+                        testMode?.integrations?.twilio?.configured ? 'text-success' : 'text-muted-foreground'
+                      }`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Twilio Telephony</p>
+                      <p className="text-xs text-muted-foreground">{testMode?.integrations?.twilio?.message || 'Not configured'}</p>
+                    </div>
+                  </div>
+                  {testMode?.integrations?.twilio?.configured ? (
+                    <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Active
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-accent/10 text-accent border-0 gap-1">
+                      <TestTube className="w-3 h-3" /> Simulated
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Stripe */}
+                <div className="flex items-center justify-between p-4 rounded-lg border border-border">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      testMode?.integrations?.stripe?.configured ? 'bg-success/10' : 'bg-muted'
+                    }`}>
+                      <CreditCard className={`w-5 h-5 ${
+                        testMode?.integrations?.stripe?.configured ? 'text-success' : 'text-muted-foreground'
+                      }`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Stripe Billing</p>
+                      <p className="text-xs text-muted-foreground">{testMode?.integrations?.stripe?.message || 'Not configured'}</p>
+                    </div>
+                  </div>
+                  {testMode?.integrations?.stripe?.configured ? (
+                    <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Active
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-accent/10 text-accent border-0 gap-1">
+                      <TestTube className="w-3 h-3" /> Simulated
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Clerk */}
+                <div className="flex items-center justify-between p-4 rounded-lg border border-border">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      testMode?.integrations?.clerk?.configured ? 'bg-success/10' : 'bg-muted'
+                    }`}>
+                      <ShieldAlert className={`w-5 h-5 ${
+                        testMode?.integrations?.clerk?.configured ? 'text-success' : 'text-muted-foreground'
+                      }`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Clerk Authentication</p>
+                      <p className="text-xs text-muted-foreground">{testMode?.integrations?.clerk?.message || 'Not configured'}</p>
+                    </div>
+                  </div>
+                  {testMode?.integrations?.clerk?.configured ? (
+                    <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Active
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-accent/10 text-accent border-0 gap-1">
+                      <TestTube className="w-3 h-3" /> Demo Mode
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-6 border-border bg-card">
+              <h3 className="text-base font-heading font-semibold text-foreground mb-2">Required API Keys</h3>
+              <p className="text-xs text-muted-foreground mb-4">Add these environment variables to enable live features:</p>
+              <div className="space-y-2 text-xs font-mono bg-muted/30 p-4 rounded-lg">
+                <p className="text-muted-foreground"># Twilio (for live phone calls)</p>
+                <p className="text-foreground">TWILIO_ACCOUNT_SID=ACxxxxxx</p>
+                <p className="text-foreground">TWILIO_AUTH_TOKEN=xxxxxx</p>
+                <p className="text-foreground">TWILIO_PHONE_NUMBER=+1xxxxxxxxxx</p>
+                <p className="text-muted-foreground mt-3"># Stripe (for billing)</p>
+                <p className="text-foreground">STRIPE_SECRET_KEY=sk_test_xxxxx</p>
+                <p className="text-foreground">STRIPE_PUBLISHABLE_KEY=pk_test_xxxxx</p>
+                <p className="text-muted-foreground mt-3"># Clerk (for authentication)</p>
+                <p className="text-foreground">CLERK_PUBLISHABLE_KEY=pk_test_xxxxx</p>
+                <p className="text-foreground">CLERK_SECRET_KEY=sk_test_xxxxx</p>
+              </div>
+            </Card>
+          </TabsContent>
+
           {/* Billing Tab */}
           <TabsContent value="billing" className="mt-4">
             <Card className="p-6 border-border bg-card">
