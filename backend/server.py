@@ -847,7 +847,18 @@ async def twilio_incoming_call(request: Request):
     scheme = "wss" if forwarded_proto == "https" or request.url.scheme == "https" else "ws"
     ws_url = f"{scheme}://{host}/api/twilio/media-stream"
 
-    twiml = generate_twiml_stream_response(ws_url, call_sid)
+    # Check if Pipecat pipeline is available
+    if is_pipeline_available():
+        twiml = generate_twiml_stream_response(ws_url, call_sid)
+    else:
+        # Fallback: Use Twilio's built-in TTS with a greeting
+        config = await db.restaurant_configs.find_one({"restaurant_id": restaurant["id"]}, {"_id": 0})
+        greeting = config.get("disclosure_text", "Hi! Thanks for calling.") if config else "Hi! Thanks for calling."
+        twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Joanna">{greeting} I'm the AI assistant for {restaurant.get("name", "the restaurant")}. Our AI voice system is being set up. Please call back later or visit our website. Thank you!</Say>
+</Response>'''
+    
     return Response(content=twiml, media_type="application/xml")
 
 
