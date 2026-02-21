@@ -20,8 +20,14 @@ import {
   Save,
   Volume2,
   AlertTriangle,
+  TestTube,
+  CheckCircle2,
+  XCircle,
+  Sparkles,
+  Phone,
+  Key,
 } from "lucide-react";
-import { getRestaurant, updateRestaurant, getConfig, updateConfig } from "@/lib/api";
+import { getRestaurant, updateRestaurant, getConfig, updateConfig, getTestModeStatus } from "@/lib/api";
 import { toast } from "sonner";
 
 const voiceOptions = [
