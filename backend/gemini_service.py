@@ -8,9 +8,112 @@ Audio: Handled via Pipecat + Gemini Live Audio API (see call_pipeline.py)
 import os
 import json
 import logging
+import re
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# JSON Repair Utilities
+# ---------------------------------------------------------------------------
+
+def _repair_json(text: str) -> str:
+    """Attempt to repair common JSON issues from LLM output."""
+    if not text:
+        return "{}"
+    
+    # Remove markdown code blocks
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1].strip()
+    
+    # Find JSON object boundaries
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    else:
+        return "{}"
+    
+    # Remove newlines and carriage returns within strings (common issue)
+    text = text.replace('\n', ' ').replace('\r', ' ')
+    
+    # Try to fix unterminated strings by finding incomplete string patterns
+    # This handles the "Unterminated string" error
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError as e:
+        # Attempt repairs for common issues
+        
+        # Fix: truncated JSON - close any unclosed strings and objects
+        if "Unterminated string" in str(e):
+            # Count quotes to see if we have an odd number
+            quote_count = text.count('"') - text.count('\\"')
+            if quote_count % 2 != 0:
+                # Add closing quote
+                text = text.rstrip() + '"'
+        
+        # Ensure we have balanced braces and brackets
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+        
+        if open_brackets > 0:
+            text = text.rstrip() + ']' * open_brackets
+        if open_braces > 0:
+            text = text.rstrip() + '}' * open_braces
+        
+        # Try again
+        try:
+            json.loads(text)
+            return text
+        except json.JSONDecodeError:
+            return "{}"
+    
+    return text
+
+
+def _extract_json_fields(text: str, expected_fields: List[str]) -> Dict[str, Any]:
+    """
+    Try to extract expected fields from malformed JSON using regex.
+    Last resort fallback when JSON parsing completely fails.
+    """
+    result = {}
+    
+    # Try to extract quality_score
+    if "quality_score" in expected_fields:
+        match = re.search(r'"quality_score"\s*:\s*(\d+)', text)
+        if match:
+            result["quality_score"] = int(match.group(1))
+    
+    # Try to extract order_accuracy
+    if "order_accuracy" in expected_fields:
+        match = re.search(r'"order_accuracy"\s*:\s*"([^"]*)"', text)
+        if match:
+            result["order_accuracy"] = match.group(1)
+    
+    # Try to extract summary
+    if "summary" in expected_fields:
+        match = re.search(r'"summary"\s*:\s*"([^"]*)"', text)
+        if match:
+            result["summary"] = match.group(1)
+    
+    # Try to extract arrays (issues, highlights)
+    for field in ["issues", "highlights", "menu_suggestions", "rule_suggestions"]:
+        if field in expected_fields:
+            match = re.search(rf'"{field}"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if match:
+                try:
+                    items = re.findall(r'"([^"]*)"', match.group(1))
+                    result[field] = items
+                except Exception:
+                    result[field] = []
+    
+    return result
 
 # ---------------------------------------------------------------------------
 # Client (lazy-init via OpenAI-compatible SDK for Emergent gateway)
