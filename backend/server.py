@@ -175,6 +175,24 @@ class CallAnalysis(BaseModel):
     rule_suggestions: List[str]
     summary: str
 
+
+# POS Connection Model
+class PosConnection(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+    provider: str  # 'square', 'toast', 'clover'
+    encrypted_access_token: str
+    encrypted_refresh_token: Optional[str] = None
+    merchant_id: Optional[str] = None
+    location_id: Optional[str] = None
+    location_name: Optional[str] = None
+    sandbox: bool = True
+    is_active: bool = True
+    connected_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    last_menu_sync: Optional[str] = None
+    token_expires_at: Optional[str] = None
+
 class DashboardSummary(BaseModel):
     total_calls: int
     completed_calls: int
