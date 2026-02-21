@@ -804,6 +804,188 @@ async def startup_seed():
         logger.info("Demo data seeded successfully!")
 
 # ============================================================
+# TWILIO WEBHOOK ENDPOINTS
+# ============================================================
+
+@api_router.post("/twilio/incoming")
+async def twilio_incoming_call(request: Request):
+    """
+    Twilio webhook — called when a phone call comes in.
+    Returns TwiML that opens a WebSocket media stream to our Pipecat pipeline.
+    """
+    form = await request.form()
+    called_number = form.get("Called", "")
+    call_sid = form.get("CallSid", "")
+    caller_number = form.get("From", "")
+
+    logger.info(f"Incoming call: {caller_number} -> {called_number} (SID: {call_sid})")
+
+    # Look up restaurant by phone number
+    restaurant = await db.restaurants.find_one({"phone_number": called_number}, {"_id": 0})
+    if not restaurant or not restaurant.get("is_active"):
+        # Return a polite "not found" message
+        return Response(
+            content='<?xml version="1.0"?><Response><Say>Sorry, this number is not currently active. Goodbye.</Say></Response>',
+            media_type="application/xml",
+        )
+
+    # Store call_sid -> restaurant_id mapping for the WebSocket handler
+    await db.active_calls.update_one(
+        {"call_sid": call_sid},
+        {"$set": {"call_sid": call_sid, "restaurant_id": restaurant["id"], "caller_number": caller_number, "started_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
+    # Build WebSocket URL for Pipecat
+    host = request.headers.get("host", "localhost")
+    scheme = "wss" if request.url.scheme == "https" else "ws"
+    ws_url = f"{scheme}://{host}/api/twilio/media-stream"
+
+    twiml = generate_twiml_stream_response(ws_url, call_sid)
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.websocket("/api/twilio/media-stream")
+async def twilio_media_stream(websocket: WebSocket):
+    """
+    WebSocket endpoint for Twilio media streams.
+    Pipecat bridges audio between Twilio (mulaw 8kHz) and Gemini Live Audio.
+    """
+    await websocket.accept()
+
+    # We'll get the call_sid from the first Twilio 'start' message
+    try:
+        # Read initial messages to get stream metadata
+        initial = await websocket.receive_json()
+        stream_sid = initial.get("streamSid", "")
+        call_sid = initial.get("start", {}).get("callSid", "")
+
+        logger.info(f"Media stream started: stream={stream_sid} call={call_sid}")
+
+        # Look up restaurant from the call
+        active_call = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
+        if not active_call:
+            logger.error(f"No active call found for SID {call_sid}")
+            await websocket.close()
+            return
+
+        restaurant_id = active_call["restaurant_id"]
+        restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+        config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+        menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+
+        # Build system prompt
+        system_prompt = build_system_prompt(
+            restaurant_name=restaurant.get("name", "the restaurant"),
+            cuisine_type=restaurant.get("cuisine_type", ""),
+            persona=config.get("persona", "friendly") if config else "friendly",
+            business_rules=config.get("business_rules", []) if config else [],
+            escalation_rules=config.get("escalation_rules", []) if config else [],
+            menu_items=menu_items,
+            disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
+            upsell_enabled=config.get("upsell_enabled", True) if config else True,
+            delivery_enabled=config.get("delivery_enabled", True) if config else True,
+            delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        )
+
+        # Callback to save the call when done
+        async def on_call_complete(call_sid, restaurant_id, transcript):
+            analysis = await analyse_call_transcript(transcript, None, menu_items)
+            call = CallRecord(
+                restaurant_id=restaurant_id,
+                twilio_call_sid=call_sid,
+                caller_number=active_call.get("caller_number", ""),
+                started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
+                ended_at=datetime.now(timezone.utc).isoformat(),
+                duration_seconds=0,
+                status="COMPLETED",
+                contained_by_ai=True,
+                transcript=transcript,
+                quality_score=analysis.get("quality_score", 85),
+                analysis_json=analysis,
+                order_total=0,
+            )
+            await db.call_records.insert_one(call.model_dump())
+            await db.active_calls.delete_one({"call_sid": call_sid})
+            logger.info(f"Call {call_sid} saved to DB")
+
+        # Create the Pipecat pipeline
+        if is_pipeline_available():
+            await create_call_pipeline(
+                websocket=websocket,
+                system_prompt=system_prompt,
+                restaurant_id=restaurant_id,
+                call_sid=call_sid,
+                on_call_complete=on_call_complete,
+            )
+        else:
+            logger.warning("Pipecat pipeline not available — closing WebSocket")
+            await websocket.close()
+
+    except Exception as e:
+        logger.error(f"Media stream error: {e}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ============================================================
+# AI STATUS / SERVICE HEALTH ENDPOINT
+# ============================================================
+
+@api_router.get("/status")
+async def get_service_status():
+    """Check which AI and external services are configured and available."""
+    return {
+        "api": "operational",
+        "gemini": {
+            "available": is_gemini_available(),
+            "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        },
+        "twilio": {
+            "available": bool(os.environ.get("TWILIO_ACCOUNT_SID")),
+            "phone_number": os.environ.get("TWILIO_PHONE_NUMBER"),
+        },
+        "pipecat_pipeline": {
+            "available": is_pipeline_available(),
+        },
+        "database": {
+            "available": True,
+            "type": "MongoDB",
+        },
+    }
+
+
+# ============================================================
+# RE-ANALYSE A CALL (trigger Gemini analysis on existing call)
+# ============================================================
+
+@api_router.post("/calls/{call_id}/analyse")
+async def reanalyse_call(call_id: str):
+    """Re-run Gemini analysis on an existing call transcript."""
+    call = await db.call_records.find_one({"id": call_id}, {"_id": 0})
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    menu_items = await db.menu_items.find(
+        {"restaurant_id": call["restaurant_id"], "available": True}, {"_id": 0}
+    ).to_list(500)
+
+    analysis = await analyse_call_transcript(
+        transcript=call.get("transcript", []),
+        order_json=call.get("order_json"),
+        menu_items=menu_items,
+    )
+
+    await db.call_records.update_one(
+        {"id": call_id},
+        {"$set": {"analysis_json": analysis, "quality_score": analysis.get("quality_score")}},
+    )
+    return {"message": "Analysis complete", "analysis": analysis}
+
+
+# ============================================================
 # INCLUDE ROUTER & MIDDLEWARE
 # ============================================================
 
