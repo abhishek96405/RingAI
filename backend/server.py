@@ -856,8 +856,9 @@ async def twilio_incoming_call(request: Request):
         greeting = config.get("disclosure_text", "Hi! Thanks for calling.") if config else "Hi! Thanks for calling."
         restaurant_name = restaurant.get("name", "the restaurant")
         
-        # Build callback URL for handling speech input
-        callback_url = f"https://{host}/api/twilio/handle-speech?restaurant_id={restaurant['id']}"
+        # Use public URL from environment or construct from forwarded headers
+        public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
+        callback_url = f"https://{public_host}/api/twilio/handle-speech?restaurant_id={restaurant['id']}"
         
         twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
