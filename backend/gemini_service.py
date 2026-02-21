@@ -260,39 +260,26 @@ async def analyse_call_transcript(
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": """You are a call quality analyst for a restaurant AI phone system.
-Analyse the transcript and return ONLY valid JSON with this exact structure:
-{
-  "quality_score": 85,
-  "order_accuracy": "accurate",
-  "issues": ["issue1"],
-  "highlights": ["highlight1", "highlight2"],
-  "menu_suggestions": [],
-  "rule_suggestions": [],
-  "summary": "Brief 1-2 sentence summary"
-}
-- quality_score: 1-100 integer
-- order_accuracy: one of "accurate", "minor_issues", "major_issues"
-"""},
-                {"role": "user", "content": f"""Analyse this restaurant phone call:
-
-TRANSCRIPT:
-{transcript_text}
-
-ORDER RESULT:
-{order_text}
-
-Provide quality score, accuracy assessment, issues, highlights, and summary."""}
+                {"role": "system", "content": """You are a call quality analyst. Return ONLY a raw JSON object (no markdown, no code blocks, no explanation).
+The JSON must have exactly these fields:
+{"quality_score":85,"order_accuracy":"accurate","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"..."}"""},
+                {"role": "user", "content": f"Analyse this call transcript and order. Return raw JSON only.\n\nTRANSCRIPT:\n{transcript_text}\n\nORDER:\n{order_text}"}
             ],
-            temperature=0.3,
-            max_tokens=500,
+            temperature=0.2,
+            max_tokens=600,
         )
 
         text = response.choices[0].message.content.strip()
+        # Robust JSON extraction
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
             text = text.split("```")[1].split("```")[0].strip()
+        # Find the JSON object boundaries
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            text = text[start:end]
 
         result = json.loads(text)
         result["quality_score"] = max(1, min(100, int(result.get("quality_score", 85))))
