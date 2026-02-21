@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,8 +27,13 @@ import {
   Sparkles,
   Phone,
   Key,
+  Store,
+  RefreshCw,
+  Link2,
+  Unlink,
 } from "lucide-react";
-import { getRestaurant, updateRestaurant, getConfig, updateConfig, getTestModeStatus } from "@/lib/api";
+import { getRestaurant, updateRestaurant, getConfig, updateConfig, getTestModeStatus, getRestaurantId } from "@/lib/api";
+import api from "@/lib/api";
 import { toast } from "sonner";
 
 const voiceOptions = [
