@@ -228,6 +228,24 @@ def _summarize_conversation_context(transcript: List[Dict], max_turns: int = 6) 
     return first_exchange + recent_exchanges
 
 
+def _clean_for_speech(text: str) -> str:
+    """Remove markdown and formatting that sounds bad in TTS."""
+    import re
+    # Remove markdown bold/italic
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+    # Remove bullet points
+    text = re.sub(r'^\s*[-•*]\s*', '', text, flags=re.MULTILINE)
+    # Remove markdown headers
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    # Convert $XX.XX to spoken form
+    text = re.sub(r'\$(\d+)\.(\d{2})', lambda m: f"{m.group(1)} {m.group(2)}", text)
+    # Clean up multiple spaces/newlines
+    text = re.sub(r'\n+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
 async def get_conversation_response(
     system_prompt: str,
     transcript: List[Dict],
