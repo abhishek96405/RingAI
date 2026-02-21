@@ -50,7 +50,9 @@ export default function Onboarding() {
     if (!restaurantData.name.trim()) { toast.error("Restaurant name is required"); return; }
     try {
       const res = await api.post("/restaurants", restaurantData);
-      setRestaurantId(res.data.id);
+      const newId = res.data.id;
+      setRestaurantId(newId); // Save to localStorage
+      setRestaurantIdState(newId);
       setAiConfig(prev => ({
         ...prev,
         disclosure_text: `Hi! I'm an AI assistant for ${restaurantData.name}. How can I help you today?`
@@ -67,7 +69,7 @@ export default function Onboarding() {
     setParsing(true);
     try {
       const res = await api.post("/onboarding/menu/parse", {
-        menu_text: menuText, restaurant_id: restaurantId,
+        menu_text: menuText, restaurant_id: restaurantIdState,
       });
       setParsedItems(res.data.items || []);
       if (res.data.items?.length > 0) {
@@ -85,7 +87,7 @@ export default function Onboarding() {
   const saveMenuAndProceed = async () => {
     if (parsedItems.length === 0) { toast.warning("Parse your menu first"); return; }
     try {
-      await api.post(`/onboarding/menu/confirm?restaurant_id=${restaurantId}`, parsedItems);
+      await confirmMenu(restaurantIdState, parsedItems);
       toast.success("Menu saved!");
       setStep(3);
     } catch (err) {
@@ -95,7 +97,7 @@ export default function Onboarding() {
 
   const saveConfigAndProceed = async () => {
     try {
-      await api.put(`/restaurants/${restaurantId}/config`, aiConfig);
+      await api.put(`/restaurants/${restaurantIdState}/config`, aiConfig);
       toast.success("AI configuration saved!");
       setStep(4);
     } catch (err) {
@@ -106,9 +108,7 @@ export default function Onboarding() {
   const goLive = async () => {
     setActivating(true);
     try {
-      await api.post("/onboarding/activate", { restaurant_id: restaurantId });
-      // Seed some demo call data
-      await api.post(`/demo/seed?restaurant_id=${restaurantId}`);
+      await activateRestaurant(restaurantIdState);
       setActivated(true);
       toast.success("Your AI phone agent is live!");
     } catch (err) {
