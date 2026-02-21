@@ -7,6 +7,7 @@ RingAI is a comprehensive SaaS platform that provides AI-powered phone reception
 - **Frontend**: React.js, Tailwind CSS, shadcn/ui, Recharts, Framer Motion
 - **Backend**: Python FastAPI, Motor (async MongoDB driver)
 - **Database**: MongoDB
+- **AI**: Google Gemini 2.5 Flash (via Emergent LLM Gateway)
 - **Design System**: Custom HSL token-based (teal primary + warm coral accent)
 - **Typography**: Space Grotesk (headings), Inter (body)
 
@@ -77,22 +78,80 @@ RingAI is a comprehensive SaaS platform that provides AI-powered phone reception
 - `GET /api/restaurants/{id}/calls` - Call history with filters
 - `GET /api/calls/{id}` - Call detail with transcript
 - `GET /api/restaurants/{id}/analytics/summary` - Dashboard analytics
-- `POST /api/demo/simulate-call` - Generate demo call
+- `POST /api/demo/simulate-call` - Generate demo call (uses Gemini)
 - `POST /api/demo/seed` - Seed historical data
-- `POST /api/onboarding/menu/parse` - AI menu parsing
+- `POST /api/onboarding/menu/parse` - AI menu parsing (uses Gemini)
 - `POST /api/onboarding/activate` - Activate restaurant
+- `POST /api/calls/{id}/analyse` - Re-run Gemini analysis on existing call
+- `GET /api/status` - Service health check
 
-## Mock Data Notice
-- **External APIs are MOCKED**: Twilio, Deepgram, ElevenLabs, Claude, POS integrations, Stripe, Clerk auth
-- Call simulations generate realistic but synthetic data
-- Menu parsing uses basic text parsing (not actual Claude API)
-- Voice selection UI is present but audio playback is simulated
-- All data is stored in MongoDB and persists between sessions
+## Completed Work
 
-## Status
-- ✅ All 9 test categories passing
-- ✅ Mobile responsive on all pages
-- ✅ Backend API fully operational with seed data
-- ✅ Real-time live call simulation working
+### Feb 21, 2026 - P0/P1 Bug Fixes
+- **P0 FIXED**: Post-call analysis JSON parsing errors
+  - Added `_repair_json()` function to handle truncated strings and malformed JSON
+  - Added `_extract_json_fields()` regex fallback for complete parse failures
+  - Strengthened system prompt for JSON-only output
+  - Increased max_tokens to 500 to prevent truncation
+  - All tests passing (100% success rate on 5 consecutive simulate-call runs)
+
+- **P1 FIXED**: "Budget Exceeded" errors in long conversations
+  - Added `_summarize_conversation_context()` to limit transcript to 6 most relevant turns
+  - Condensed system prompt for conversation calls
+  - Truncated individual messages to max 300 chars
+  - No budget exceeded errors in testing
+
+### Previous Session Work
+- Landing Page & Dashboard UI complete
+- Backend Foundation with FastAPI
+- AI Stack pivot to Gemini 2.5 Flash (from Claude/Deepgram/ElevenLabs)
+- Gemini Integration for text-based call simulation
+- Status endpoint for integration health monitoring
+
+## Current Status
+
+### Working Features
+- ✅ Complete frontend UI (Landing, Dashboard, Calls, Menu, Live, Settings, Onboarding)
+- ✅ Backend API fully operational
+- ✅ MongoDB database with demo data seeding
+- ✅ Gemini-powered call simulation with valid JSON analysis
+- ✅ Menu parsing with Gemini
+- ✅ Re-analysis of existing calls
 - ✅ All CRUD operations functional
 - ✅ Charts and analytics rendering correctly
+
+### Mocked/Pending Features
+- ⏳ **Twilio telephony** - Endpoints stubbed, awaiting API keys
+- ⏳ **Pipecat audio pipeline** - Library installed, not integrated
+- ⏳ **Clerk authentication** - Not integrated, using demo restaurant
+- ⏳ **Stripe billing** - Not integrated
+- ⏳ **POS integrations** - Not integrated
+
+## Upcoming Tasks (Priority Order)
+
+### P0 - Critical
+None currently - all P0 bugs resolved
+
+### P1 - High Priority
+1. **Pipecat Real-time Audio Pipeline**: Bridge Twilio audio to Gemini Live Audio API
+2. **Twilio Integration**: Enable live phone calls when API keys provided
+3. **Clerk Authentication**: Secure dashboard routes with user auth
+
+### P2 - Medium Priority
+1. **Stripe Billing**: Subscription and payment integration
+2. **Database Migration**: Consider PostgreSQL + Redis migration per original PRD
+
+### P3 - Low Priority
+1. **POS Integrations**: Toast, Square, Clover connectivity
+
+## Files of Reference
+- `/app/backend/gemini_service.py` - All Gemini AI logic (JSON repair, analysis, conversation)
+- `/app/backend/server.py` - Main FastAPI application
+- `/app/backend/call_pipeline.py` - Pipecat integration (stubbed)
+- `/app/frontend/src/pages/` - All React page components
+- `/app/test_reports/iteration_1.json` - Latest test results (all passing)
+
+## Test Credentials
+- **Restaurant ID**: demo-restaurant-001
+- **Restaurant Name**: Bella Cucina
+- **API URL**: https://ringai-preview.preview.emergentagent.com
