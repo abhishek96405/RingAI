@@ -45,30 +45,46 @@ const voiceOptions = [
 ];
 
 export default function Settings() {
+  const [searchParams] = useSearchParams();
   const [restaurant, setRestaurant] = useState(null);
   const [config, setConfig] = useState(null);
   const [testMode, setTestMode] = useState(null);
+  const [posConnection, setPosConnection] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [newRule, setNewRule] = useState("");
   const [newEscalation, setNewEscalation] = useState("");
 
   const fetchData = useCallback(async () => {
     try {
-      const [restRes, configRes, testModeRes] = await Promise.all([
+      const restaurantId = getRestaurantId();
+      const [restRes, configRes, testModeRes, posRes] = await Promise.all([
         getRestaurant(), 
         getConfig(),
         getTestModeStatus(),
+        api.get(`/pos/connection?restaurant_id=${restaurantId}`).catch(() => ({ data: { connected: false } })),
       ]);
       setRestaurant(restRes.data);
       setConfig(configRes.data);
       setTestMode(testModeRes.data);
+      setPosConnection(posRes.data);
+      
+      // Check for POS callback messages
+      const posConnected = searchParams.get("pos_connected");
+      const posError = searchParams.get("pos_error");
+      if (posConnected) {
+        toast.success(`${posConnected.charAt(0).toUpperCase() + posConnected.slice(1)} connected successfully!`);
+      }
+      if (posError) {
+        toast.error(`POS connection failed: ${posError}`);
+      }
     } catch (err) {
       toast.error("Failed to load settings");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
