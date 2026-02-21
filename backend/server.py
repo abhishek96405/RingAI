@@ -871,6 +871,95 @@ async def twilio_incoming_call(request: Request):
     return Response(content=twiml, media_type="application/xml")
 
 
+
+@app.post("/api/twilio/handle-speech")
+async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)):
+    """
+    Handle speech input from Twilio Gather and respond using Gemini.
+    This is the fallback when Pipecat+Gemini Live Audio isn't available.
+    """
+    form = await request.form()
+    speech_result = form.get("SpeechResult", "")
+    call_sid = form.get("CallSid", "")
+    
+    logger.info(f"Speech received: '{speech_result}' (call: {call_sid})")
+    
+    if not speech_result:
+        return Response(
+            content='''<?xml version="1.0"?><Response>
+                <Say voice="Polly.Joanna">I didn't catch that. Could you please repeat?</Say>
+                <Gather input="speech" timeout="5" speechTimeout="auto" method="POST">
+                    <Say voice="Polly.Joanna">I'm listening.</Say>
+                </Gather>
+            </Response>''',
+            media_type="application/xml"
+        )
+    
+    # Get restaurant info for context
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
+    
+    # Get or create conversation history for this call
+    call_data = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
+    transcript = call_data.get("transcript", []) if call_data else []
+    
+    # Add customer message to transcript
+    transcript.append({"role": "customer", "text": speech_result})
+    
+    # Build system prompt and get AI response
+    system_prompt = build_system_prompt(
+        restaurant_name=restaurant.get("name", "the restaurant") if restaurant else "the restaurant",
+        cuisine_type=restaurant.get("cuisine_type", "") if restaurant else "",
+        persona=config.get("persona", "friendly") if config else "friendly",
+        business_rules=config.get("business_rules", []) if config else [],
+        escalation_rules=config.get("escalation_rules", []) if config else [],
+        menu_items=menu_items,
+        disclosure_text="",
+        upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        delivery_enabled=config.get("delivery_enabled", True) if config else True,
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+    )
+    
+    # Get AI response using Gemini
+    ai_response = await get_conversation_response(system_prompt, transcript, speech_result)
+    
+    # Add AI response to transcript
+    transcript.append({"role": "ai", "text": ai_response})
+    
+    # Save updated transcript
+    await db.active_calls.update_one(
+        {"call_sid": call_sid},
+        {"$set": {"transcript": transcript}},
+        upsert=True
+    )
+    
+    # Check if conversation should end
+    end_phrases = ["goodbye", "thank you for calling", "have a great day", "bye"]
+    should_end = any(phrase in ai_response.lower() for phrase in end_phrases)
+    
+    host = request.headers.get("host", "localhost")
+    callback_url = f"https://{host}/api/twilio/handle-speech?restaurant_id={restaurant_id}"
+    
+    if should_end:
+        twiml = f'''<?xml version="1.0"?>
+<Response>
+    <Say voice="Polly.Joanna">{ai_response}</Say>
+</Response>'''
+    else:
+        twiml = f'''<?xml version="1.0"?>
+<Response>
+    <Say voice="Polly.Joanna">{ai_response}</Say>
+    <Gather input="speech" timeout="5" speechTimeout="auto" action="{callback_url}" method="POST">
+        <Say voice="Polly.Joanna">Is there anything else I can help you with?</Say>
+    </Gather>
+    <Say voice="Polly.Joanna">Thank you for calling. Goodbye!</Say>
+</Response>'''
+    
+    return Response(content=twiml, media_type="application/xml")
+
+
+
 @app.websocket("/api/twilio/media-stream")
 async def twilio_media_stream(websocket: WebSocket):
     """
