@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Client (lazy-init via OpenAI-compatible SDK for Emergent gateway)
 # ---------------------------------------------------------------------------
 _client = None
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = "gemini/gemini-2.5-flash"
 
 def _get_client():
     global _client
@@ -30,9 +30,10 @@ def _get_client():
 
     try:
         from openai import OpenAI
+        proxy_url = os.environ.get("integration_proxy_url", "https://integrations.emergentagent.com")
         _client = OpenAI(
             api_key=api_key,
-            base_url="https://ai-gateway.emergentagent.com/v1/google",
+            base_url=f"{proxy_url}/llm/v1",
         )
         logger.info(f"Gemini client initialised via Emergent gateway (model: {MODEL})")
         return _client
