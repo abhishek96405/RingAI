@@ -36,7 +36,7 @@ export default function Onboarding() {
   const [restaurantData, setRestaurantData] = useState({
     name: "", cuisine_type: "", address: "", timezone: "America/New_York",
   });
-  const [restaurantId, setRestaurantId] = useState(null);
+  const [restaurantIdState, setRestaurantIdState] = useState(null);
   const [menuText, setMenuText] = useState("");
   const [parsedItems, setParsedItems] = useState([]);
   const [parsing, setParsing] = useState(false);
