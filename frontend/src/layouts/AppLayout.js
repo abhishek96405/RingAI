@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { UserButton } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -14,7 +15,6 @@ import {
   ChevronRight,
   LogOut,
   Menu,
-  X,
   PhoneCall,
 } from "lucide-react";
 
@@ -140,6 +140,7 @@ export const AppLayout = ({ children }) => {
               <div className="w-1.5 h-1.5 rounded-full bg-success mr-1.5" />
               AI Active
             </Badge>
+            <UserButton afterSignOutUrl="/" />
           </div>
         </header>
 
