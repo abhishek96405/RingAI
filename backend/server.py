@@ -852,21 +852,22 @@ async def twilio_incoming_call(request: Request):
         twiml = generate_twiml_stream_response(ws_url, call_sid)
     else:
         # Fallback: Use Twilio's built-in TTS with interactive voice menu
-        config = await db.restaurant_configs.find_one({"restaurant_id": restaurant["id"]}, {"_id": 0})
-        greeting = config.get("disclosure_text", "Hi! Thanks for calling.") if config else "Hi! Thanks for calling."
         restaurant_name = restaurant.get("name", "the restaurant")
         
         # Use public URL from environment or construct from forwarded headers
         public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
         callback_url = f"https://{public_host}/api/twilio/handle-speech?restaurant_id={restaurant['id']}"
         
+        # Natural greeting - no repetition
+        greeting = f"Hi there! Thanks for calling {restaurant_name}. What can I get for you today?"
+        
         twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="Polly.Joanna">{greeting} Welcome to {restaurant_name}. How can I help you today? You can say things like "I'd like to place an order" or "What are your hours?"</Say>
-    <Gather input="speech" timeout="5" speechTimeout="auto" action="{callback_url}" method="POST">
-        <Say voice="Polly.Joanna">I'm listening.</Say>
-    </Gather>
-    <Say voice="Polly.Joanna">I didn't catch that. Please call back and try again. Goodbye!</Say>
+    <Say voice="Polly.Joanna-Neural">{greeting}</Say>
+    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
+    <Say voice="Polly.Joanna-Neural">I didn't catch that. What would you like to order?</Say>
+    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
+    <Say voice="Polly.Joanna-Neural">Sorry, I'm having trouble hearing you. Please try calling back. Bye!</Say>
 </Response>'''
     
     return Response(content=twiml, media_type="application/xml")
