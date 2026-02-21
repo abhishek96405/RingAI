@@ -1,34 +1,98 @@
-# ringAI - AI Receptionist for Restaurants
+# RingAI - AI Phone Order Management Platform for Restaurants
 
 ## Overview
-ringAI is a landing page prototype for an AI-powered phone receptionist service for restaurants, inspired by slang.ai. The application showcases an AI voice agent that handles incoming calls, books reservations, answers FAQs, and more — 24/7.
+RingAI is a comprehensive SaaS platform that provides AI-powered phone reception and order management for restaurants. Inspired by slang.ai, it handles incoming calls, books reservations, processes takeout/delivery orders, and provides analytics — all using AI voice technology.
 
 ## Tech Stack
-- **Frontend**: React.js, Tailwind CSS, shadcn/ui, Framer Motion
-- **Design System**: Custom HSL token-based system (teal primary + warm coral accent)
+- **Frontend**: React.js, Tailwind CSS, shadcn/ui, Recharts, Framer Motion
+- **Backend**: Python FastAPI, Motor (async MongoDB driver)
+- **Database**: MongoDB
+- **Design System**: Custom HSL token-based (teal primary + warm coral accent)
 - **Typography**: Space Grotesk (headings), Inter (body)
 
-## Key Sections
-1. **Navbar** - Sticky glass-morphism nav with logo, links, CTA
-2. **Hero** - Bold headline, stats, hero restaurant image with floating call card animation
-3. **Logo Bar** - Marquee scrolling restaurant names
-4. **Features** - 8-card grid (Answer Calls, Reservations, FAQs, Analytics, VIP Routing, etc.)
-5. **How It Works** - 3-step process visualization
-6. **Live Demo** - Interactive simulated phone call demo (MOCK - frontend only)
-7. **Integrations** - 6 partner cards (OpenTable, Resy, Toast, Yelp, SevenRooms, Square)
-8. **Testimonials** - Carousel with navigation
-9. **Pricing** - 3 tiers with annual/monthly toggle (Starter $199, Professional $399, Enterprise Custom)
-10. **FAQ** - 7-item accordion
-11. **Final CTA** - Conversion section
-12. **Footer** - Links, brand, social
+## Application Structure
+
+### Landing Page (`/`)
+- Hero section with animated call card visualization
+- Logo bar with scrolling restaurant names
+- 8 feature cards in bento grid
+- 3-step "How it Works" process
+- Interactive phone demo simulation
+- 6 integration partner cards
+- Testimonial carousel with navigation
+- 3-tier pricing with monthly/annual toggle
+- 7-item FAQ accordion
+- Final CTA section + Footer
+
+### Dashboard (`/dashboard`)
+- 4 KPI stat cards (calls, revenue, quality score, containment rate)
+- Call Volume & Revenue bar chart (Recharts)
+- Hourly call distribution area chart
+- Recent calls list with status badges
+- Top ordered items ranking
+- "Simulate Call" button for generating demo data
+
+### Call History (`/calls`)
+- Searchable, filterable call list with pagination
+- Status filter (All, Completed, Escalated, Failed)
+- Click-to-open detail sheet with:
+  - Caller info, duration, quality score
+  - Full order summary with items and totals
+  - AI analysis (highlights, issues, summary)
+  - Chat-style transcript view
+
+### Menu Manager (`/menu`)
+- Menu items grouped by category (21 items, 6 categories)
+- CRUD operations: Add, Edit, Delete items
+- Availability toggle switches
+- Category filtering and search
+- Allergen badges display
+- Dialog form for add/edit with allergen selector
+
+### Live Monitor (`/live`)
+- Real-time call simulation with chat bubbles
+- Live cart that updates as items are ordered
+- Call info panel (status, duration, model, voice)
+- Action buttons (Take Over, Whisper, Mute)
+- Sound wave animation during active calls
+
+### Settings (`/settings`)
+- **General**: Restaurant info, timezone, phone number
+- **Voice & AI**: Persona selection, 5 voice options, greeting, upsell/delivery toggles
+- **Rules**: Business rules CRUD, Escalation triggers CRUD
+- **Billing**: Plan info, usage stats, subscription management
+
+### Onboarding (`/onboarding`)
+- 4-step wizard with animated progress bar
+- Step 1: Restaurant info form
+- Step 2: Menu text parsing (AI-powered)
+- Step 3: AI persona & voice configuration
+- Step 4: Activation with demo data seeding
+
+## Backend API Endpoints
+- `GET/POST /api/restaurants` - Restaurant CRUD
+- `GET/PUT /api/restaurants/{id}/config` - AI configuration
+- `GET/POST /api/restaurants/{id}/menu` - Menu management
+- `PUT/DELETE/PATCH /api/menu/{id}` - Item operations
+- `GET /api/restaurants/{id}/calls` - Call history with filters
+- `GET /api/calls/{id}` - Call detail with transcript
+- `GET /api/restaurants/{id}/analytics/summary` - Dashboard analytics
+- `POST /api/demo/simulate-call` - Generate demo call
+- `POST /api/demo/seed` - Seed historical data
+- `POST /api/onboarding/menu/parse` - AI menu parsing
+- `POST /api/onboarding/activate` - Activate restaurant
 
 ## Mock Data Notice
-All data is **MOCKED** - no backend integration. Demo call, testimonials, pricing, and all content are static/frontend-only prototypes.
+- **External APIs are MOCKED**: Twilio, Deepgram, ElevenLabs, Claude, POS integrations, Stripe, Clerk auth
+- Call simulations generate realistic but synthetic data
+- Menu parsing uses basic text parsing (not actual Claude API)
+- Voice selection UI is present but audio playback is simulated
+- All data is stored in MongoDB and persists between sessions
 
 ## Status
-- ✅ All 14 test areas passing
-- ✅ Mobile responsive
-- ✅ No lint errors
-- ✅ All images loading
-- ✅ Interactive demo working
-- ✅ Pricing toggle functional
+- ✅ All 9 test categories passing
+- ✅ Mobile responsive on all pages
+- ✅ Backend API fully operational with seed data
+- ✅ Real-time live call simulation working
+- ✅ All CRUD operations functional
+- ✅ Charts and analytics rendering correctly
