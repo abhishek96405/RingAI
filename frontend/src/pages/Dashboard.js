@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -13,10 +12,9 @@ import {
   ShieldCheck,
   ArrowUpRight,
   PhoneCall,
-  Zap,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { getAnalyticsSummary, simulateCall, getRestaurantId } from "@/lib/api";
+import { getAnalyticsSummary, getRestaurantId } from "@/lib/api";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
