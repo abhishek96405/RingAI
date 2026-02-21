@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import api from "@/lib/api";
+import api, { setRestaurantId, confirmMenu, activateRestaurant } from "@/lib/api";
 
 const steps = [
   { id: 1, label: "Restaurant Info", icon: UtensilsCrossed },
