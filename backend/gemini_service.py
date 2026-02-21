@@ -260,13 +260,11 @@ async def analyse_call_transcript(
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": """You are a call quality analyst. Return ONLY a raw JSON object (no markdown, no code blocks, no explanation).
-The JSON must have exactly these fields:
-{"quality_score":85,"order_accuracy":"accurate","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"..."}"""},
-                {"role": "user", "content": f"Analyse this call transcript and order. Return raw JSON only.\n\nTRANSCRIPT:\n{transcript_text}\n\nORDER:\n{order_text}"}
+                {"role": "system", "content": 'Return ONLY raw JSON. No markdown. Format: {"quality_score":85,"order_accuracy":"accurate","issues":["..."],"highlights":["..."],"menu_suggestions":[],"rule_suggestions":[],"summary":"..."}'},
+                {"role": "user", "content": f"Rate this restaurant AI call 1-100. TRANSCRIPT:\n{transcript_text[:1500]}"}
             ],
             temperature=0.2,
-            max_tokens=600,
+            max_tokens=400,
         )
 
         text = response.choices[0].message.content.strip()
@@ -280,6 +278,8 @@ The JSON must have exactly these fields:
         end = text.rfind("}") + 1
         if start >= 0 and end > start:
             text = text[start:end]
+        # Fix common JSON issues
+        text = text.replace('\n', ' ').replace('\r', '')
 
         result = json.loads(text)
         result["quality_score"] = max(1, min(100, int(result.get("quality_score", 85))))
@@ -287,6 +287,7 @@ The JSON must have exactly these fields:
         result.setdefault("highlights", [])
         result.setdefault("menu_suggestions", [])
         result.setdefault("rule_suggestions", [])
+        result.setdefault("summary", "Call analysed by Gemini 2.5 Flash.")
         return result
     except Exception as e:
         logger.error(f"Gemini analysis error: {e}")
