@@ -145,10 +145,11 @@ export default function Settings() {
         </div>
 
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full max-w-lg grid-cols-4">
+          <TabsList className="grid w-full max-w-xl grid-cols-5">
             <TabsTrigger value="general" className="text-xs">General</TabsTrigger>
             <TabsTrigger value="voice" className="text-xs">Voice & AI</TabsTrigger>
             <TabsTrigger value="rules" className="text-xs">Rules</TabsTrigger>
+            <TabsTrigger value="integrations" className="text-xs">Integrations</TabsTrigger>
             <TabsTrigger value="billing" className="text-xs">Billing</TabsTrigger>
           </TabsList>
 
