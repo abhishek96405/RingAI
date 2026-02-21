@@ -340,7 +340,7 @@ Return ONLY a JSON object with this exact structure:
 
 def _mock_parse_menu(menu_text: str) -> Dict[str, Any]:
     """Fallback text parser when Gemini is unavailable."""
-    lines = [l.strip() for l in menu_text.strip().split("\n") if l.strip()]
+    lines = [line.strip() for line in menu_text.strip().split("\n") if line.strip()]
     parsed_items = []
     current_category = "Uncategorized"
     for line in lines:
