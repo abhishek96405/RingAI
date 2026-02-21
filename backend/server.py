@@ -926,6 +926,9 @@ async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)
     # Get AI response using Gemini
     ai_response = await get_conversation_response(system_prompt, transcript, speech_result)
     
+    # Clean response for natural speech (remove markdown, etc.)
+    clean_response = _clean_for_speech(ai_response)
+    
     # Add AI response to transcript
     transcript.append({"role": "ai", "text": ai_response})
     
@@ -937,7 +940,7 @@ async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)
     )
     
     # Check if conversation should end
-    end_phrases = ["goodbye", "thank you for calling", "have a great day", "bye"]
+    end_phrases = ["goodbye", "thank you for calling", "have a great day", "bye", "take care"]
     should_end = any(phrase in ai_response.lower() for phrase in end_phrases)
     
     public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
@@ -946,16 +949,15 @@ async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)
     if should_end:
         twiml = f'''<?xml version="1.0"?>
 <Response>
-    <Say voice="Polly.Joanna">{ai_response}</Say>
+    <Say voice="Polly.Joanna-Neural">{clean_response}</Say>
 </Response>'''
     else:
         twiml = f'''<?xml version="1.0"?>
 <Response>
-    <Say voice="Polly.Joanna">{ai_response}</Say>
-    <Gather input="speech" timeout="5" speechTimeout="auto" action="{callback_url}" method="POST">
-        <Say voice="Polly.Joanna">Is there anything else I can help you with?</Say>
-    </Gather>
-    <Say voice="Polly.Joanna">Thank you for calling. Goodbye!</Say>
+    <Say voice="Polly.Joanna-Neural">{clean_response}</Say>
+    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
+    <Say voice="Polly.Joanna-Neural">Anything else?</Say>
+    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
 </Response>'''
     
     return Response(content=twiml, media_type="application/xml")
