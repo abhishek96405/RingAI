@@ -209,6 +209,21 @@ ORDER GUIDELINES:
 # 2. CONVERSATION RESPONSE (text-only, for non-live / demo scenarios)
 # ---------------------------------------------------------------------------
 
+def _summarize_conversation_context(transcript: List[Dict], max_turns: int = 6) -> List[Dict]:
+    """
+    Summarize conversation history to stay within token budget.
+    Keeps first greeting and last N turns for context.
+    """
+    if len(transcript) <= max_turns:
+        return transcript
+    
+    # Keep first exchange (greeting) and last (max_turns - 2) exchanges
+    first_exchange = transcript[:2] if len(transcript) >= 2 else transcript[:1]
+    recent_exchanges = transcript[-(max_turns - len(first_exchange)):]
+    
+    return first_exchange + recent_exchanges
+
+
 async def get_conversation_response(
     system_prompt: str,
     transcript: List[Dict],
@@ -220,23 +235,39 @@ async def get_conversation_response(
         return _mock_conversation_response(new_customer_message)
 
     try:
-        messages = [{"role": "system", "content": system_prompt}]
-        for entry in transcript:
+        # P1 fix: Summarize context to prevent budget exceeded errors
+        summarized_transcript = _summarize_conversation_context(transcript)
+        
+        # Use a shorter system prompt for conversation to save tokens
+        condensed_prompt = system_prompt
+        if len(system_prompt) > 1500:
+            # Keep first 1500 chars which include core identity and menu
+            condensed_prompt = system_prompt[:1500] + "\n\n[Additional rules truncated for brevity]"
+        
+        messages = [{"role": "system", "content": condensed_prompt}]
+        for entry in summarized_transcript:
             role = "user" if entry.get("role") == "customer" else "assistant"
-            messages.append({"role": role, "content": entry["text"]})
+            # Truncate individual messages if too long
+            content = entry["text"][:300] if len(entry.get("text", "")) > 300 else entry.get("text", "")
+            messages.append({"role": role, "content": content})
+        
         if new_customer_message:
-            messages.append({"role": "user", "content": new_customer_message})
+            messages.append({"role": "user", "content": new_customer_message[:500]})
 
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=300,
+            max_tokens=250,  # Slightly reduced to stay within budget
         )
         text = response.choices[0].message.content.strip()
         return text if text else _mock_conversation_response(new_customer_message)
     except Exception as e:
-        logger.error(f"Gemini conversation error: {e}")
+        error_msg = str(e).lower()
+        if "budget" in error_msg or "quota" in error_msg or "limit" in error_msg:
+            logger.warning(f"Budget/quota exceeded, using mock response: {e}")
+        else:
+            logger.error(f"Gemini conversation error: {e}")
         return _mock_conversation_response(new_customer_message)
 
 
