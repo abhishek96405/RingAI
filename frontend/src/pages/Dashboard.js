@@ -111,15 +111,6 @@ export default function Dashboard() {
             <h1 className="text-2xl font-heading font-bold text-foreground">Dashboard</h1>
             <p className="text-sm text-muted-foreground">Overview of your AI phone agent performance</p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleSimulateCall}>
-              <Zap className="w-4 h-4" />
-              Simulate Call
-            </Button>
-            <Button variant="premium" size="sm" asChild>
-              <Link to="/calls">View All Calls</Link>
-            </Button>
-          </div>
         </div>
 
         {/* KPI Cards */}
