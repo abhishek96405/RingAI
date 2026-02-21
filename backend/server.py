@@ -1352,6 +1352,220 @@ async def run_test_scenario(restaurant_id: str = Query(...), scenario_id: int = 
 
 
 # ============================================================
+# POS INTEGRATION ENDPOINTS
+# ============================================================
+
+@api_router.get("/pos/providers")
+async def get_pos_providers():
+    """Get list of supported POS providers."""
+    return {
+        "providers": [
+            {
+                "id": "square",
+                "name": "Square",
+                "description": "Accept payments, manage inventory, and sync orders",
+                "supported": True,
+            },
+            {
+                "id": "toast",
+                "name": "Toast",
+                "description": "Restaurant-specific POS with online ordering",
+                "supported": False,
+                "coming_soon": True,
+            },
+            {
+                "id": "clover",
+                "name": "Clover",
+                "description": "Flexible POS for retail and restaurants",
+                "supported": False,
+                "coming_soon": True,
+            },
+        ]
+    }
+
+
+@api_router.get("/pos/square/connect")
+async def square_connect(restaurant_id: str = Query(...)):
+    """
+    Initiate Square OAuth flow.
+    Returns authorization URL for frontend to redirect user.
+    """
+    import secrets
+    
+    # Generate state token for CSRF protection
+    state = f"{restaurant_id}:{secrets.token_urlsafe(16)}"
+    
+    # Store state temporarily (should use Redis in production)
+    await db.oauth_states.insert_one({
+        "state": state,
+        "restaurant_id": restaurant_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    
+    # Build redirect URI
+    public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
+    redirect_uri = f"https://{public_host}/api/pos/square/callback"
+    
+    # Get Square sandbox adapter for OAuth URL
+    sandbox = os.environ.get("SQUARE_ENVIRONMENT", "sandbox") == "sandbox"
+    adapter = SquareAdapter("", sandbox=sandbox)
+    
+    auth_url = adapter.get_oauth_url(redirect_uri, state)
+    
+    return {
+        "authorization_url": auth_url,
+        "state": state,
+    }
+
+
+@api_router.get("/pos/square/callback")
+async def square_callback(code: str = Query(None), state: str = Query(None), error: str = Query(None)):
+    """
+    Square OAuth callback. Exchanges code for access token.
+    Redirects to frontend settings page on completion.
+    """
+    from fastapi.responses import RedirectResponse
+    
+    public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
+    frontend_url = f"https://{public_host}"
+    
+    if error:
+        logger.error(f"Square OAuth error: {error}")
+        return RedirectResponse(f"{frontend_url}/settings?pos_error={error}")
+    
+    if not code or not state:
+        return RedirectResponse(f"{frontend_url}/settings?pos_error=missing_params")
+    
+    # Verify state
+    oauth_state = await db.oauth_states.find_one({"state": state})
+    if not oauth_state:
+        return RedirectResponse(f"{frontend_url}/settings?pos_error=invalid_state")
+    
+    restaurant_id = oauth_state["restaurant_id"]
+    
+    # Clean up state
+    await db.oauth_states.delete_one({"state": state})
+    
+    # Exchange code for token
+    redirect_uri = f"https://{public_host}/api/pos/square/callback"
+    sandbox = os.environ.get("SQUARE_ENVIRONMENT", "sandbox") == "sandbox"
+    adapter = SquareAdapter("", sandbox=sandbox)
+    
+    token_result = await adapter.exchange_code(code, redirect_uri)
+    
+    if not token_result.get("success"):
+        logger.error(f"Square token exchange failed: {token_result.get('error')}")
+        return RedirectResponse(f"{frontend_url}/settings?pos_error=token_exchange_failed")
+    
+    # Get locations
+    adapter = SquareAdapter(token_result["access_token"], sandbox=sandbox)
+    locations = await adapter.get_locations()
+    
+    # Use first location by default
+    location = locations[0] if locations else {}
+    
+    # Store connection with encrypted token
+    connection = PosConnection(
+        restaurant_id=restaurant_id,
+        provider="square",
+        encrypted_access_token=encrypt_token(token_result["access_token"]),
+        encrypted_refresh_token=encrypt_token(token_result.get("refresh_token", "")),
+        merchant_id=token_result.get("merchant_id"),
+        location_id=location.get("id"),
+        location_name=location.get("name"),
+        sandbox=sandbox,
+        token_expires_at=token_result.get("expires_at"),
+    )
+    
+    # Upsert connection
+    await db.pos_connections.update_one(
+        {"restaurant_id": restaurant_id, "provider": "square"},
+        {"$set": connection.model_dump()},
+        upsert=True,
+    )
+    
+    logger.info(f"Square connected for restaurant {restaurant_id}")
+    
+    return RedirectResponse(f"{frontend_url}/settings?pos_connected=square")
+
+
+@api_router.get("/pos/connection")
+async def get_pos_connection(restaurant_id: str = Query(...)):
+    """Get current POS connection status for a restaurant."""
+    connection = await db.pos_connections.find_one(
+        {"restaurant_id": restaurant_id, "is_active": True},
+        {"_id": 0, "encrypted_access_token": 0, "encrypted_refresh_token": 0}
+    )
+    
+    if not connection:
+        return {"connected": False}
+    
+    return {
+        "connected": True,
+        "provider": connection.get("provider"),
+        "location_id": connection.get("location_id"),
+        "location_name": connection.get("location_name"),
+        "sandbox": connection.get("sandbox"),
+        "connected_at": connection.get("connected_at"),
+        "last_menu_sync": connection.get("last_menu_sync"),
+    }
+
+
+@api_router.delete("/pos/connection")
+async def disconnect_pos(restaurant_id: str = Query(...)):
+    """Disconnect POS integration."""
+    result = await db.pos_connections.delete_many({"restaurant_id": restaurant_id})
+    return {"disconnected": result.deleted_count > 0}
+
+
+@api_router.post("/pos/sync-menu")
+async def sync_menu_from_pos(restaurant_id: str = Query(...)):
+    """Sync menu items from connected POS."""
+    result = await order_processor.sync_menu_from_pos(restaurant_id)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Sync failed"))
+    
+    return result
+
+
+@api_router.get("/pos/locations")
+async def get_pos_locations(restaurant_id: str = Query(...)):
+    """Get available locations from connected POS."""
+    connection = await db.pos_connections.find_one(
+        {"restaurant_id": restaurant_id, "is_active": True},
+        {"_id": 0}
+    )
+    
+    if not connection:
+        raise HTTPException(status_code=404, detail="No POS connection found")
+    
+    try:
+        access_token = decrypt_token(connection["encrypted_access_token"])
+        adapter = PosFactory.create_adapter(
+            connection["provider"], access_token, connection.get("sandbox", True)
+        )
+        locations = await adapter.get_locations()
+        return {"locations": locations}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/pos/location")
+async def update_pos_location(restaurant_id: str = Query(...), location_id: str = Query(...)):
+    """Update selected POS location."""
+    result = await db.pos_connections.update_one(
+        {"restaurant_id": restaurant_id, "is_active": True},
+        {"$set": {"location_id": location_id}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No POS connection found")
+    
+    return {"updated": True}
+
+
+# ============================================================
 # INCLUDE ROUTER & MIDDLEWARE
 # ============================================================
 
