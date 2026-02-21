@@ -842,7 +842,9 @@ async def twilio_incoming_call(request: Request):
 
     # Build WebSocket URL for Pipecat
     host = request.headers.get("host", "localhost")
-    scheme = "wss" if request.url.scheme == "https" else "ws"
+    # Always use wss:// for production (behind HTTPS proxy)
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    scheme = "wss" if forwarded_proto == "https" or request.url.scheme == "https" else "ws"
     ws_url = f"{scheme}://{host}/api/twilio/media-stream"
 
     twiml = generate_twiml_stream_response(ws_url, call_sid)
