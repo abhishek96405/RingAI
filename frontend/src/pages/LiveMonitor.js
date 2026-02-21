@@ -245,7 +245,7 @@ export default function LiveMonitor() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-xs text-muted-foreground">AI Model</span>
-                  <span className="text-xs text-muted-foreground">Claude Opus 4</span>
+                  <span className="text-xs text-muted-foreground">Gemini 2.5 Flash</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-xs text-muted-foreground">Voice</span>
