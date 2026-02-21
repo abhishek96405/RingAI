@@ -847,16 +847,25 @@ async def twilio_incoming_call(request: Request):
     scheme = "wss" if forwarded_proto == "https" or request.url.scheme == "https" else "ws"
     ws_url = f"{scheme}://{host}/api/twilio/media-stream"
 
-    # Check if Pipecat pipeline is available
+    # Check if Pipecat pipeline is available (requires native Google API key)
     if is_pipeline_available():
         twiml = generate_twiml_stream_response(ws_url, call_sid)
     else:
-        # Fallback: Use Twilio's built-in TTS with a greeting
+        # Fallback: Use Twilio's built-in TTS with interactive voice menu
         config = await db.restaurant_configs.find_one({"restaurant_id": restaurant["id"]}, {"_id": 0})
         greeting = config.get("disclosure_text", "Hi! Thanks for calling.") if config else "Hi! Thanks for calling."
+        restaurant_name = restaurant.get("name", "the restaurant")
+        
+        # Build callback URL for handling speech input
+        callback_url = f"https://{host}/api/twilio/handle-speech?restaurant_id={restaurant['id']}"
+        
         twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="Polly.Joanna">{greeting} I'm the AI assistant for {restaurant.get("name", "the restaurant")}. Our AI voice system is being set up. Please call back later or visit our website. Thank you!</Say>
+    <Say voice="Polly.Joanna">{greeting} Welcome to {restaurant_name}. How can I help you today? You can say things like "I'd like to place an order" or "What are your hours?"</Say>
+    <Gather input="speech" timeout="5" speechTimeout="auto" action="{callback_url}" method="POST">
+        <Say voice="Polly.Joanna">I'm listening.</Say>
+    </Gather>
+    <Say voice="Polly.Joanna">I didn't catch that. Please call back and try again. Goodbye!</Say>
 </Response>'''
     
     return Response(content=twiml, media_type="application/xml")
