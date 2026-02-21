@@ -145,8 +145,12 @@ export const AppLayout = ({ children }) => {
               <Menu className="w-5 h-5" />
             </button>
             <div>
-              <h1 className="text-sm font-heading font-semibold text-foreground">Bella Cucina</h1>
-              <p className="text-xs text-muted-foreground">Italian-American · New York, NY</p>
+              <h1 className="text-sm font-heading font-semibold text-foreground">
+                {restaurant?.name || "Loading..."}
+              </h1>
+              <p className="text-xs text-muted-foreground">
+                {restaurant?.cuisine_type || ""}{restaurant?.address ? ` · ${restaurant.address.split(",")[1]?.trim() || ""}` : ""}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
