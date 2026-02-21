@@ -41,6 +41,7 @@ const voiceOptions = [
 export default function Settings() {
   const [restaurant, setRestaurant] = useState(null);
   const [config, setConfig] = useState(null);
+  const [testMode, setTestMode] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [newRule, setNewRule] = useState("");
@@ -48,9 +49,14 @@ export default function Settings() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [restRes, configRes] = await Promise.all([getRestaurant(), getConfig()]);
+      const [restRes, configRes, testModeRes] = await Promise.all([
+        getRestaurant(), 
+        getConfig(),
+        getTestModeStatus(),
+      ]);
       setRestaurant(restRes.data);
       setConfig(configRes.data);
+      setTestMode(testModeRes.data);
     } catch (err) {
       toast.error("Failed to load settings");
     } finally {
