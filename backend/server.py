@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Request, WebSocket
+from fastapi.responses import Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -18,6 +19,17 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ.get('DB_NAME', 'ringai_db')]
+
+# Gemini + Pipeline imports
+from gemini_service import (
+    is_gemini_available, parse_menu_text, analyse_call_transcript,
+    get_conversation_response, build_system_prompt,
+)
+from call_pipeline import (
+    is_pipeline_available, create_call_pipeline,
+    generate_twiml_stream_response, provision_phone_number,
+    validate_twilio_request,
+)
 
 # Create the main app
 app = FastAPI(title="RingAI API", version="1.0.0")
