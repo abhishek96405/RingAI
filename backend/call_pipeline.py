@@ -28,9 +28,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def is_pipeline_available() -> bool:
-    """Check if all required services are configured."""
+    """Check if all required services are configured for live audio.
+    
+    Note: Gemini Live Audio API requires a NATIVE Google API key,
+    not the Emergent proxy key. The Emergent key (sk-emergent-*) only 
+    works with OpenAI-compatible chat completions, not WebSocket audio.
+    """
+    google_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY") or ""
+    
+    # Check if it's a native Google key (starts with AIza) vs Emergent proxy
+    is_native_google_key = google_key.startswith("AIza")
+    
     return all([
-        os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY"),
+        is_native_google_key,  # Must be native Google API key for Live Audio
         os.environ.get("TWILIO_ACCOUNT_SID"),
         os.environ.get("TWILIO_AUTH_TOKEN"),
     ])
