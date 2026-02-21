@@ -429,42 +429,9 @@ async def get_analytics_summary(restaurant_id: str):
 
 @api_router.post("/onboarding/menu/parse")
 async def parse_menu(data: OnboardingMenuParse):
-    """Mock Claude menu parsing - in production this would use Claude to parse menu text"""
-    # Simulated AI parsing result
-    lines = [l.strip() for l in data.menu_text.strip().split('\n') if l.strip()]
-    parsed_items = []
-    current_category = "Uncategorized"
-    for line in lines:
-        if line.isupper() or line.endswith(':'):
-            current_category = line.rstrip(':').title()
-            continue
-        # Try to extract price
-        parts = line.rsplit('$', 1)
-        if len(parts) == 2:
-            name = parts[0].strip().rstrip('-').rstrip('.')
-            try:
-                price = int(float(parts[1].strip()) * 100)
-            except ValueError:
-                price = 0
-            parsed_items.append({
-                "name": name,
-                "category": current_category,
-                "price": price,
-                "description": None,
-                "modifiers": [],
-                "allergens": [],
-            })
-        elif line and not line.startswith('#'):
-            parsed_items.append({
-                "name": line,
-                "category": current_category,
-                "price": 0,
-                "description": None,
-                "modifiers": [],
-                "allergens": [],
-            })
-    categories = list(set(item["category"] for item in parsed_items))
-    return {"items": parsed_items, "categories": categories, "warnings": [] if parsed_items else ["No items could be parsed"]}
+    """Parse menu text using Gemini 2.5 Flash (falls back to basic parser if key not set)"""
+    result = await parse_menu_text(data.menu_text)
+    return result
 
 @api_router.post("/onboarding/menu/confirm")
 async def confirm_menu(restaurant_id: str = Query(...), items: List[Dict[str, Any]] = []):
