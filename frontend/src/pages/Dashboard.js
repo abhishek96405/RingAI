@@ -74,16 +74,6 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleSimulateCall = async () => {
-    try {
-      await simulateCall();
-      toast.success("Demo call simulated!");
-      fetchData();
-    } catch (err) {
-      toast.error("Failed to simulate call");
-    }
-  };
-
   if (loading) {
     return (
       <AppLayout>
