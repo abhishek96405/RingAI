@@ -1,7 +1,8 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { SignedIn, SignedOut, RedirectToSignIn, useAuth } from "@clerk/clerk-react";
 import { Toaster } from "@/components/ui/sonner";
+import { useEffect } from "react";
 import LandingPage from "@/pages/LandingPage";
 import Dashboard from "@/pages/Dashboard";
 import CallHistory from "@/pages/CallHistory";
@@ -9,21 +10,41 @@ import MenuManager from "@/pages/MenuManager";
 import Settings from "@/pages/Settings";
 import LiveMonitor from "@/pages/LiveMonitor";
 import Onboarding from "@/pages/Onboarding";
+import { getRestaurantId } from "@/lib/api";
 
 // Protected route wrapper
 const ProtectedRoute = ({ children }) => (
   <>
     <SignedIn>{children}</SignedIn>
-    <SignedOut><RedirectToSignIn redirectUrl="/dashboard" /></SignedOut>
+    <SignedOut><RedirectToSignIn /></SignedOut>
   </>
 );
+
+// Landing page with auth redirect
+const LandingWithRedirect = () => {
+  const { isSignedIn, isLoaded } = useAuth();
+  const navigate = useNavigate();
+  
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      const restaurantId = getRestaurantId();
+      if (restaurantId) {
+        navigate("/dashboard");
+      } else {
+        navigate("/onboarding");
+      }
+    }
+  }, [isSignedIn, isLoaded, navigate]);
+  
+  return <LandingPage />;
+};
 
 function App() {
   return (
     <BrowserRouter>
       <Toaster position="top-right" richColors />
       <Routes>
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/" element={<LandingWithRedirect />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/calls" element={<ProtectedRoute><CallHistory /></ProtectedRoute>} />
         <Route path="/menu" element={<ProtectedRoute><MenuManager /></ProtectedRoute>} />
