@@ -1,9 +1,20 @@
+import { useNavigate } from "react-router-dom";
+import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Phone, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 
 export const HeroSection = () => {
+  const navigate = useNavigate();
+
+  const handleDemoCall = () => {
+    // Call the demo number
+    toast.info("Call +1 980-351-5351 to hear ringAI in action!");
+    window.open("tel:+19803515351", "_self");
+  };
+
   return (
     <section className="relative min-h-screen flex items-center overflow-hidden bg-gradient-hero">
       {/* Decorative elements */}
@@ -40,11 +51,21 @@ export const HeroSection = () => {
             </p>
 
             <div className="mt-8 flex flex-col sm:flex-row gap-3">
-              <Button variant="hero" size="xl">
-                Try ringAI Free
-                <ArrowRight className="w-5 h-5" />
-              </Button>
-              <Button variant="hero-outline" size="xl">
+              <SignedOut>
+                <SignInButton mode="modal" forceRedirectUrl="/onboarding">
+                  <Button variant="hero" size="xl">
+                    Try ringAI Free
+                    <ArrowRight className="w-5 h-5" />
+                  </Button>
+                </SignInButton>
+              </SignedOut>
+              <SignedIn>
+                <Button variant="hero" size="xl" onClick={() => navigate("/onboarding")}>
+                  Try ringAI Free
+                  <ArrowRight className="w-5 h-5" />
+                </Button>
+              </SignedIn>
+              <Button variant="hero-outline" size="xl" onClick={handleDemoCall}>
                 <Phone className="w-5 h-5" />
                 Hear a Demo Call
               </Button>
