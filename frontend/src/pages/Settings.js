@@ -498,6 +498,79 @@ export default function Settings() {
               </div>
             </Card>
 
+            {/* POS Integration */}
+            <Card className="p-6 border-border bg-card">
+              <h3 className="text-base font-heading font-semibold text-foreground mb-4 flex items-center gap-2">
+                <Store className="w-4 h-4" /> POS Integration
+              </h3>
+              
+              {posConnection?.connected ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 rounded-lg border border-success/30 bg-success/5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center">
+                        <CheckCircle2 className="w-5 h-5 text-success" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-foreground capitalize">{posConnection.provider} Connected</p>
+                        <p className="text-xs text-muted-foreground">
+                          {posConnection.location_name || 'Default Location'}
+                          {posConnection.sandbox && <Badge variant="secondary" className="ml-2 text-xs">Sandbox</Badge>}
+                        </p>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={disconnectPos}>
+                      <Unlink className="w-4 h-4 mr-1" /> Disconnect
+                    </Button>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={syncMenuFromPos} disabled={syncing}>
+                      <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+                      {syncing ? 'Syncing...' : 'Sync Menu from POS'}
+                    </Button>
+                    {posConnection.last_menu_sync && (
+                      <span className="text-xs text-muted-foreground">
+                        Last synced: {new Date(posConnection.last_menu_sync).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-xs text-muted-foreground">Connect your POS to automatically sync menu items and submit orders.</p>
+                  
+                  <div className="flex items-center justify-between p-4 rounded-lg border border-border hover:border-primary/50 cursor-pointer transition-colors" onClick={connectSquare}>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                        <Store className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Square</p>
+                        <p className="text-xs text-muted-foreground">Connect your Square account</p>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm">
+                      <Link2 className="w-4 h-4 mr-1" /> Connect
+                    </Button>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-4 rounded-lg border border-border opacity-50">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                        <Store className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Toast</p>
+                        <p className="text-xs text-muted-foreground">Coming soon</p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary">Coming Soon</Badge>
+                  </div>
+                </div>
+              )}
+            </Card>
+
             <Card className="p-6 border-border bg-card">
               <h3 className="text-base font-heading font-semibold text-foreground mb-2">Required API Keys</h3>
               <p className="text-xs text-muted-foreground mb-4">Add these environment variables to enable live features:</p>
