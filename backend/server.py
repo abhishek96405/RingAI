@@ -23,7 +23,7 @@ db = client[os.environ.get('DB_NAME', 'ringai_db')]
 # Gemini + Pipeline imports
 from gemini_service import (
     is_gemini_available, parse_menu_text, analyse_call_transcript,
-    get_conversation_response, build_system_prompt,
+    get_conversation_response, build_system_prompt, _clean_for_speech,
 )
 from call_pipeline import (
     is_pipeline_available, create_call_pipeline,
