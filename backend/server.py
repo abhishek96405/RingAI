@@ -504,16 +504,107 @@ async def simulate_call(restaurant_id: str = Query(...)):
         })
 
     duration = random.randint(90, 300)
-    quality = random.randint(78, 99)
     is_escalated = random.random() < 0.08
     status = "ESCALATED" if is_escalated else "COMPLETED"
 
-    # Build realistic transcript
+    # Build transcript — use Gemini when available
     restaurant_name = restaurant.get("name", "the restaurant")
     item_names = [i["name"] for i in items_for_order]
+
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    system_prompt = None
+    if config and is_gemini_available():
+        system_prompt = build_system_prompt(
+            restaurant_name=restaurant_name,
+            cuisine_type=restaurant.get("cuisine_type", ""),
+            persona=config.get("persona", "friendly"),
+            business_rules=config.get("business_rules", []),
+            escalation_rules=config.get("escalation_rules", []),
+            menu_items=menu_items,
+            disclosure_text=config.get("disclosure_text", f"Hi! I'm the AI assistant for {restaurant_name}."),
+            upsell_enabled=config.get("upsell_enabled", True),
+            delivery_enabled=config.get("delivery_enabled", True),
+            delivery_minimum=config.get("delivery_minimum", 1500),
+        )
+
+    transcript = []
+    if system_prompt:
+        # Use real Gemini conversation
+        try:
+            greeting = await get_conversation_response(system_prompt, [], "")
+            if not greeting or len(greeting) < 5:
+                greeting = f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?"
+            transcript.append({"role": "ai", "text": greeting, "timestamp": "00:00"})
+
+            customer_msg1 = "Hi, I'd like to place an order for pickup."
+            transcript.append({"role": "customer", "text": customer_msg1, "timestamp": "00:03"})
+            ai_resp1 = await get_conversation_response(system_prompt, transcript, customer_msg1)
+            transcript.append({"role": "ai", "text": ai_resp1, "timestamp": "00:05"})
+
+            customer_msg2 = f"Can I get a {item_names[0]} please?"
+            transcript.append({"role": "customer", "text": customer_msg2, "timestamp": "00:08"})
+            ai_resp2 = await get_conversation_response(system_prompt, transcript, customer_msg2)
+            transcript.append({"role": "ai", "text": ai_resp2, "timestamp": "00:10"})
+
+            if len(item_names) > 1:
+                customer_msg3 = f"And also a {item_names[1]}."
+                transcript.append({"role": "customer", "text": customer_msg3, "timestamp": "00:15"})
+                ai_resp3 = await get_conversation_response(system_prompt, transcript, customer_msg3)
+                transcript.append({"role": "ai", "text": ai_resp3, "timestamp": "00:17"})
+
+            customer_msg_done = "That's all, thanks."
+            transcript.append({"role": "customer", "text": customer_msg_done, "timestamp": "00:22"})
+            ai_resp_done = await get_conversation_response(system_prompt, transcript, customer_msg_done)
+            transcript.append({"role": "ai", "text": ai_resp_done, "timestamp": "00:25"})
+
+            customer_confirm = "Yes, that's right."
+            transcript.append({"role": "customer", "text": customer_confirm, "timestamp": "00:30"})
+            ai_close = await get_conversation_response(system_prompt, transcript, customer_confirm)
+            transcript.append({"role": "ai", "text": ai_close, "timestamp": "00:33"})
+        except Exception as e:
+            logger.error(f"Gemini conversation error in simulate_call: {e}")
+            transcript = _build_mock_transcript(restaurant_name, item_names, items_for_order, total)
+    else:
+        transcript = _build_mock_transcript(restaurant_name, item_names, items_for_order, total)
+
+    # Post-call analysis — use Gemini when available
+    order_json = {"items": items_for_order, "total": total, "type": random.choice(["pickup", "pickup", "delivery"]), "special_instructions": ""}
+    analysis = await analyse_call_transcript(transcript, order_json, menu_items)
+    quality = analysis.get("quality_score", random.randint(78, 99))
+
+    now = datetime.now(timezone.utc)
+    start_offset = random.randint(0, 3600 * 4)
+    started_at = (now - timedelta(seconds=start_offset)).isoformat()
+    ended_at = (now - timedelta(seconds=start_offset - duration)).isoformat()
+
+    call = CallRecord(
+        restaurant_id=restaurant_id,
+        caller_number=phone,
+        caller_name=caller,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=duration,
+        status=status,
+        contained_by_ai=not is_escalated,
+        escalated_to_human=is_escalated,
+        transcript=transcript,
+        order_json=order_json,
+        pos_order_id=f"POS-{random.randint(10000,99999)}" if not is_escalated else None,
+        quality_score=quality,
+        analysis_json=analysis,
+        claude_tokens_used=0,
+        order_total=total,
+    )
+
+    await db.call_records.insert_one(call.model_dump())
+    return call.model_dump()
+
+
+def _build_mock_transcript(restaurant_name, item_names, items_for_order, total):
+    """Fallback mock transcript when Gemini is not available."""
     transcript = [
         {"role": "ai", "text": f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?", "timestamp": "00:00"},
-        {"role": "customer", "text": f"Hi, I'd like to place an order for pickup.", "timestamp": "00:03"},
+        {"role": "customer", "text": "Hi, I'd like to place an order for pickup.", "timestamp": "00:03"},
         {"role": "ai", "text": "Of course! What would you like to order?", "timestamp": "00:05"},
         {"role": "customer", "text": f"Can I get a {item_names[0]} please?", "timestamp": "00:08"},
         {"role": "ai", "text": f"Great choice! One {item_names[0]}. Anything else?", "timestamp": "00:10"},
@@ -529,43 +620,7 @@ async def simulate_call(restaurant_id: str = Query(...)):
         {"role": "customer", "text": "Yes, that's right.", "timestamp": "00:30"},
         {"role": "ai", "text": f"Your order has been placed! It'll be ready for pickup in about 20 minutes. Thank you for calling {restaurant_name}!", "timestamp": "00:33"},
     ])
-
-    analysis = {
-        "quality_score": quality,
-        "order_accuracy": "accurate",
-        "issues": random.sample(["Minor pause before confirming order", "Could have offered drinks", "Slight delay in greeting"], random.randint(0, 1)),
-        "highlights": random.sample(["Clear order readback", "Friendly tone", "Efficient flow", "Natural conversation", "Proper greeting"], random.randint(2, 4)),
-        "menu_suggestions": [],
-        "rule_suggestions": [],
-        "summary": f"Successful {len(items_for_order)}-item pickup order from {caller}. Call handled smoothly with clear confirmation."
-    }
-
-    now = datetime.now(timezone.utc)
-    start_offset = random.randint(0, 3600 * 4)  # Within last 4 hours
-    started_at = (now - timedelta(seconds=start_offset)).isoformat()
-    ended_at = (now - timedelta(seconds=start_offset - duration)).isoformat()
-
-    call = CallRecord(
-        restaurant_id=restaurant_id,
-        caller_number=phone,
-        caller_name=caller,
-        started_at=started_at,
-        ended_at=ended_at,
-        duration_seconds=duration,
-        status=status,
-        contained_by_ai=not is_escalated,
-        escalated_to_human=is_escalated,
-        transcript=transcript,
-        order_json={"items": items_for_order, "total": total, "type": random.choice(["pickup", "pickup", "delivery"]), "special_instructions": ""},
-        pos_order_id=f"POS-{random.randint(10000,99999)}" if not is_escalated else None,
-        quality_score=quality,
-        analysis_json=analysis,
-        claude_tokens_used=random.randint(800, 2500),
-        order_total=total,
-    )
-
-    await db.call_records.insert_one(call.model_dump())
-    return call.model_dump()
+    return transcript
 
 @api_router.post("/demo/seed")
 async def seed_demo_data(restaurant_id: str = Query(...)):
