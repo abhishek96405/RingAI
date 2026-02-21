@@ -88,6 +88,41 @@ export default function Settings() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const connectSquare = async () => {
+    try {
+      const restaurantId = getRestaurantId();
+      const res = await api.get(`/pos/square/connect?restaurant_id=${restaurantId}`);
+      window.location.href = res.data.authorization_url;
+    } catch (err) {
+      toast.error("Failed to initiate Square connection");
+    }
+  };
+
+  const disconnectPos = async () => {
+    try {
+      const restaurantId = getRestaurantId();
+      await api.delete(`/pos/connection?restaurant_id=${restaurantId}`);
+      setPosConnection({ connected: false });
+      toast.success("POS disconnected");
+    } catch (err) {
+      toast.error("Failed to disconnect POS");
+    }
+  };
+
+  const syncMenuFromPos = async () => {
+    setSyncing(true);
+    try {
+      const restaurantId = getRestaurantId();
+      const res = await api.post(`/pos/sync-menu?restaurant_id=${restaurantId}`);
+      toast.success(`Synced ${res.data.items_synced} menu items from ${posConnection.provider}`);
+      fetchData(); // Refresh to show updated sync time
+    } catch (err) {
+      toast.error("Failed to sync menu");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const saveRestaurant = async () => {
     setSaving(true);
     try {
