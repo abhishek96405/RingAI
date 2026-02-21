@@ -939,8 +939,8 @@ async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)
     end_phrases = ["goodbye", "thank you for calling", "have a great day", "bye"]
     should_end = any(phrase in ai_response.lower() for phrase in end_phrases)
     
-    host = request.headers.get("host", "localhost")
-    callback_url = f"https://{host}/api/twilio/handle-speech?restaurant_id={restaurant_id}"
+    public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
+    callback_url = f"https://{public_host}/api/twilio/handle-speech?restaurant_id={restaurant_id}"
     
     if should_end:
         twiml = f'''<?xml version="1.0"?>
