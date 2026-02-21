@@ -55,11 +55,11 @@ export const Navbar = () => {
 
         {/* Desktop CTA */}
         <div className="hidden md:flex items-center gap-3">
-          <Button variant="ghost" size="sm">
-            Log In
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/dashboard">Dashboard</Link>
           </Button>
-          <Button variant="premium" size="sm">
-            Get Started
+          <Button variant="premium" size="sm" asChild>
+            <Link to="/onboarding">Get Started</Link>
           </Button>
         </div>
 
