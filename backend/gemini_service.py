@@ -343,6 +343,22 @@ def _mock_parse_menu(menu_text: str) -> Dict[str, Any]:
 # 4. POST-CALL ANALYSIS (structured JSON output)
 # ---------------------------------------------------------------------------
 
+ANALYSIS_SYSTEM_PROMPT = """You are a call quality analyst. Analyze the transcript and return a JSON object.
+
+IMPORTANT: Return ONLY valid JSON, no markdown, no explanations.
+
+Required JSON format:
+{"quality_score":85,"order_accuracy":"accurate","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"Brief summary"}
+
+Rules:
+- quality_score: integer 1-100
+- order_accuracy: "accurate", "minor_issues", or "inaccurate"
+- issues/highlights: short strings, max 5 items each
+- summary: one sentence, max 100 characters
+
+Return the JSON now:"""
+
+
 async def analyse_call_transcript(
     transcript: List[Dict],
     order_json: Optional[Dict] = None,
@@ -353,45 +369,70 @@ async def analyse_call_transcript(
     if not client:
         return _mock_call_analysis(transcript, order_json)
 
-    try:
-        transcript_text = "\n".join(
-            f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e['text']}"
-            for e in transcript
-        )
-        order_text = json.dumps(order_json, indent=2) if order_json else "No order placed"
+    # Truncate transcript to avoid token limits (P1 fix)
+    # Keep first 2 and last 4 exchanges for context
+    if len(transcript) > 8:
+        truncated = transcript[:2] + transcript[-4:]
+        transcript_for_analysis = truncated
+    else:
+        transcript_for_analysis = transcript
 
+    transcript_text = "\n".join(
+        f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e['text'][:150]}"
+        for e in transcript_for_analysis
+    )
+    
+    # Keep transcript concise to avoid budget issues
+    if len(transcript_text) > 1200:
+        transcript_text = transcript_text[:1200] + "..."
+
+    try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": 'Return ONLY raw JSON. No markdown. Format: {"quality_score":85,"order_accuracy":"accurate","issues":["..."],"highlights":["..."],"menu_suggestions":[],"rule_suggestions":[],"summary":"..."}'},
-                {"role": "user", "content": f"Rate this restaurant AI call 1-100. TRANSCRIPT:\n{transcript_text[:1500]}"}
+                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": f"TRANSCRIPT:\n{transcript_text}"}
             ],
-            temperature=0.2,
-            max_tokens=400,
+            temperature=0.1,  # Lower temp for more consistent JSON
+            max_tokens=500,   # Increased to prevent truncation
         )
 
-        text = response.choices[0].message.content.strip()
-        # Robust JSON extraction
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        # Find the JSON object boundaries
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            text = text[start:end]
-        # Fix common JSON issues
-        text = text.replace('\n', ' ').replace('\r', '')
-
-        result = json.loads(text)
+        raw_text = response.choices[0].message.content.strip()
+        logger.debug(f"Gemini analysis raw response: {raw_text[:200]}...")
+        
+        # Step 1: Try to repair and parse JSON
+        repaired_text = _repair_json(raw_text)
+        
+        try:
+            result = json.loads(repaired_text)
+        except json.JSONDecodeError:
+            # Step 2: Try regex extraction as fallback
+            logger.warning(f"JSON repair failed, attempting regex extraction. Raw: {raw_text[:100]}...")
+            result = _extract_json_fields(
+                raw_text, 
+                ["quality_score", "order_accuracy", "issues", "highlights", "summary"]
+            )
+            if not result or "quality_score" not in result:
+                # Complete failure - use mock
+                logger.error(f"JSON extraction failed completely. Raw: {raw_text[:200]}")
+                return _mock_call_analysis(transcript, order_json)
+        
+        # Validate and normalize result
         result["quality_score"] = max(1, min(100, int(result.get("quality_score", 85))))
+        result["order_accuracy"] = result.get("order_accuracy", "accurate")
         result.setdefault("issues", [])
         result.setdefault("highlights", [])
         result.setdefault("menu_suggestions", [])
         result.setdefault("rule_suggestions", [])
-        result.setdefault("summary", "Call analysed by Gemini 2.5 Flash.")
+        result.setdefault("summary", f"Call with {len(transcript)} exchanges analyzed.")
+        
+        # Ensure lists are actually lists
+        for key in ["issues", "highlights", "menu_suggestions", "rule_suggestions"]:
+            if not isinstance(result.get(key), list):
+                result[key] = []
+        
         return result
+        
     except Exception as e:
         logger.error(f"Gemini analysis error: {e}")
         return _mock_call_analysis(transcript, order_json)
