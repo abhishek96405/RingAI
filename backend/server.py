@@ -459,13 +459,24 @@ async def confirm_menu(restaurant_id: str = Query(...), items: List[Dict[str, An
 
 @api_router.post("/onboarding/activate")
 async def activate_restaurant(data: OnboardingActivate):
-    """Activate restaurant and assign phone number"""
+    """Activate restaurant and assign the real Twilio phone number"""
+    # Get the real Twilio phone number from environment
+    twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER", f"+1555{random.randint(1000000,9999999)}")
+    
+    # Remove this phone number from any other restaurant (transfer ownership)
+    await db.restaurants.update_many(
+        {"phone_number": twilio_phone},
+        {"$set": {"phone_number": None}}
+    )
+    
+    # Assign to this restaurant
     result = await db.restaurants.update_one(
         {"id": data.restaurant_id},
-        {"$set": {"is_active": True, "phone_number": f"+1555{random.randint(1000000,9999999)}"}}
+        {"$set": {"is_active": True, "phone_number": twilio_phone}}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
+    
     restaurant = await db.restaurants.find_one({"id": data.restaurant_id}, {"_id": 0})
     return restaurant
 
