@@ -29,8 +29,21 @@ const navItems = [
 
 export const AppLayout = ({ children }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [restaurant, setRestaurant] = useState(null);
+
+  useEffect(() => {
+    const restaurantId = getRestaurantId();
+    if (!restaurantId) {
+      navigate("/onboarding");
+      return;
+    }
+    getRestaurant(restaurantId)
+      .then((res) => setRestaurant(res.data))
+      .catch(() => navigate("/onboarding"));
+  }, [navigate]);
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
