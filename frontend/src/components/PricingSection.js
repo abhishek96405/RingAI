@@ -67,6 +67,14 @@ const plans = [
 
 export const PricingSection = () => {
   const [annual, setAnnual] = useState(false);
+  const navigate = useNavigate();
+
+  const handleCTA = (cta) => {
+    if (cta === "Contact Sales") {
+      toast.info("Contact us at sales@ringai.com");
+      window.open("mailto:sales@ringai.com?subject=Enterprise%20Inquiry", "_blank");
+    }
+  };
 
   return (
     <section id="pricing" className="py-24 lg:py-32 bg-background">
