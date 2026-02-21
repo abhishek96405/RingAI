@@ -546,7 +546,7 @@ async def simulate_call(restaurant_id: str = Query(...)):
         ])
     transcript.extend([
         {"role": "customer", "text": "That's all, thanks.", "timestamp": "00:22"},
-        {"role": "ai", "text": f"Let me read back your order: {', '.join([f'{i['quantity']}x {i['name']}' for i in items_for_order])}. Your total is ${total/100:.2f}. Is that correct?", "timestamp": "00:25"},
+        {"role": "ai", "text": "Let me read back your order: " + ", ".join([str(i["quantity"]) + "x " + i["name"] for i in items_for_order]) + f". Your total is ${total/100:.2f}. Is that correct?", "timestamp": "00:25"},
         {"role": "customer", "text": "Yes, that's right.", "timestamp": "00:30"},
         {"role": "ai", "text": f"Your order has been placed! It'll be ready for pickup in about 20 minutes. Thank you for calling {restaurant_name}!", "timestamp": "00:33"},
     ])
