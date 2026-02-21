@@ -941,8 +941,10 @@ async def twilio_media_stream(websocket: WebSocket):
 @api_router.get("/status")
 async def get_service_status():
     """Check which AI and external services are configured and available."""
+    test_mode = get_test_mode_status()
     return {
         "api": "operational",
+        "mode": test_mode["mode"],
         "gemini": {
             "available": is_gemini_available(),
             "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
@@ -950,6 +952,15 @@ async def get_service_status():
         "twilio": {
             "available": bool(os.environ.get("TWILIO_ACCOUNT_SID")),
             "phone_number": os.environ.get("TWILIO_PHONE_NUMBER"),
+            "status": test_mode["integrations"]["twilio"]["status"],
+        },
+        "stripe": {
+            "status": test_mode["integrations"]["stripe"]["status"],
+            "configured": test_mode["integrations"]["stripe"]["configured"],
+        },
+        "clerk": {
+            "status": test_mode["integrations"]["clerk"]["status"],
+            "configured": test_mode["integrations"]["clerk"]["configured"],
         },
         "pipecat_pipeline": {
             "available": is_pipeline_available(),
