@@ -16,14 +16,14 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ.get('DB_NAME', 'ringai_db')]
 
 # Gemini + Pipeline imports
 from gemini_service import (
     is_gemini_available, parse_menu_text, analyse_call_transcript,
-    get_conversation_response, build_system_prompt, _clean_for_speech,
+    get_conversation_response, build_system_prompt,
 )
 from call_pipeline import (
     is_pipeline_available, create_call_pipeline,
@@ -34,10 +34,6 @@ from test_mode import (
     get_test_mode_status, get_test_scenarios, get_scenario_by_id,
     is_sandbox_mode, SAMPLE_CUSTOMER_SCENARIOS,
 )
-from pos_integration import (
-    PosFactory, OrderProcessor, encrypt_token, decrypt_token,
-    SquareAdapter,
-)
 
 # Create the main app
 app = FastAPI(title="RingAI API", version="1.0.0")
@@ -46,9 +42,6 @@ api_router = APIRouter(prefix="/api")
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Order processor instance
-order_processor = OrderProcessor(db)
 
 # ============================================================
 # PYDANTIC MODELS
@@ -174,24 +167,6 @@ class CallAnalysis(BaseModel):
     menu_suggestions: List[str]
     rule_suggestions: List[str]
     summary: str
-
-
-# POS Connection Model
-class PosConnection(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    restaurant_id: str
-    provider: str  # 'square', 'toast', 'clover'
-    encrypted_access_token: str
-    encrypted_refresh_token: Optional[str] = None
-    merchant_id: Optional[str] = None
-    location_id: Optional[str] = None
-    location_name: Optional[str] = None
-    sandbox: bool = True
-    is_active: bool = True
-    connected_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    last_menu_sync: Optional[str] = None
-    token_expires_at: Optional[str] = None
 
 class DashboardSummary(BaseModel):
     total_calls: int
@@ -484,24 +459,13 @@ async def confirm_menu(restaurant_id: str = Query(...), items: List[Dict[str, An
 
 @api_router.post("/onboarding/activate")
 async def activate_restaurant(data: OnboardingActivate):
-    """Activate restaurant and assign the real Twilio phone number"""
-    # Get the real Twilio phone number from environment
-    twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER", f"+1555{random.randint(1000000,9999999)}")
-    
-    # Remove this phone number from any other restaurant (transfer ownership)
-    await db.restaurants.update_many(
-        {"phone_number": twilio_phone},
-        {"$set": {"phone_number": None}}
-    )
-    
-    # Assign to this restaurant
+    """Activate restaurant and assign phone number"""
     result = await db.restaurants.update_one(
         {"id": data.restaurant_id},
-        {"$set": {"is_active": True, "phone_number": twilio_phone}}
+        {"$set": {"is_active": True, "phone_number": f"+1555{random.randint(1000000,9999999)}"}}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-    
     restaurant = await db.restaurants.find_one({"id": data.restaurant_id}, {"_id": 0})
     return restaurant
 
@@ -878,195 +842,14 @@ async def twilio_incoming_call(request: Request):
 
     # Build WebSocket URL for Pipecat
     host = request.headers.get("host", "localhost")
-    # Always use wss:// for production (behind HTTPS proxy)
-    forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    scheme = "wss" if forwarded_proto == "https" or request.url.scheme == "https" else "ws"
+    scheme = "wss" if request.url.scheme == "https" else "ws"
     ws_url = f"{scheme}://{host}/api/twilio/media-stream"
 
-    # Check if Pipecat pipeline is available (requires native Google API key)
-    if is_pipeline_available():
-        twiml = generate_twiml_stream_response(ws_url, call_sid)
-    else:
-        # Fallback: Use Twilio's built-in TTS with interactive voice menu
-        restaurant_name = restaurant.get("name", "the restaurant")
-        
-        # Use public URL from environment or construct from forwarded headers
-        public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
-        callback_url = f"https://{public_host}/api/twilio/handle-speech?restaurant_id={restaurant['id']}"
-        
-        # Natural greeting - no repetition
-        greeting = f"Hi there! Thanks for calling {restaurant_name}. What can I get for you today?"
-        
-        twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="Polly.Joanna-Neural">{greeting}</Say>
-    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
-    <Say voice="Polly.Joanna-Neural">I didn't catch that. What would you like to order?</Say>
-    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
-    <Say voice="Polly.Joanna-Neural">Sorry, I'm having trouble hearing you. Please try calling back. Bye!</Say>
-</Response>'''
-    
+    twiml = generate_twiml_stream_response(ws_url, call_sid)
     return Response(content=twiml, media_type="application/xml")
 
 
-
-@app.post("/api/twilio/handle-speech")
-async def handle_twilio_speech(request: Request, restaurant_id: str = Query(...)):
-    """
-    Handle speech input from Twilio Gather and respond using Gemini.
-    This is the fallback when Pipecat+Gemini Live Audio isn't available.
-    """
-    form = await request.form()
-    speech_result = form.get("SpeechResult", "")
-    call_sid = form.get("CallSid", "")
-    
-    logger.info(f"Speech received: '{speech_result}' (call: {call_sid})")
-    
-    if not speech_result:
-        return Response(
-            content='''<?xml version="1.0"?><Response>
-                <Say voice="Polly.Joanna">I didn't catch that. Could you please repeat?</Say>
-                <Gather input="speech" timeout="5" speechTimeout="auto" method="POST">
-                    <Say voice="Polly.Joanna">I'm listening.</Say>
-                </Gather>
-            </Response>''',
-            media_type="application/xml"
-        )
-    
-    # Get restaurant info for context
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
-    menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
-    
-    # Get or create conversation history for this call
-    call_data = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
-    transcript = call_data.get("transcript", []) if call_data else []
-    
-    # Add customer message to transcript
-    transcript.append({"role": "customer", "text": speech_result})
-    
-    # Build system prompt and get AI response
-    system_prompt = build_system_prompt(
-        restaurant_name=restaurant.get("name", "the restaurant") if restaurant else "the restaurant",
-        cuisine_type=restaurant.get("cuisine_type", "") if restaurant else "",
-        persona=config.get("persona", "friendly") if config else "friendly",
-        business_rules=config.get("business_rules", []) if config else [],
-        escalation_rules=config.get("escalation_rules", []) if config else [],
-        menu_items=menu_items,
-        disclosure_text="",
-        upsell_enabled=config.get("upsell_enabled", True) if config else True,
-        delivery_enabled=config.get("delivery_enabled", True) if config else True,
-        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
-    )
-    
-    # Get AI response using Gemini
-    ai_response = await get_conversation_response(system_prompt, transcript, speech_result)
-    
-    # Clean response for natural speech (remove markdown, etc.)
-    clean_response = _clean_for_speech(ai_response)
-    
-    # Add AI response to transcript
-    transcript.append({"role": "ai", "text": ai_response})
-    
-    # Save updated transcript
-    await db.active_calls.update_one(
-        {"call_sid": call_sid},
-        {"$set": {"transcript": transcript}},
-        upsert=True
-    )
-    
-    # Check if conversation should end
-    end_phrases = ["goodbye", "thank you for calling", "have a great day", "bye", "take care"]
-    should_end = any(phrase in ai_response.lower() for phrase in end_phrases)
-    
-    public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
-    callback_url = f"https://{public_host}/api/twilio/handle-speech?restaurant_id={restaurant_id}"
-    
-    if should_end:
-        twiml = f'''<?xml version="1.0"?>
-<Response>
-    <Say voice="Polly.Joanna-Neural">{clean_response}</Say>
-</Response>'''
-    else:
-        twiml = f'''<?xml version="1.0"?>
-<Response>
-    <Say voice="Polly.Joanna-Neural">{clean_response}</Say>
-    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
-    <Say voice="Polly.Joanna-Neural">Anything else?</Say>
-    <Gather input="speech" timeout="4" speechTimeout="auto" action="{callback_url}" method="POST" />
-</Response>'''
-    
-    return Response(content=twiml, media_type="application/xml")
-
-
-@app.post("/api/twilio/call-status")
-async def twilio_call_status(request: Request):
-    """
-    Twilio status callback - called when call ends.
-    Saves the call transcript and analysis to the database.
-    """
-    form = await request.form()
-    call_sid = form.get("CallSid", "")
-    call_status = form.get("CallStatus", "")
-    duration = int(form.get("CallDuration", "0") or "0")
-    
-    logger.info(f"Call status update: {call_sid} -> {call_status} (duration: {duration}s)")
-    
-    if call_status in ["completed", "busy", "no-answer", "failed"]:
-        # Get the active call data with transcript
-        active_call = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
-        
-        if active_call:
-            transcript = active_call.get("transcript", [])
-            restaurant_id = active_call.get("restaurant_id", "demo-restaurant-001")
-            
-            # Get menu items for analysis
-            menu_items = await db.menu_items.find(
-                {"restaurant_id": restaurant_id, "available": True}, {"_id": 0}
-            ).to_list(100)
-            
-            # Run AI analysis on the transcript
-            analysis = await analyse_call_transcript(transcript, None, menu_items)
-            
-            # Determine status
-            status_map = {
-                "completed": "COMPLETED",
-                "busy": "FAILED",
-                "no-answer": "FAILED",
-                "failed": "FAILED",
-            }
-            
-            # Create call record
-            call_record = CallRecord(
-                restaurant_id=restaurant_id,
-                twilio_call_sid=call_sid,
-                caller_number=active_call.get("caller_number", ""),
-                caller_name=f"Caller {active_call.get('caller_number', '')[-4:]}",
-                started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
-                ended_at=datetime.now(timezone.utc).isoformat(),
-                duration_seconds=duration,
-                status=status_map.get(call_status, "COMPLETED"),
-                contained_by_ai=call_status == "completed",
-                escalated_to_human=False,
-                transcript=transcript,
-                quality_score=analysis.get("quality_score", 85),
-                analysis_json=analysis,
-                order_total=0,
-            )
-            
-            # Save to database
-            await db.call_records.insert_one(call_record.model_dump())
-            
-            # Clean up active call
-            await db.active_calls.delete_one({"call_sid": call_sid})
-            
-            logger.info(f"Saved call record for {call_sid}")
-        else:
-            logger.warning(f"No active call found for {call_sid}")
-    
-    return Response(content="OK", media_type="text/plain")
-
-
+@app.websocket("/api/twilio/media-stream")
 async def twilio_media_stream(websocket: WebSocket):
     """
     WebSocket endpoint for Twilio media streams.
@@ -1349,220 +1132,6 @@ async def run_test_scenario(restaurant_id: str = Query(...), scenario_id: int = 
         },
         "ai_powered": is_gemini_available(),
     }
-
-
-# ============================================================
-# POS INTEGRATION ENDPOINTS
-# ============================================================
-
-@api_router.get("/pos/providers")
-async def get_pos_providers():
-    """Get list of supported POS providers."""
-    return {
-        "providers": [
-            {
-                "id": "square",
-                "name": "Square",
-                "description": "Accept payments, manage inventory, and sync orders",
-                "supported": True,
-            },
-            {
-                "id": "toast",
-                "name": "Toast",
-                "description": "Restaurant-specific POS with online ordering",
-                "supported": False,
-                "coming_soon": True,
-            },
-            {
-                "id": "clover",
-                "name": "Clover",
-                "description": "Flexible POS for retail and restaurants",
-                "supported": False,
-                "coming_soon": True,
-            },
-        ]
-    }
-
-
-@api_router.get("/pos/square/connect")
-async def square_connect(restaurant_id: str = Query(...)):
-    """
-    Initiate Square OAuth flow.
-    Returns authorization URL for frontend to redirect user.
-    """
-    import secrets
-    
-    # Generate state token for CSRF protection
-    state = f"{restaurant_id}:{secrets.token_urlsafe(16)}"
-    
-    # Store state temporarily (should use Redis in production)
-    await db.oauth_states.insert_one({
-        "state": state,
-        "restaurant_id": restaurant_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    
-    # Build redirect URI
-    public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
-    redirect_uri = f"https://{public_host}/api/pos/square/callback"
-    
-    # Get Square sandbox adapter for OAuth URL
-    sandbox = os.environ.get("SQUARE_ENVIRONMENT", "sandbox") == "sandbox"
-    adapter = SquareAdapter("", sandbox=sandbox)
-    
-    auth_url = adapter.get_oauth_url(redirect_uri, state)
-    
-    return {
-        "authorization_url": auth_url,
-        "state": state,
-    }
-
-
-@api_router.get("/pos/square/callback")
-async def square_callback(code: str = Query(None), state: str = Query(None), error: str = Query(None)):
-    """
-    Square OAuth callback. Exchanges code for access token.
-    Redirects to frontend settings page on completion.
-    """
-    from fastapi.responses import RedirectResponse
-    
-    public_host = os.environ.get("PUBLIC_HOST", "ringai-preview.preview.emergentagent.com")
-    frontend_url = f"https://{public_host}"
-    
-    if error:
-        logger.error(f"Square OAuth error: {error}")
-        return RedirectResponse(f"{frontend_url}/settings?pos_error={error}")
-    
-    if not code or not state:
-        return RedirectResponse(f"{frontend_url}/settings?pos_error=missing_params")
-    
-    # Verify state
-    oauth_state = await db.oauth_states.find_one({"state": state})
-    if not oauth_state:
-        return RedirectResponse(f"{frontend_url}/settings?pos_error=invalid_state")
-    
-    restaurant_id = oauth_state["restaurant_id"]
-    
-    # Clean up state
-    await db.oauth_states.delete_one({"state": state})
-    
-    # Exchange code for token
-    redirect_uri = f"https://{public_host}/api/pos/square/callback"
-    sandbox = os.environ.get("SQUARE_ENVIRONMENT", "sandbox") == "sandbox"
-    adapter = SquareAdapter("", sandbox=sandbox)
-    
-    token_result = await adapter.exchange_code(code, redirect_uri)
-    
-    if not token_result.get("success"):
-        logger.error(f"Square token exchange failed: {token_result.get('error')}")
-        return RedirectResponse(f"{frontend_url}/settings?pos_error=token_exchange_failed")
-    
-    # Get locations
-    adapter = SquareAdapter(token_result["access_token"], sandbox=sandbox)
-    locations = await adapter.get_locations()
-    
-    # Use first location by default
-    location = locations[0] if locations else {}
-    
-    # Store connection with encrypted token
-    connection = PosConnection(
-        restaurant_id=restaurant_id,
-        provider="square",
-        encrypted_access_token=encrypt_token(token_result["access_token"]),
-        encrypted_refresh_token=encrypt_token(token_result.get("refresh_token", "")),
-        merchant_id=token_result.get("merchant_id"),
-        location_id=location.get("id"),
-        location_name=location.get("name"),
-        sandbox=sandbox,
-        token_expires_at=token_result.get("expires_at"),
-    )
-    
-    # Upsert connection
-    await db.pos_connections.update_one(
-        {"restaurant_id": restaurant_id, "provider": "square"},
-        {"$set": connection.model_dump()},
-        upsert=True,
-    )
-    
-    logger.info(f"Square connected for restaurant {restaurant_id}")
-    
-    return RedirectResponse(f"{frontend_url}/settings?pos_connected=square")
-
-
-@api_router.get("/pos/connection")
-async def get_pos_connection(restaurant_id: str = Query(...)):
-    """Get current POS connection status for a restaurant."""
-    connection = await db.pos_connections.find_one(
-        {"restaurant_id": restaurant_id, "is_active": True},
-        {"_id": 0, "encrypted_access_token": 0, "encrypted_refresh_token": 0}
-    )
-    
-    if not connection:
-        return {"connected": False}
-    
-    return {
-        "connected": True,
-        "provider": connection.get("provider"),
-        "location_id": connection.get("location_id"),
-        "location_name": connection.get("location_name"),
-        "sandbox": connection.get("sandbox"),
-        "connected_at": connection.get("connected_at"),
-        "last_menu_sync": connection.get("last_menu_sync"),
-    }
-
-
-@api_router.delete("/pos/connection")
-async def disconnect_pos(restaurant_id: str = Query(...)):
-    """Disconnect POS integration."""
-    result = await db.pos_connections.delete_many({"restaurant_id": restaurant_id})
-    return {"disconnected": result.deleted_count > 0}
-
-
-@api_router.post("/pos/sync-menu")
-async def sync_menu_from_pos(restaurant_id: str = Query(...)):
-    """Sync menu items from connected POS."""
-    result = await order_processor.sync_menu_from_pos(restaurant_id)
-    
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Sync failed"))
-    
-    return result
-
-
-@api_router.get("/pos/locations")
-async def get_pos_locations(restaurant_id: str = Query(...)):
-    """Get available locations from connected POS."""
-    connection = await db.pos_connections.find_one(
-        {"restaurant_id": restaurant_id, "is_active": True},
-        {"_id": 0}
-    )
-    
-    if not connection:
-        raise HTTPException(status_code=404, detail="No POS connection found")
-    
-    try:
-        access_token = decrypt_token(connection["encrypted_access_token"])
-        adapter = PosFactory.create_adapter(
-            connection["provider"], access_token, connection.get("sandbox", True)
-        )
-        locations = await adapter.get_locations()
-        return {"locations": locations}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@api_router.put("/pos/location")
-async def update_pos_location(restaurant_id: str = Query(...), location_id: str = Query(...)):
-    """Update selected POS location."""
-    result = await db.pos_connections.update_one(
-        {"restaurant_id": restaurant_id, "is_active": True},
-        {"$set": {"location_id": location_id}}
-    )
-    
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="No POS connection found")
-    
-    return {"updated": True}
 
 
 # ============================================================

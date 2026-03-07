@@ -1,7 +1,7 @@
 """
 Gemini 2.5 Flash Service — Unified AI for RingAI
 
-Uses: Google Gemini 2.5 Flash via OpenAI-compatible API (Emergent LLM gateway)
+Uses: Google Gemini directly via the official OpenAI-compatible Gemini API
 Handles: Menu parsing, post-call analysis, conversation intelligence
 Audio: Handled via Pipecat + Gemini Live Audio API (see call_pipeline.py)
 """
@@ -116,7 +116,7 @@ def _extract_json_fields(text: str, expected_fields: List[str]) -> Dict[str, Any
     return result
 
 # ---------------------------------------------------------------------------
-# Client (lazy-init via OpenAI-compatible SDK for Emergent gateway)
+# Client (lazy-init via the official OpenAI-compatible Gemini API)
 # ---------------------------------------------------------------------------
 _client = None
 MODEL = "gemini/gemini-2.5-flash"
@@ -133,12 +133,15 @@ def _get_client():
 
     try:
         from openai import OpenAI
-        proxy_url = os.environ.get("integration_proxy_url", "https://integrations.emergentagent.com")
+        base_url = os.environ.get(
+            "GEMINI_OPENAI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
         _client = OpenAI(
             api_key=api_key,
-            base_url=f"{proxy_url}/llm/v1",
+            base_url=base_url,
         )
-        logger.info(f"Gemini client initialised via Emergent gateway (model: {MODEL})")
+        logger.info(f"Gemini client initialised via official Gemini OpenAI compatibility endpoint (model: {MODEL})")
         return _client
     except Exception as e:
         logger.error(f"Failed to initialise Gemini client: {e}")
@@ -179,16 +182,11 @@ def build_system_prompt(
     else:
         delivery_line = "- Delivery is not available; only pickup."
 
-    return f"""You are the friendly AI phone assistant for {restaurant_name}, a {cuisine_type} restaurant.
-Your personality: {persona}. Speak naturally like a real person on the phone - warm, conversational, not robotic.
+    return f"""You are the AI phone-order assistant for {restaurant_name}, a {cuisine_type} restaurant.
+Persona: {persona}
 
-IMPORTANT SPEECH RULES:
-- Speak naturally like a human, not a script reader
-- Use contractions (I'm, we've, you'll)
-- Keep responses SHORT - 1-2 sentences max unless listing menu items
-- Don't use bullet points, asterisks, or markdown - this is SPOKEN conversation
-- Don't repeat the restaurant name in every response
-- Say prices naturally like "sixteen ninety-nine" not "$16.99"
+GREETING (say this first):
+"{disclosure_text}"
 
 MENU:
 {menu_text}
@@ -200,12 +198,13 @@ ESCALATION (transfer to human when):
 {escalation_text}
 
 ORDER GUIDELINES:
-- Read back orders naturally: "So that's one margherita and two pepperonis, comes to thirty-five dollars"
-- If an item is unavailable, apologize and suggest something similar
-{"- After the main order, casually suggest a drink or dessert" if upsell_enabled else ""}
+- Always read back the full order with item names, quantities, and total before confirming.
+- If an item is UNAVAILABLE, apologise and suggest a similar alternative.
+{"- Suggest a drink or dessert add-on after the main order." if upsell_enabled else ""}
 {delivery_line}
-- Get their name for the order
-- Be warm and brief - don't over-explain
+- Collect customer name and contact info for the order.
+- Be warm, concise, and never break character.
+- If you cannot resolve a request, say you will transfer to a team member.
 """
 
 
@@ -226,24 +225,6 @@ def _summarize_conversation_context(transcript: List[Dict], max_turns: int = 6) 
     recent_exchanges = transcript[-(max_turns - len(first_exchange)):]
     
     return first_exchange + recent_exchanges
-
-
-def _clean_for_speech(text: str) -> str:
-    """Remove markdown and formatting that sounds bad in TTS."""
-    import re
-    # Remove markdown bold/italic
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)
-    # Remove bullet points
-    text = re.sub(r'^\s*[-•*]\s*', '', text, flags=re.MULTILINE)
-    # Remove markdown headers
-    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
-    # Convert $XX.XX to spoken form
-    text = re.sub(r'\$(\d+)\.(\d{2})', lambda m: f"{m.group(1)} {m.group(2)}", text)
-    # Clean up multiple spaces/newlines
-    text = re.sub(r'\n+', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
 
 
 async def get_conversation_response(

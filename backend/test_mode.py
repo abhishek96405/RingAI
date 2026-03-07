@@ -8,7 +8,7 @@ Otherwise, uses intelligent simulation that mirrors real behavior.
 Supported Sandbox Modes:
 - Twilio Test Credentials: Uses Twilio's test phone numbers
 - Stripe Test Mode: Uses Stripe test keys (sk_test_*)
-- Gemini: Already integrated via Emergent gateway
+- Gemini: Uses the official Google Gemini API when configured
 """
 import os
 import logging
@@ -47,7 +47,7 @@ class IntegrationStatus:
             return {
                 "status": TestModeStatus.SANDBOX,
                 "configured": True,
-                "message": "Gemini 2.5 Flash via Emergent gateway",
+                "message": "Gemini via official Google API",
                 "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
             }
         return {
@@ -112,17 +112,16 @@ class IntegrationStatus:
     
     def _check_clerk(self) -> Dict[str, Any]:
         """Check Clerk auth integration status."""
-        # Check both possible env var names for publishable key
-        publishable = os.environ.get("CLERK_PUBLISHABLE_KEY", "") or os.environ.get("REACT_APP_CLERK_PUBLISHABLE_KEY", "")
+        publishable = os.environ.get("CLERK_PUBLISHABLE_KEY", "")
         secret = os.environ.get("CLERK_SECRET_KEY", "")
         
-        if secret.startswith("sk_test_"):
+        if publishable.startswith("pk_test_") and secret.startswith("sk_test_"):
             return {
                 "status": TestModeStatus.SANDBOX,
                 "configured": True,
                 "message": "Clerk test mode ready",
             }
-        elif secret.startswith("sk_live_"):
+        elif publishable.startswith("pk_live_") and secret.startswith("sk_live_"):
             return {
                 "status": TestModeStatus.LIVE,
                 "configured": True,

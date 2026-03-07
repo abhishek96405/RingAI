@@ -13,9 +13,10 @@ import {
   ShieldCheck,
   ArrowUpRight,
   PhoneCall,
+  Zap,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { getAnalyticsSummary, getRestaurantId } from "@/lib/api";
+import { getAnalyticsSummary, simulateCall, getRestaurantId } from "@/lib/api";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
@@ -75,6 +76,16 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const handleSimulateCall = async () => {
+    try {
+      await simulateCall();
+      toast.success("Demo call simulated!");
+      fetchData();
+    } catch (err) {
+      toast.error("Failed to simulate call");
+    }
+  };
+
   if (loading) {
     return (
       <AppLayout>
@@ -101,6 +112,15 @@ export default function Dashboard() {
           <div>
             <h1 className="text-2xl font-heading font-bold text-foreground">Dashboard</h1>
             <p className="text-sm text-muted-foreground">Overview of your AI phone agent performance</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleSimulateCall}>
+              <Zap className="w-4 h-4" />
+              Simulate Call
+            </Button>
+            <Button variant="premium" size="sm" asChild>
+              <Link to="/calls">View All Calls</Link>
+            </Button>
           </div>
         </div>
 

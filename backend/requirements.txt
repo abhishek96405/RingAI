@@ -22,7 +22,6 @@ dnspython==2.8.0
 docstring_parser==0.17.0
 ecdsa==0.19.1
 email-validator==2.3.0
-emergentintegrations==0.1.0
 fastapi==0.127.1
 fastuuid==0.14.0
 filelock==3.24.2

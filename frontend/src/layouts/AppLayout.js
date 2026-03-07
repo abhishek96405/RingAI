@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { UserButton } from "@clerk/clerk-react";
+import { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -15,9 +14,9 @@ import {
   ChevronRight,
   LogOut,
   Menu,
+  X,
   PhoneCall,
 } from "lucide-react";
-import { getRestaurant, getRestaurantId } from "@/lib/api";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -29,21 +28,8 @@ const navItems = [
 
 export const AppLayout = ({ children }) => {
   const location = useLocation();
-  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [restaurant, setRestaurant] = useState(null);
-
-  useEffect(() => {
-    const restaurantId = getRestaurantId();
-    if (!restaurantId) {
-      navigate("/onboarding");
-      return;
-    }
-    getRestaurant(restaurantId)
-      .then((res) => setRestaurant(res.data))
-      .catch(() => navigate("/onboarding"));
-  }, [navigate]);
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
@@ -145,12 +131,8 @@ export const AppLayout = ({ children }) => {
               <Menu className="w-5 h-5" />
             </button>
             <div>
-              <h1 className="text-sm font-heading font-semibold text-foreground">
-                {restaurant?.name || "Loading..."}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                {restaurant?.cuisine_type || ""}{restaurant?.address ? ` · ${restaurant.address.split(",")[1]?.trim() || ""}` : ""}
-              </p>
+              <h1 className="text-sm font-heading font-semibold text-foreground">Bella Cucina</h1>
+              <p className="text-xs text-muted-foreground">Italian-American · New York, NY</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -158,7 +140,6 @@ export const AppLayout = ({ children }) => {
               <div className="w-1.5 h-1.5 rounded-full bg-success mr-1.5" />
               AI Active
             </Badge>
-            <UserButton afterSignOutUrl="/" />
           </div>
         </header>
 

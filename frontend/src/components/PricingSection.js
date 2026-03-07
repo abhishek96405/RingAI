@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react";
 import { motion } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Check, Sparkles } from "lucide-react";
-import { toast } from "sonner";
 
 const plans = [
   {
@@ -67,14 +64,6 @@ const plans = [
 
 export const PricingSection = () => {
   const [annual, setAnnual] = useState(false);
-  const navigate = useNavigate();
-
-  const handleCTA = (cta) => {
-    if (cta === "Contact Sales") {
-      toast.info("Contact us at sales@ringai.com");
-      window.open("mailto:sales@ringai.com?subject=Enterprise%20Inquiry", "_blank");
-    }
-  };
 
   return (
     <section id="pricing" className="py-24 lg:py-32 bg-background">
@@ -178,40 +167,13 @@ export const PricingSection = () => {
                   ))}
                 </ul>
 
-                {plan.cta === "Contact Sales" ? (
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    className="w-full mt-auto"
-                    onClick={() => handleCTA(plan.cta)}
-                  >
-                    {plan.cta}
-                  </Button>
-                ) : (
-                  <>
-                    <SignedOut>
-                      <SignInButton mode="modal" forceRedirectUrl="/onboarding">
-                        <Button
-                          variant={plan.popular ? "premium" : "outline"}
-                          size="lg"
-                          className="w-full mt-auto"
-                        >
-                          {plan.cta}
-                        </Button>
-                      </SignInButton>
-                    </SignedOut>
-                    <SignedIn>
-                      <Button
-                        variant={plan.popular ? "premium" : "outline"}
-                        size="lg"
-                        className="w-full mt-auto"
-                        onClick={() => navigate("/onboarding")}
-                      >
-                        {plan.cta}
-                      </Button>
-                    </SignedIn>
-                  </>
-                )}
+                <Button
+                  variant={plan.popular ? "premium" : "outline"}
+                  size="lg"
+                  className="w-full mt-auto"
+                >
+                  {plan.cta}
+                </Button>
               </Card>
             </motion.div>
           ))}

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Phone, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -56,20 +55,12 @@ export const Navbar = () => {
 
         {/* Desktop CTA */}
         <div className="hidden md:flex items-center gap-3">
-          <SignedOut>
-            <SignInButton mode="modal">
-              <Button variant="ghost" size="sm">Sign In</Button>
-            </SignInButton>
-            <Button variant="premium" size="sm" asChild>
-              <Link to="/onboarding">Get Started</Link>
-            </Button>
-          </SignedOut>
-          <SignedIn>
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/dashboard">Dashboard</Link>
-            </Button>
-            <UserButton afterSignOutUrl="/" />
-          </SignedIn>
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/dashboard">Dashboard</Link>
+          </Button>
+          <Button variant="premium" size="sm" asChild>
+            <Link to="/onboarding">Get Started</Link>
+          </Button>
         </div>
 
         {/* Mobile Menu Toggle */}
@@ -102,22 +93,12 @@ export const Navbar = () => {
                 </a>
               ))}
               <div className="flex flex-col gap-2 pt-4 border-t border-border">
-                <SignedOut>
-                  <SignInButton mode="modal">
-                    <Button variant="ghost" className="justify-start">Sign In</Button>
-                  </SignInButton>
-                  <Button variant="premium" asChild>
-                    <Link to="/onboarding">Get Started</Link>
-                  </Button>
-                </SignedOut>
-                <SignedIn>
-                  <Button variant="ghost" className="justify-start" asChild>
-                    <Link to="/dashboard">Dashboard</Link>
-                  </Button>
-                  <div className="pt-2">
-                    <UserButton afterSignOutUrl="/" />
-                  </div>
-                </SignedIn>
+                <Button variant="ghost" className="justify-start" asChild>
+                  <Link to="/dashboard">Dashboard</Link>
+                </Button>
+                <Button variant="premium" asChild>
+                  <Link to="/onboarding">Get Started</Link>
+                </Button>
               </div>
             </div>
           </motion.div>

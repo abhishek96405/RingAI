@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import api, { setRestaurantId, confirmMenu, activateRestaurant } from "@/lib/api";
+import api from "@/lib/api";
 
 const steps = [
   { id: 1, label: "Restaurant Info", icon: UtensilsCrossed },
@@ -36,7 +36,7 @@ export default function Onboarding() {
   const [restaurantData, setRestaurantData] = useState({
     name: "", cuisine_type: "", address: "", timezone: "America/New_York",
   });
-  const [restaurantIdState, setRestaurantIdState] = useState(null);
+  const [restaurantId, setRestaurantId] = useState(null);
   const [menuText, setMenuText] = useState("");
   const [parsedItems, setParsedItems] = useState([]);
   const [parsing, setParsing] = useState(false);
@@ -50,9 +50,7 @@ export default function Onboarding() {
     if (!restaurantData.name.trim()) { toast.error("Restaurant name is required"); return; }
     try {
       const res = await api.post("/restaurants", restaurantData);
-      const newId = res.data.id;
-      setRestaurantId(newId); // Save to localStorage
-      setRestaurantIdState(newId);
+      setRestaurantId(res.data.id);
       setAiConfig(prev => ({
         ...prev,
         disclosure_text: `Hi! I'm an AI assistant for ${restaurantData.name}. How can I help you today?`
@@ -69,7 +67,7 @@ export default function Onboarding() {
     setParsing(true);
     try {
       const res = await api.post("/onboarding/menu/parse", {
-        menu_text: menuText, restaurant_id: restaurantIdState,
+        menu_text: menuText, restaurant_id: restaurantId,
       });
       setParsedItems(res.data.items || []);
       if (res.data.items?.length > 0) {
@@ -87,7 +85,7 @@ export default function Onboarding() {
   const saveMenuAndProceed = async () => {
     if (parsedItems.length === 0) { toast.warning("Parse your menu first"); return; }
     try {
-      await confirmMenu(restaurantIdState, parsedItems);
+      await api.post(`/onboarding/menu/confirm?restaurant_id=${restaurantId}`, parsedItems);
       toast.success("Menu saved!");
       setStep(3);
     } catch (err) {
@@ -97,7 +95,7 @@ export default function Onboarding() {
 
   const saveConfigAndProceed = async () => {
     try {
-      await api.put(`/restaurants/${restaurantIdState}/config`, aiConfig);
+      await api.put(`/restaurants/${restaurantId}/config`, aiConfig);
       toast.success("AI configuration saved!");
       setStep(4);
     } catch (err) {
@@ -108,7 +106,9 @@ export default function Onboarding() {
   const goLive = async () => {
     setActivating(true);
     try {
-      await activateRestaurant(restaurantIdState);
+      await api.post("/onboarding/activate", { restaurant_id: restaurantId });
+      // Seed some demo call data
+      await api.post(`/demo/seed?restaurant_id=${restaurantId}`);
       setActivated(true);
       toast.success("Your AI phone agent is live!");
     } catch (err) {
