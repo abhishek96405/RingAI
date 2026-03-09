@@ -1,0 +1,1751 @@
+from fastapi import FastAPI, APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket
+from fastapi.responses import JSONResponse, Response
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import logging
+from pathlib import Path
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Dict, Any
+from bson import ObjectId
+import uuid
+import random
+from datetime import datetime, timezone, timedelta
+import stripe
+from twilio.rest import Client as TwilioClient
+
+
+def serialize_mongo_doc(value):
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, list):
+        return [serialize_mongo_doc(v) for v in value]
+    if isinstance(value, dict):
+        return {k: serialize_mongo_doc(v) for k, v in value.items()}
+    return value
+
+
+def demo_mode_enabled() -> bool:
+    return os.environ.get("ENABLE_DEMO_MODE", "false").lower() == "true"
+
+
+def _normalize_origin(origin: str) -> str:
+    return origin.strip().strip('"').strip("'").rstrip("/")
+
+
+def get_cors_origins() -> List[str]:
+    defaults = {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    }
+
+    configured = set()
+
+    raw_cors = os.environ.get("CORS_ORIGINS", "")
+    if raw_cors:
+        for origin in raw_cors.split(","):
+            normalized = _normalize_origin(origin)
+            if normalized:
+                configured.add(normalized)
+
+    frontend_url = os.environ.get("FRONTEND_URL", "")
+    if frontend_url:
+        normalized = _normalize_origin(frontend_url)
+        if normalized:
+            configured.add(normalized)
+
+    all_origins = defaults | configured
+    return sorted(all_origins)
+
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / ".env")
+
+# MongoDB connection
+mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ.get("DB_NAME", "ringai_db")]
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+
+# Gemini + Pipeline imports
+from gemini_service import (
+    is_gemini_available,
+    parse_menu_text,
+    analyse_call_transcript,
+    get_conversation_response,
+    build_system_prompt,
+)
+from call_pipeline import (
+    is_pipeline_available,
+    create_call_pipeline,
+    generate_twiml_stream_response,
+    provision_phone_number,
+    validate_twilio_request,
+)
+from auth_helpers import verify_clerk_token
+
+from test_mode import (
+    get_test_mode_status,
+    get_test_scenarios,
+    get_scenario_by_id,
+    is_sandbox_mode,
+    SAMPLE_CUSTOMER_SCENARIOS,
+)
+
+# Create the main app
+app = FastAPI(title="RingAI API", version="1.0.0")
+api_router = APIRouter(prefix="/api")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def get_twilio_client():
+    sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    token = os.environ.get("TWILIO_AUTH_TOKEN")
+    if not sid or not token:
+        raise HTTPException(status_code=400, detail="Twilio credentials are not configured")
+    return TwilioClient(sid, token)
+
+
+def get_backend_public_url() -> str:
+    return os.environ.get("BACKEND_PUBLIC_URL", "http://localhost:8001").rstrip("/")
+
+
+def get_frontend_url() -> str:
+    return os.environ.get("FRONTEND_URL", "http://localhost:8080").rstrip("/")
+
+
+# ============================================================
+# PYDANTIC MODELS
+# ============================================================
+
+class RestaurantBase(BaseModel):
+    name: str
+    cuisine_type: Optional[str] = None
+
+    # owner / business contact
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+    owner_phone: Optional[str] = None
+    billing_email: Optional[str] = None
+    business_phone: Optional[str] = None
+    website: Optional[str] = None
+
+    # location
+    phone_number: Optional[str] = None
+    timezone: str = "America/Chicago"
+    address: Optional[str] = None
+    primary_language: str = "en"
+
+    # operations
+    pickup_enabled: bool = True
+    delivery_enabled: bool = True
+    dine_in_enabled: bool = True
+    reservations_enabled: bool = False
+    catering_enabled: bool = False
+    avg_prep_time_minutes: int = 20
+    reservation_party_limit: int = 8
+
+    # lifecycle
+    status: str = "draft"
+    onboarding_step: int = 1
+
+
+class RestaurantCreate(RestaurantBase):
+    pass
+
+
+class RestaurantUpdate(BaseModel):
+    name: Optional[str] = None
+    cuisine_type: Optional[str] = None
+
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+    owner_phone: Optional[str] = None
+    billing_email: Optional[str] = None
+    business_phone: Optional[str] = None
+    website: Optional[str] = None
+
+    phone_number: Optional[str] = None
+    timezone: Optional[str] = None
+    address: Optional[str] = None
+    primary_language: Optional[str] = None
+
+    pickup_enabled: Optional[bool] = None
+    delivery_enabled: Optional[bool] = None
+    dine_in_enabled: Optional[bool] = None
+    reservations_enabled: Optional[bool] = None
+    catering_enabled: Optional[bool] = None
+    avg_prep_time_minutes: Optional[int] = None
+    reservation_party_limit: Optional[int] = None
+
+    status: Optional[str] = None
+    onboarding_step: Optional[int] = None
+    is_active: Optional[bool] = None
+
+    stripe_customer_id: Optional[str] = None
+    stripe_subscription_id: Optional[str] = None
+    billing_status: Optional[str] = None
+    twilio_number_sid: Optional[str] = None
+    square_connected: Optional[bool] = None
+    onboarding_completed_at: Optional[str] = None
+
+
+class Restaurant(RestaurantBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    is_active: bool = False
+    plan: str = "STARTER"
+    monthly_call_count: int = 0
+
+    stripe_customer_id: Optional[str] = None
+    stripe_subscription_id: Optional[str] = None
+    billing_status: str = "not_started"
+    twilio_number_sid: Optional[str] = None
+    square_connected: bool = False
+
+    onboarding_completed_at: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class UserProfile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    image_url: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class Membership(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    restaurant_id: str
+    role: str = "owner"
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class RestaurantSelection(BaseModel):
+    restaurant_id: str
+
+
+class BillingCheckoutRequest(BaseModel):
+    restaurant_id: str
+    price_id: Optional[str] = None
+
+
+class TwilioProvisionRequest(BaseModel):
+    restaurant_id: str
+    area_code: Optional[str] = None
+
+
+class TwilioAssignNumberRequest(BaseModel):
+    restaurant_id: str
+    phone_number: str
+
+
+class BootstrapResponse(BaseModel):
+    user: Dict[str, Any]
+    memberships: List[Dict[str, Any]]
+    restaurants: List[Dict[str, Any]]
+    active_restaurant: Optional[Dict[str, Any]] = None
+    onboarding_complete: bool = False
+
+
+class RestaurantConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+
+    persona: str = "friendly"
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    primary_language: str = "en"
+
+    business_rules: List[str] = []
+    few_shot_examples: List[Dict] = []
+    escalation_rules: List[str] = []
+
+    upsell_enabled: bool = True
+    disclosure_text: str = "Hi! I'm an AI assistant. How can I help you today?"
+    delivery_enabled: bool = True
+    delivery_minimum: int = 1500
+
+    after_hours_mode: str = "voicemail"
+    voicemail_enabled: bool = True
+    escalation_phone_number: Optional[str] = None
+
+    operating_hours: Dict[str, Any] = {
+        "monday": {"closed": False, "open": "09:00", "close": "21:00"},
+        "tuesday": {"closed": False, "open": "09:00", "close": "21:00"},
+        "wednesday": {"closed": False, "open": "09:00", "close": "21:00"},
+        "thursday": {"closed": False, "open": "09:00", "close": "21:00"},
+        "friday": {"closed": False, "open": "09:00", "close": "22:00"},
+        "saturday": {"closed": False, "open": "09:00", "close": "22:00"},
+        "sunday": {"closed": False, "open": "09:00", "close": "20:00"},
+    }
+
+
+class RestaurantConfigUpdate(BaseModel):
+    persona: Optional[str] = None
+    voice_id: Optional[str] = None
+    primary_language: Optional[str] = None
+
+    business_rules: Optional[List[str]] = None
+    escalation_rules: Optional[List[str]] = None
+
+    upsell_enabled: Optional[bool] = None
+    disclosure_text: Optional[str] = None
+    delivery_enabled: Optional[bool] = None
+    delivery_minimum: Optional[int] = None
+
+    after_hours_mode: Optional[str] = None
+    voicemail_enabled: Optional[bool] = None
+    escalation_phone_number: Optional[str] = None
+    operating_hours: Optional[Dict[str, Any]] = None
+
+
+class MenuItemModifier(BaseModel):
+    name: str
+    required: bool = False
+    options: List[Dict[str, Any]] = []
+
+
+class MenuItemBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    category: str
+    price: int  # cents
+    available: bool = True
+    modifiers: List[MenuItemModifier] = []
+    allergens: List[str] = []
+    image_url: Optional[str] = None
+
+
+class MenuItemCreate(MenuItemBase):
+    pass
+
+
+class MenuItemUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[int] = None
+    available: Optional[bool] = None
+    modifiers: Optional[List[MenuItemModifier]] = None
+    allergens: Optional[List[str]] = None
+
+
+class MenuItem(MenuItemBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+    pos_item_id: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class TranscriptEntry(BaseModel):
+    role: str  # "customer" or "ai"
+    text: str
+    timestamp: str
+
+
+class CallRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+    twilio_call_sid: str = Field(default_factory=lambda: f"CA{uuid.uuid4().hex[:32]}")
+    caller_number: str
+    started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    ended_at: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    status: str = "COMPLETED"  # IN_PROGRESS, COMPLETED, FAILED, ESCALATED
+    contained_by_ai: bool = True
+    escalated_to_human: bool = False
+    transcript: List[Dict] = []
+    order_json: Optional[Dict] = None
+    pos_order_id: Optional[str] = None
+    quality_score: Optional[int] = None
+    analysis_json: Optional[Dict] = None
+    claude_tokens_used: int = 0
+    caller_name: Optional[str] = None
+    order_total: Optional[int] = None  # cents
+
+
+class CallAnalysis(BaseModel):
+    quality_score: int
+    order_accuracy: str
+    issues: List[str]
+    highlights: List[str]
+    menu_suggestions: List[str]
+    rule_suggestions: List[str]
+    summary: str
+
+
+class DashboardSummary(BaseModel):
+    total_calls: int
+    completed_calls: int
+    escalated_calls: int
+    avg_quality_score: float
+    total_revenue: int  # cents
+    avg_duration: float
+    ai_containment_rate: float
+    calls_today: int
+    calls_this_week: int
+    revenue_this_week: int
+    daily_call_data: List[Dict]
+    hourly_distribution: List[Dict]
+    top_items: List[Dict]
+    recent_calls: List[Dict]
+
+
+class OnboardingMenuParse(BaseModel):
+    menu_text: str
+    restaurant_id: str
+
+
+class OnboardingActivate(BaseModel):
+    restaurant_id: str
+
+
+# ============================================================
+# AUTH / TENANCY HELPERS
+# ============================================================
+
+async def get_current_user(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        claims = await verify_clerk_token(token)
+    except Exception as exc:
+        logger.exception("Failed to verify Clerk token")
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+
+    user_id = claims.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+    email = None
+    emails = claims.get("email_addresses") or claims.get("email")
+    if isinstance(emails, list) and emails:
+        first = emails[0]
+        email = first.get("email_address") if isinstance(first, dict) else str(first)
+    elif isinstance(emails, str):
+        email = emails
+
+    user_doc = {
+        "id": user_id,
+        "email": email,
+        "first_name": claims.get("given_name") or claims.get("first_name"),
+        "last_name": claims.get("family_name") or claims.get("last_name"),
+        "image_url": claims.get("picture") or claims.get("image_url"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    existing = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if existing:
+        await db.users.update_one({"id": user_id}, {"$set": user_doc})
+        return {**existing, **user_doc}
+
+    new_user = UserProfile(**user_doc).model_dump()
+    await db.users.insert_one(new_user)
+    return new_user
+
+
+async def ensure_restaurant_access(restaurant_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    if not membership:
+        raise HTTPException(status_code=403, detail="You do not have access to this restaurant")
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    return restaurant
+
+
+async def get_bootstrap_payload(user: Dict[str, Any], preferred_restaurant_id: Optional[str] = None) -> Dict[str, Any]:
+    memberships = await db.memberships.find({"user_id": user["id"]}, {"_id": 0}).to_list(100)
+    restaurant_ids = [m["restaurant_id"] for m in memberships]
+    restaurants = []
+    if restaurant_ids:
+        restaurants = await db.restaurants.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100)
+
+    active_restaurant = None
+    if restaurants:
+        active_restaurant = next((r for r in restaurants if r["id"] == preferred_restaurant_id), restaurants[0])
+
+    payload = BootstrapResponse(
+        user=serialize_mongo_doc(user),
+        memberships=serialize_mongo_doc(memberships),
+        restaurants=serialize_mongo_doc(restaurants),
+        active_restaurant=serialize_mongo_doc(active_restaurant),
+        onboarding_complete=bool(active_restaurant and active_restaurant.get("is_active")),
+    ).model_dump()
+
+    return serialize_mongo_doc(payload)
+
+
+# ============================================================
+# ROOT ENDPOINT
+# ============================================================
+
+@api_router.get("/")
+async def root():
+    return {"message": "RingAI API v1.0", "status": "operational"}
+
+
+# ============================================================
+# SESSION / BOOTSTRAP ENDPOINTS
+# ============================================================
+
+@api_router.get("/me/bootstrap")
+async def me_bootstrap(
+    restaurant_id: Optional[str] = Query(default=None),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    payload = await get_bootstrap_payload(user, restaurant_id)
+    return payload
+
+
+@api_router.post("/me/select-restaurant")
+async def select_restaurant(data: RestaurantSelection, user: Dict[str, Any] = Depends(get_current_user)):
+    restaurant = await ensure_restaurant_access(data.restaurant_id, user)
+    return {"active_restaurant": restaurant}
+
+
+# ============================================================
+# RESTAURANT ENDPOINTS
+# ============================================================
+
+@api_router.post("/restaurants", response_model=Restaurant)
+async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depends(get_current_user)):
+    restaurant = Restaurant(**data.model_dump())
+    doc = restaurant.model_dump()
+    await db.restaurants.insert_one(doc)
+    membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner")
+    await db.memberships.insert_one(membership.model_dump())
+    return restaurant
+
+
+@api_router.get("/restaurants")
+async def list_restaurants(user: Dict[str, Any] = Depends(get_current_user)):
+    payload = await get_bootstrap_payload(user)
+    return payload.get("restaurants", [])
+
+
+@api_router.get("/restaurants/{restaurant_id}")
+async def get_restaurant(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    return await ensure_restaurant_access(restaurant_id, user)
+
+
+@api_router.put("/restaurants/{restaurant_id}")
+async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    result = await db.restaurants.update_one({"id": restaurant_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    return restaurant
+
+
+# ============================================================
+# RESTAURANT CONFIG ENDPOINTS
+# ============================================================
+
+@api_router.get("/restaurants/{restaurant_id}/config")
+async def get_restaurant_config(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    if not config:
+        default_config = RestaurantConfig(restaurant_id=restaurant_id)
+        return default_config.model_dump()
+    return config
+
+
+@api_router.put("/restaurants/{restaurant_id}/config")
+async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpdate, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    existing = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id})
+    if existing:
+        await db.restaurant_configs.update_one({"restaurant_id": restaurant_id}, {"$set": update_data})
+    else:
+        config = RestaurantConfig(restaurant_id=restaurant_id, **update_data)
+        await db.restaurant_configs.insert_one(config.model_dump())
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    return config
+
+
+# ============================================================
+# MENU ITEM ENDPOINTS
+# ============================================================
+
+@api_router.post("/restaurants/{restaurant_id}/menu", response_model=MenuItem)
+async def create_menu_item(restaurant_id: str, data: MenuItemCreate, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    item = MenuItem(restaurant_id=restaurant_id, **data.model_dump())
+    await db.menu_items.insert_one(item.model_dump())
+    return item
+
+
+@api_router.get("/restaurants/{restaurant_id}/menu")
+async def list_menu_items(restaurant_id: str, category: Optional[str] = None, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    query = {"restaurant_id": restaurant_id}
+    if category:
+        query["category"] = category
+    items = await db.menu_items.find(query, {"_id": 0}).to_list(500)
+    return items
+
+
+@api_router.put("/menu/{item_id}")
+async def update_menu_item(item_id: str, data: MenuItemUpdate, user: Dict[str, Any] = Depends(get_current_user)):
+    existing_item = await db.menu_items.find_one({"id": item_id}, {"_id": 0})
+    if not existing_item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    await ensure_restaurant_access(existing_item["restaurant_id"], user)
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if isinstance(update_data.get("modifiers"), list):
+        update_data["modifiers"] = [m.model_dump() if hasattr(m, "model_dump") else m for m in update_data["modifiers"]]
+    result = await db.menu_items.update_one({"id": item_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    item = await db.menu_items.find_one({"id": item_id}, {"_id": 0})
+    return item
+
+
+@api_router.delete("/menu/{item_id}")
+async def delete_menu_item(item_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    existing_item = await db.menu_items.find_one({"id": item_id}, {"_id": 0})
+    if not existing_item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    await ensure_restaurant_access(existing_item["restaurant_id"], user)
+    result = await db.menu_items.delete_one({"id": item_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    return {"message": "Menu item deleted"}
+
+
+@api_router.patch("/menu/{item_id}/toggle")
+async def toggle_menu_item_availability(item_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    item = await db.menu_items.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    await ensure_restaurant_access(item["restaurant_id"], user)
+    new_availability = not item.get("available", True)
+    await db.menu_items.update_one({"id": item_id}, {"$set": {"available": new_availability}})
+    return {"id": item_id, "available": new_availability}
+
+
+# ============================================================
+# CALL RECORD ENDPOINTS
+# ============================================================
+
+@api_router.get("/restaurants/{restaurant_id}/calls")
+async def list_calls(
+    restaurant_id: str,
+    status: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_restaurant_access(restaurant_id, user)
+    query = {"restaurant_id": restaurant_id}
+    if status and status != "ALL":
+        query["status"] = status
+    if search:
+        query["$or"] = [
+            {"caller_number": {"$regex": search, "$options": "i"}},
+            {"caller_name": {"$regex": search, "$options": "i"}},
+        ]
+    total = await db.call_records.count_documents(query)
+    calls = await (
+        db.call_records.find(query, {"_id": 0})
+        .sort("started_at", -1)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .to_list(limit)
+    )
+    return {"calls": calls, "total": total, "page": page, "limit": limit, "pages": (total + limit - 1) // limit}
+
+
+@api_router.get("/calls/{call_id}")
+async def get_call(call_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    call = await db.call_records.find_one({"id": call_id}, {"_id": 0})
+    if not call:
+        raise HTTPException(status_code=404, detail="Call record not found")
+    await ensure_restaurant_access(call["restaurant_id"], user)
+    return call
+
+
+# ============================================================
+# ANALYTICS / DASHBOARD ENDPOINTS
+# ============================================================
+
+@api_router.get("/restaurants/{restaurant_id}/analytics/summary")
+async def get_analytics_summary(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    all_calls = await db.call_records.find({"restaurant_id": restaurant_id}, {"_id": 0}).to_list(5000)
+
+    total_calls = len(all_calls)
+    completed_calls = sum(1 for c in all_calls if c.get("status") == "COMPLETED")
+    escalated_calls = sum(1 for c in all_calls if c.get("escalated_to_human"))
+    quality_scores = [c.get("quality_score", 0) for c in all_calls if c.get("quality_score")]
+    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
+    durations = [c.get("duration_seconds", 0) for c in all_calls if c.get("duration_seconds")]
+    avg_duration = sum(durations) / len(durations) if durations else 0
+    total_revenue = sum(c.get("order_total", 0) for c in all_calls if c.get("order_total"))
+    contained = sum(1 for c in all_calls if c.get("contained_by_ai"))
+    containment_rate = (contained / total_calls * 100) if total_calls > 0 else 0
+
+    calls_today = sum(1 for c in all_calls if c.get("started_at", "") >= today_start.isoformat())
+    week_calls = [c for c in all_calls if c.get("started_at", "") >= week_ago.isoformat()]
+    calls_this_week = len(week_calls)
+    revenue_this_week = sum(c.get("order_total", 0) for c in week_calls if c.get("order_total"))
+
+    daily_data = []
+    for i in range(6, -1, -1):
+        day = now - timedelta(days=i)
+        day_str = day.strftime("%Y-%m-%d")
+        day_label = day.strftime("%a")
+        day_calls = [c for c in all_calls if c.get("started_at", "")[:10] == day_str]
+        daily_data.append({
+            "date": day_str,
+            "label": day_label,
+            "calls": len(day_calls),
+            "revenue": sum(c.get("order_total", 0) for c in day_calls if c.get("order_total")) / 100,
+            "orders": sum(1 for c in day_calls if c.get("order_json")),
+        })
+
+    hourly = [0] * 24
+    for c in all_calls:
+        try:
+            h = int(c.get("started_at", "")[11:13])
+            hourly[h] += 1
+        except (ValueError, IndexError):
+            pass
+    hourly_data = [{"hour": f"{h:02d}:00", "calls": hourly[h]} for h in range(24)]
+
+    item_counts = {}
+    for c in all_calls:
+        order = c.get("order_json")
+        if order and isinstance(order, dict):
+            for item in order.get("items", []):
+                name = item.get("name", "Unknown")
+                item_counts[name] = item_counts.get(name, 0) + item.get("quantity", 1)
+    top_items = sorted([{"name": k, "count": v} for k, v in item_counts.items()], key=lambda x: -x["count"])[:10]
+
+    recent = sorted(all_calls, key=lambda x: x.get("started_at", ""), reverse=True)[:5]
+    recent_calls = [{
+        "id": c.get("id"),
+        "caller_number": c.get("caller_number"),
+        "caller_name": c.get("caller_name"),
+        "status": c.get("status"),
+        "duration_seconds": c.get("duration_seconds"),
+        "quality_score": c.get("quality_score"),
+        "order_total": c.get("order_total"),
+        "started_at": c.get("started_at"),
+    } for c in recent]
+
+    return {
+        "total_calls": total_calls,
+        "completed_calls": completed_calls,
+        "escalated_calls": escalated_calls,
+        "avg_quality_score": round(avg_quality, 1),
+        "total_revenue": total_revenue,
+        "avg_duration": round(avg_duration, 1),
+        "ai_containment_rate": round(containment_rate, 1),
+        "calls_today": calls_today,
+        "calls_this_week": calls_this_week,
+        "revenue_this_week": revenue_this_week,
+        "daily_call_data": daily_data,
+        "hourly_distribution": hourly_data,
+        "top_items": top_items,
+        "recent_calls": recent_calls,
+    }
+
+
+# ============================================================
+# ONBOARDING ENDPOINTS
+# ============================================================
+
+@api_router.post("/onboarding/menu/parse")
+async def parse_menu(data: OnboardingMenuParse, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(data.restaurant_id, user)
+    result = await parse_menu_text(data.menu_text)
+    return result
+
+
+@api_router.post("/onboarding/menu/confirm")
+async def confirm_menu(
+    restaurant_id: str = Query(...),
+    items: List[Dict[str, Any]] = [],
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_restaurant_access(restaurant_id, user)
+    await db.menu_items.delete_many({"restaurant_id": restaurant_id})
+    saved = []
+    for item_data in items:
+        item = MenuItem(
+            restaurant_id=restaurant_id,
+            name=item_data.get("name", ""),
+            description=item_data.get("description"),
+            category=item_data.get("category", "Uncategorized"),
+            price=item_data.get("price", 0),
+            modifiers=[],
+            allergens=item_data.get("allergens", []),
+        )
+        await db.menu_items.insert_one(item.model_dump())
+        saved.append(item.model_dump())
+    return {"saved": len(saved), "items": saved}
+
+
+@api_router.post("/onboarding/activate")
+async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(data.restaurant_id, user)
+
+    existing = await db.restaurants.find_one({"id": data.restaurant_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    update_fields = {
+        "status": "active",
+        "is_active": True,
+        "onboarding_step": 7,
+        "onboarding_completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if not existing.get("phone_number"):
+        update_fields["phone_number"] = None
+
+    result = await db.restaurants.update_one({"id": data.restaurant_id}, {"$set": update_fields})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    restaurant = await db.restaurants.find_one({"id": data.restaurant_id}, {"_id": 0})
+    return restaurant
+
+
+# ============================================================
+# DEMO/SIMULATION ENDPOINTS
+# ============================================================
+
+@api_router.post("/demo/simulate-call")
+async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+
+    if not demo_mode_enabled():
+        raise HTTPException(status_code=403, detail="Demo mode is disabled")
+
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
+
+    caller_names = [
+        "Sarah Mitchell", "James Wilson", "Maria Garcia", "David Kim", "Emma Johnson",
+        "Robert Chen", "Lisa Park", "Michael Brown", "Jennifer Lee", "Chris Taylor"
+    ]
+    caller = random.choice(caller_names)
+    phone = f"+1{random.randint(200, 999)}{random.randint(1000000, 9999999)}"
+
+    if menu_items:
+        order_items = random.sample(menu_items, min(random.randint(1, 4), len(menu_items)))
+    else:
+        order_items = [{"name": "Classic Burger", "price": 1499}, {"name": "Caesar Salad", "price": 1199}]
+
+    items_for_order = []
+    total = 0
+    for item in order_items:
+        qty = random.choice([1, 1, 1, 2])
+        subtotal = item.get("price", 999) * qty
+        total += subtotal
+        items_for_order.append({
+            "name": item.get("name", "Item"),
+            "quantity": qty,
+            "price": item.get("price", 999),
+            "modifiers": [],
+            "subtotal": subtotal,
+        })
+
+    duration = random.randint(90, 300)
+    is_escalated = random.random() < 0.08
+    status = "ESCALATED" if is_escalated else "COMPLETED"
+
+    restaurant_name = restaurant.get("name", "the restaurant")
+    item_names = [i["name"] for i in items_for_order]
+
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    system_prompt = None
+    if config and is_gemini_available():
+        system_prompt = build_system_prompt(
+            restaurant_name=restaurant_name,
+            cuisine_type=restaurant.get("cuisine_type", ""),
+            persona=config.get("persona", "friendly"),
+            business_rules=config.get("business_rules", []),
+            escalation_rules=config.get("escalation_rules", []),
+            menu_items=menu_items,
+            disclosure_text=config.get("disclosure_text", f"Hi! I'm the AI assistant for {restaurant_name}."),
+            upsell_enabled=config.get("upsell_enabled", True),
+            delivery_enabled=config.get("delivery_enabled", True),
+            delivery_minimum=config.get("delivery_minimum", 1500),
+        )
+
+    transcript = []
+    if system_prompt:
+        try:
+            greeting = await get_conversation_response(system_prompt, [], "")
+            if not greeting or len(greeting) < 5:
+                greeting = f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?"
+            transcript.append({"role": "ai", "text": greeting, "timestamp": "00:00"})
+
+            customer_msg1 = "Hi, I'd like to place an order for pickup."
+            transcript.append({"role": "customer", "text": customer_msg1, "timestamp": "00:03"})
+            ai_resp1 = await get_conversation_response(system_prompt, transcript, customer_msg1)
+            transcript.append({"role": "ai", "text": ai_resp1, "timestamp": "00:05"})
+
+            customer_msg2 = f"Can I get a {item_names[0]} please?"
+            transcript.append({"role": "customer", "text": customer_msg2, "timestamp": "00:08"})
+            ai_resp2 = await get_conversation_response(system_prompt, transcript, customer_msg2)
+            transcript.append({"role": "ai", "text": ai_resp2, "timestamp": "00:10"})
+
+            if len(item_names) > 1:
+                customer_msg3 = f"And also a {item_names[1]}."
+                transcript.append({"role": "customer", "text": customer_msg3, "timestamp": "00:15"})
+                ai_resp3 = await get_conversation_response(system_prompt, transcript, customer_msg3)
+                transcript.append({"role": "ai", "text": ai_resp3, "timestamp": "00:17"})
+
+            customer_msg_done = "That's all, thanks."
+            transcript.append({"role": "customer", "text": customer_msg_done, "timestamp": "00:22"})
+            ai_resp_done = await get_conversation_response(system_prompt, transcript, customer_msg_done)
+            transcript.append({"role": "ai", "text": ai_resp_done, "timestamp": "00:25"})
+
+            customer_confirm = "Yes, that's right."
+            transcript.append({"role": "customer", "text": customer_confirm, "timestamp": "00:30"})
+            ai_close = await get_conversation_response(system_prompt, transcript, customer_confirm)
+            transcript.append({"role": "ai", "text": ai_close, "timestamp": "00:33"})
+        except Exception as e:
+            logger.error(f"Gemini conversation error in simulate_call: {e}")
+            transcript = _build_mock_transcript(restaurant_name, item_names, items_for_order, total)
+    else:
+        transcript = _build_mock_transcript(restaurant_name, item_names, items_for_order, total)
+
+    order_json = {
+        "items": items_for_order,
+        "total": total,
+        "type": random.choice(["pickup", "pickup", "delivery"]),
+        "special_instructions": "",
+    }
+    analysis = await analyse_call_transcript(transcript, order_json, menu_items)
+    quality = analysis.get("quality_score", random.randint(78, 99))
+
+    now = datetime.now(timezone.utc)
+    start_offset = random.randint(0, 3600 * 4)
+    started_at = (now - timedelta(seconds=start_offset)).isoformat()
+    ended_at = (now - timedelta(seconds=start_offset - duration)).isoformat()
+
+    call = CallRecord(
+        restaurant_id=restaurant_id,
+        caller_number=phone,
+        caller_name=caller,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=duration,
+        status=status,
+        contained_by_ai=not is_escalated,
+        escalated_to_human=is_escalated,
+        transcript=transcript,
+        order_json=order_json,
+        pos_order_id=f"POS-{random.randint(10000, 99999)}" if not is_escalated else None,
+        quality_score=quality,
+        analysis_json=analysis,
+        claude_tokens_used=0,
+        order_total=total,
+    )
+
+    await db.call_records.insert_one(call.model_dump())
+    return call.model_dump()
+
+
+def _build_mock_transcript(restaurant_name, item_names, items_for_order, total):
+    transcript = [
+        {"role": "ai", "text": f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?", "timestamp": "00:00"},
+        {"role": "customer", "text": "Hi, I'd like to place an order for pickup.", "timestamp": "00:03"},
+        {"role": "ai", "text": "Of course! What would you like to order?", "timestamp": "00:05"},
+        {"role": "customer", "text": f"Can I get a {item_names[0]} please?", "timestamp": "00:08"},
+        {"role": "ai", "text": f"Great choice! One {item_names[0]}. Anything else?", "timestamp": "00:10"},
+    ]
+    if len(item_names) > 1:
+        transcript.extend([
+            {"role": "customer", "text": f"And also a {item_names[1]}.", "timestamp": "00:15"},
+            {"role": "ai", "text": f"Got it! One {item_names[1]} added. Would you like anything else?", "timestamp": "00:17"},
+        ])
+    transcript.extend([
+        {"role": "customer", "text": "That's all, thanks.", "timestamp": "00:22"},
+        {"role": "ai", "text": "Let me read back your order: " + ", ".join([str(i["quantity"]) + "x " + i["name"] for i in items_for_order]) + f". Your total is ${total / 100:.2f}. Is that correct?", "timestamp": "00:25"},
+        {"role": "customer", "text": "Yes, that's right.", "timestamp": "00:30"},
+        {"role": "ai", "text": f"Your order has been placed! It'll be ready for pickup in about 20 minutes. Thank you for calling {restaurant_name}!", "timestamp": "00:33"},
+    ])
+    return transcript
+
+
+@api_router.post("/demo/seed")
+async def seed_demo_data(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+
+    if not demo_mode_enabled():
+        raise HTTPException(status_code=403, detail="Demo mode is disabled")
+
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    num_calls = random.randint(30, 50)
+    now = datetime.now(timezone.utc)
+
+    for _ in range(num_calls):
+        offset = random.randint(0, 7 * 24 * 3600)
+        call_time = now - timedelta(seconds=offset)
+        hour = call_time.hour
+        if hour < 10 or hour > 22:
+            call_time = call_time.replace(hour=random.randint(10, 22))
+
+        await simulate_call_internal(restaurant_id, call_time)
+
+    return {"message": f"Generated {num_calls} demo calls", "restaurant_id": restaurant_id}
+
+
+async def simulate_call_internal(restaurant_id: str, call_time: datetime):
+    menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
+
+    caller_names = [
+        "Sarah Mitchell", "James Wilson", "Maria Garcia", "David Kim", "Emma Johnson",
+        "Robert Chen", "Lisa Park", "Michael Brown", "Jennifer Lee", "Chris Taylor",
+        "Ana Rodriguez", "Tom Harris", "Priya Patel", "Kevin O'Brien", "Sophie Turner"
+    ]
+    caller = random.choice(caller_names)
+    phone = f"+1{random.randint(200, 999)}{random.randint(1000000, 9999999)}"
+
+    if menu_items:
+        order_items = random.sample(menu_items, min(random.randint(1, 4), len(menu_items)))
+    else:
+        order_items = [{"name": "Classic Burger", "price": 1499}]
+
+    items_for_order = []
+    total = 0
+    for item in order_items:
+        qty = random.choice([1, 1, 1, 2])
+        subtotal = item.get("price", 999) * qty
+        total += subtotal
+        items_for_order.append({
+            "name": item.get("name", "Item"),
+            "quantity": qty,
+            "price": item.get("price", 999),
+            "modifiers": [],
+            "subtotal": subtotal,
+        })
+
+    duration = random.randint(60, 360)
+    quality = random.randint(72, 99)
+    is_escalated = random.random() < 0.08
+    status = "ESCALATED" if is_escalated else ("FAILED" if random.random() < 0.03 else "COMPLETED")
+
+    started_at = call_time.isoformat()
+    ended_at = (call_time + timedelta(seconds=duration)).isoformat()
+
+    analysis = {
+        "quality_score": quality,
+        "order_accuracy": "accurate" if quality > 85 else "minor_issues",
+        "issues": random.sample(["Slow response time", "Missed upsell", "Clarification needed", "Menu item confusion"], random.randint(0, 2)),
+        "highlights": random.sample(["Natural conversation", "Efficient ordering", "Clear readback", "Good upsell", "Friendly greeting"], random.randint(1, 3)),
+        "menu_suggestions": [],
+        "rule_suggestions": [],
+        "summary": f"{'Successful' if status == 'COMPLETED' else 'Escalated'} call from {caller}. {len(items_for_order)} items ordered.",
+    }
+
+    call = CallRecord(
+        restaurant_id=restaurant_id,
+        caller_number=phone,
+        caller_name=caller,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=duration,
+        status=status,
+        contained_by_ai=not is_escalated,
+        escalated_to_human=is_escalated,
+        transcript=[
+            {"role": "ai", "text": "Hi! I'm an AI assistant. How can I help?", "timestamp": "00:00"},
+            {"role": "customer", "text": f"I'd like to order {items_for_order[0]['name']}.", "timestamp": "00:05"},
+            {"role": "ai", "text": f"Great! One {items_for_order[0]['name']}. Anything else?", "timestamp": "00:08"},
+            {"role": "customer", "text": "That's all, thanks.", "timestamp": "00:12"},
+            {"role": "ai", "text": f"Your total is ${total / 100:.2f}. Order placed!", "timestamp": "00:15"},
+        ],
+        order_json={"items": items_for_order, "total": total, "type": random.choice(["pickup", "delivery"])},
+        pos_order_id=f"POS-{random.randint(10000, 99999)}",
+        quality_score=quality,
+        analysis_json=analysis,
+        claude_tokens_used=random.randint(600, 2200),
+        order_total=total,
+    )
+    await db.call_records.insert_one(call.model_dump())
+
+
+# ============================================================
+# SEED INITIAL DEMO RESTAURANT
+# ============================================================
+
+@app.on_event("startup")
+async def startup_seed():
+    logger.info("Allowed CORS origins: %s", get_cors_origins())
+
+    if os.environ.get("SEED_DEMO_DATA", "false").lower() != "true":
+        logger.info("Demo seed disabled")
+        return
+
+    count = await db.restaurants.count_documents({})
+    if count == 0:
+        logger.info("Seeding demo restaurant...")
+        demo_restaurant = Restaurant(
+            id="demo-restaurant-001",
+            name="Bella Cucina",
+            cuisine_type="Italian-American",
+            phone_number="+15551234567",
+            timezone="America/New_York",
+            address="123 Main Street, New York, NY 10001",
+            is_active=True,
+            plan="GROWTH",
+            monthly_call_count=0,
+            owner_name="Bella Owner",
+            owner_email="owner@bellacucina.example",
+            business_phone="+15551234567",
+            billing_email="billing@bellacucina.example",
+            status="active",
+            onboarding_step=7,
+        )
+        await db.restaurants.insert_one(demo_restaurant.model_dump())
+
+        config = RestaurantConfig(
+            restaurant_id="demo-restaurant-001",
+            persona="warm and friendly Italian-American",
+            voice_id="21m00Tcm4TlvDq8ikWAM",
+            business_rules=[
+                "Maximum party size for reservations is 12",
+                "Delivery minimum order is $15",
+                "We are closed on Mondays",
+                "Happy hour: 4-6pm weekdays, 20% off appetizers",
+                "No substitutions on prix fixe menu",
+            ],
+            escalation_rules=[
+                "Customer complaint about food quality",
+                "Catering orders (20+ guests)",
+                "Customer requests to speak to manager",
+                "Allergic reaction concerns",
+            ],
+            upsell_enabled=True,
+            disclosure_text="Hi! I'm Bella, the AI assistant for Bella Cucina. How can I help you today?",
+            delivery_enabled=True,
+            delivery_minimum=1500,
+        )
+        await db.restaurant_configs.insert_one(config.model_dump())
+
+        menu_items_data = [
+            {"name": "Bruschetta", "category": "Appetizers", "price": 1299, "description": "Toasted bread with fresh tomatoes, basil, garlic & olive oil", "allergens": ["gluten"], "available": True},
+            {"name": "Calamari Fritti", "category": "Appetizers", "price": 1499, "description": "Crispy fried calamari with marinara sauce", "allergens": ["gluten", "shellfish"], "available": True},
+            {"name": "Caprese Salad", "category": "Appetizers", "price": 1199, "description": "Fresh mozzarella, tomatoes, basil & balsamic glaze", "allergens": ["dairy"], "available": True},
+            {"name": "Minestrone Soup", "category": "Appetizers", "price": 899, "description": "Hearty vegetable soup with pasta & parmesan", "allergens": ["gluten", "dairy"], "available": True},
+            {"name": "Margherita Pizza", "category": "Pizza", "price": 1699, "description": "San Marzano tomatoes, fresh mozzarella, basil", "allergens": ["gluten", "dairy"], "available": True},
+            {"name": "Pepperoni Pizza", "category": "Pizza", "price": 1899, "description": "Classic pepperoni with mozzarella", "allergens": ["gluten", "dairy"], "available": True},
+            {"name": "Quattro Formaggi", "category": "Pizza", "price": 1999, "description": "Mozzarella, gorgonzola, parmesan, fontina", "allergens": ["gluten", "dairy"], "available": True},
+            {"name": "Spaghetti Bolognese", "category": "Pasta", "price": 1899, "description": "Classic meat sauce with spaghetti", "allergens": ["gluten", "dairy"], "available": True},
+            {"name": "Fettuccine Alfredo", "category": "Pasta", "price": 1799, "description": "Creamy parmesan sauce with fettuccine", "allergens": ["gluten", "dairy"], "available": True},
+            {"name": "Penne Arrabbiata", "category": "Pasta", "price": 1599, "description": "Spicy tomato sauce with penne", "allergens": ["gluten"], "available": True},
+        ]
+        for item_data in menu_items_data:
+            item = MenuItem(restaurant_id="demo-restaurant-001", **item_data)
+            await db.menu_items.insert_one(item.model_dump())
+
+        now = datetime.now(timezone.utc)
+        for _ in range(40):
+            offset = random.randint(0, 7 * 24 * 3600)
+            call_time = now - timedelta(seconds=offset)
+            hour = call_time.hour
+            if hour < 10 or hour > 22:
+                call_time = call_time.replace(hour=random.randint(11, 21))
+            await simulate_call_internal("demo-restaurant-001", call_time)
+
+        logger.info("Demo data seeded successfully!")
+
+
+# ============================================================
+# TWILIO WEBHOOK / INTEGRATION ENDPOINTS
+# ============================================================
+
+@api_router.get("/integrations/twilio/status")
+async def twilio_status(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    return {
+        "configured": bool(os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN")),
+        "phone_number": restaurant.get("phone_number"),
+        "twilio_number_sid": restaurant.get("twilio_number_sid"),
+        "active": bool(restaurant.get("phone_number")),
+    }
+
+
+@api_router.post("/integrations/twilio/provision-number")
+async def twilio_provision_number(data: TwilioProvisionRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(data.restaurant_id, user)
+
+    client = get_twilio_client()
+    voice_url = f"{get_backend_public_url()}/api/twilio/incoming"
+
+    candidates = client.available_phone_numbers("US").local.list(
+        area_code=int(data.area_code) if data.area_code else None,
+        sms_enabled=True,
+        voice_enabled=True,
+        limit=1,
+    )
+    if not candidates:
+        raise HTTPException(status_code=404, detail="No available Twilio numbers found")
+
+    selected = candidates[0]
+    purchased = client.incoming_phone_numbers.create(
+        phone_number=selected.phone_number,
+        voice_url=voice_url,
+        voice_method="POST",
+    )
+
+    await db.restaurants.update_one(
+        {"id": data.restaurant_id},
+        {"$set": {
+            "phone_number": purchased.phone_number,
+            "twilio_number_sid": purchased.sid,
+        }}
+    )
+
+    return {
+        "phone_number": purchased.phone_number,
+        "twilio_number_sid": purchased.sid,
+        "voice_url": voice_url,
+    }
+
+
+@api_router.post("/integrations/twilio/assign-existing-number")
+async def twilio_assign_existing_number(data: TwilioAssignNumberRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(data.restaurant_id, user)
+
+    client = get_twilio_client()
+    voice_url = f"{get_backend_public_url()}/api/twilio/incoming"
+
+    numbers = client.incoming_phone_numbers.list(phone_number=data.phone_number, limit=1)
+    if not numbers:
+        raise HTTPException(status_code=404, detail="Twilio number not found in this account")
+
+    number = numbers[0]
+    updated = client.incoming_phone_numbers(number.sid).update(
+        voice_url=voice_url,
+        voice_method="POST",
+    )
+
+    await db.restaurants.update_one(
+        {"id": data.restaurant_id},
+        {"$set": {
+            "phone_number": updated.phone_number,
+            "twilio_number_sid": updated.sid,
+        }}
+    )
+
+    return {
+        "phone_number": updated.phone_number,
+        "twilio_number_sid": updated.sid,
+        "voice_url": voice_url,
+    }
+
+
+@api_router.post("/twilio/incoming")
+async def twilio_incoming_call(request: Request):
+    form = await request.form()
+    called_number = form.get("Called", "")
+    call_sid = form.get("CallSid", "")
+    caller_number = form.get("From", "")
+
+    logger.info(f"Incoming call: {caller_number} -> {called_number} (SID: {call_sid})")
+
+    restaurant = await db.restaurants.find_one({"phone_number": called_number}, {"_id": 0})
+    if not restaurant or not restaurant.get("is_active"):
+        return Response(
+            content='<?xml version="1.0"?><Response><Say>Sorry, this number is not currently active. Goodbye.</Say></Response>',
+            media_type="application/xml",
+        )
+
+    await db.active_calls.update_one(
+        {"call_sid": call_sid},
+        {"$set": {
+            "call_sid": call_sid,
+            "restaurant_id": restaurant["id"],
+            "caller_number": caller_number,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+
+    host = request.headers.get("host", "localhost")
+    scheme = "wss" if request.url.scheme == "https" else "ws"
+    ws_url = f"{scheme}://{host}/api/twilio/media-stream"
+
+    twiml = generate_twiml_stream_response(ws_url, call_sid)
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.websocket("/api/twilio/media-stream")
+async def twilio_media_stream(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        initial = await websocket.receive_json()
+        stream_sid = initial.get("streamSid", "")
+        call_sid = initial.get("start", {}).get("callSid", "")
+
+        logger.info(f"Media stream started: stream={stream_sid} call={call_sid}")
+
+        active_call = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
+        if not active_call:
+            logger.error(f"No active call found for SID {call_sid}")
+            await websocket.close()
+            return
+
+        restaurant_id = active_call["restaurant_id"]
+        restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+        config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+        menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+
+        system_prompt = build_system_prompt(
+            restaurant_name=restaurant.get("name", "the restaurant"),
+            cuisine_type=restaurant.get("cuisine_type", ""),
+            persona=config.get("persona", "friendly") if config else "friendly",
+            business_rules=config.get("business_rules", []) if config else [],
+            escalation_rules=config.get("escalation_rules", []) if config else [],
+            menu_items=menu_items,
+            disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
+            upsell_enabled=config.get("upsell_enabled", True) if config else True,
+            delivery_enabled=config.get("delivery_enabled", True) if config else True,
+            delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        )
+
+        async def on_call_complete(call_sid, restaurant_id, transcript):
+            analysis = await analyse_call_transcript(transcript, None, menu_items)
+            call = CallRecord(
+                restaurant_id=restaurant_id,
+                twilio_call_sid=call_sid,
+                caller_number=active_call.get("caller_number", ""),
+                started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
+                ended_at=datetime.now(timezone.utc).isoformat(),
+                duration_seconds=0,
+                status="COMPLETED",
+                contained_by_ai=True,
+                transcript=transcript,
+                quality_score=analysis.get("quality_score", 85),
+                analysis_json=analysis,
+                order_total=0,
+            )
+            await db.call_records.insert_one(call.model_dump())
+            await db.active_calls.delete_one({"call_sid": call_sid})
+            logger.info(f"Call {call_sid} saved to DB")
+
+        if is_pipeline_available():
+            await create_call_pipeline(
+                websocket=websocket,
+                system_prompt=system_prompt,
+                restaurant_id=restaurant_id,
+                call_sid=call_sid,
+                on_call_complete=on_call_complete,
+            )
+        else:
+            logger.warning("Pipecat pipeline not available — closing WebSocket")
+            await websocket.close()
+
+    except Exception as e:
+        logger.error(f"Media stream error: {e}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ============================================================
+# BILLING / INTEGRATIONS
+# ============================================================
+
+@api_router.post("/billing/create-checkout-session")
+async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
+
+    if not stripe.api_key:
+        raise HTTPException(status_code=400, detail="Stripe is not configured")
+
+    frontend_url = get_frontend_url()
+    price_id = payload.price_id or os.environ.get("STRIPE_DEFAULT_PRICE_ID")
+    if not price_id:
+        raise HTTPException(status_code=400, detail="Stripe price is not configured")
+
+    customer_id = restaurant.get("stripe_customer_id")
+    if not customer_id:
+        customer = stripe.Customer.create(
+            email=restaurant.get("billing_email") or restaurant.get("owner_email"),
+            name=restaurant.get("owner_name") or restaurant.get("name"),
+            metadata={"restaurant_id": restaurant["id"]},
+        )
+        customer_id = customer["id"]
+        await db.restaurants.update_one(
+            {"id": restaurant["id"]},
+            {"$set": {"stripe_customer_id": customer_id, "billing_status": "pending"}}
+        )
+
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        customer=customer_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{frontend_url}/settings?billing=success",
+        cancel_url=f"{frontend_url}/settings?billing=cancelled",
+        metadata={"restaurant_id": restaurant["id"]},
+    )
+
+    return {"checkout_url": session.url}
+
+
+@api_router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+
+    if not webhook_secret:
+        raise HTTPException(status_code=400, detail="Stripe webhook secret not configured")
+
+    try:
+        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig_header, secret=webhook_secret)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid Stripe webhook") from exc
+
+    event_type = event["type"]
+    data = event["data"]["object"]
+
+    if event_type == "checkout.session.completed":
+        restaurant_id = data.get("metadata", {}).get("restaurant_id")
+        subscription_id = data.get("subscription")
+        customer_id = data.get("customer")
+        if restaurant_id:
+            await db.restaurants.update_one(
+                {"id": restaurant_id},
+                {"$set": {
+                    "stripe_customer_id": customer_id,
+                    "stripe_subscription_id": subscription_id,
+                    "billing_status": "active",
+                    "plan": "GROWTH",
+                }}
+            )
+
+    elif event_type in ("customer.subscription.updated", "customer.subscription.created"):
+        subscription_id = data.get("id")
+        customer_id = data.get("customer")
+        status = data.get("status")
+        await db.restaurants.update_one(
+            {"stripe_customer_id": customer_id},
+            {"$set": {
+                "stripe_subscription_id": subscription_id,
+                "billing_status": status,
+            }}
+        )
+
+    elif event_type == "customer.subscription.deleted":
+        customer_id = data.get("customer")
+        await db.restaurants.update_one(
+            {"stripe_customer_id": customer_id},
+            {"$set": {"billing_status": "canceled"}}
+        )
+
+    return JSONResponse({"received": True})
+
+
+@api_router.get("/integrations/square/connect")
+async def square_connect(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    application_id = os.environ.get("SQUARE_APPLICATION_ID", "")
+    redirect_uri = os.environ.get("SQUARE_REDIRECT_URI", "")
+    if not application_id or not redirect_uri:
+        raise HTTPException(status_code=400, detail="Square credentials are not configured")
+    connect_url = (
+        "https://connect.squareup.com/oauth2/authorize"
+        f"?client_id={application_id}&scope=ITEMS_READ+ORDERS_READ+PAYMENTS_READ"
+        f"&session=false&state={restaurant_id}&redirect_uri={redirect_uri}"
+    )
+    return {"connect_url": connect_url}
+
+
+@api_router.get("/integrations/square/callback")
+async def square_callback(code: Optional[str] = None, state: Optional[str] = None):
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing Square authorization response")
+    await db.integrations.update_one(
+        {"provider": "square", "restaurant_id": state},
+        {"$set": {
+            "provider": "square",
+            "restaurant_id": state,
+            "status": "connected",
+            "auth_code": code,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    await db.restaurants.update_one({"id": state}, {"$set": {"square_connected": True}})
+    return {"connected": True, "restaurant_id": state}
+
+
+@api_router.post("/webhooks/square")
+async def square_webhook(request: Request):
+    payload = await request.body()
+    logger.info("Received Square webhook", extra={"payload_size": len(payload)})
+    return JSONResponse({"received": True})
+
+
+# ============================================================
+# AI STATUS / SERVICE HEALTH ENDPOINT
+# ============================================================
+
+@api_router.get("/status")
+async def get_service_status():
+    test_mode = get_test_mode_status()
+    return {
+        "api": "operational",
+        "mode": test_mode["mode"],
+        "gemini": {
+            "available": is_gemini_available(),
+            "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        },
+        "twilio": {
+            "available": bool(os.environ.get("TWILIO_ACCOUNT_SID")),
+            "phone_number": os.environ.get("TWILIO_PHONE_NUMBER"),
+            "status": test_mode["integrations"]["twilio"]["status"],
+        },
+        "stripe": {
+            "status": test_mode["integrations"]["stripe"]["status"],
+            "configured": test_mode["integrations"]["stripe"]["configured"],
+        },
+        "clerk": {
+            "status": test_mode["integrations"]["clerk"]["status"],
+            "configured": test_mode["integrations"]["clerk"]["configured"],
+        },
+        "pipecat_pipeline": {
+            "available": is_pipeline_available(),
+        },
+        "database": {
+            "available": True,
+            "type": "MongoDB",
+        },
+    }
+
+
+# ============================================================
+# RE-ANALYSE A CALL
+# ============================================================
+
+@api_router.post("/calls/{call_id}/analyse")
+async def reanalyse_call(call_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    call = await db.call_records.find_one({"id": call_id}, {"_id": 0})
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    await ensure_restaurant_access(call["restaurant_id"], user)
+
+    menu_items = await db.menu_items.find(
+        {"restaurant_id": call["restaurant_id"], "available": True}, {"_id": 0}
+    ).to_list(500)
+
+    analysis = await analyse_call_transcript(
+        transcript=call.get("transcript", []),
+        order_json=call.get("order_json"),
+        menu_items=menu_items,
+    )
+
+    await db.call_records.update_one(
+        {"id": call_id},
+        {"$set": {"analysis_json": analysis, "quality_score": analysis.get("quality_score")}},
+    )
+    return {"message": "Analysis complete", "analysis": analysis}
+
+
+# ============================================================
+# TEST MODE ENDPOINTS
+# ============================================================
+
+@api_router.get("/test-mode/status")
+async def get_test_mode():
+    return get_test_mode_status()
+
+
+@api_router.get("/test-mode/scenarios")
+async def get_test_call_scenarios():
+    return {"scenarios": get_test_scenarios()}
+
+
+@api_router.post("/test-mode/run-scenario")
+async def run_test_scenario(
+    restaurant_id: str = Query(...),
+    scenario_id: int = Query(0),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_restaurant_access(restaurant_id, user)
+
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    scenario = get_scenario_by_id(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=400, detail="Invalid scenario ID")
+
+    menu_items = await db.menu_items.find(
+        {"restaurant_id": restaurant_id, "available": True}, {"_id": 0}
+    ).to_list(100)
+
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+
+    system_prompt = build_system_prompt(
+        restaurant_name=restaurant.get("name", "the restaurant"),
+        cuisine_type=restaurant.get("cuisine_type", ""),
+        persona=config.get("persona", "friendly") if config else "friendly",
+        business_rules=config.get("business_rules", []) if config else [],
+        escalation_rules=config.get("escalation_rules", []) if config else [],
+        menu_items=menu_items,
+        disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
+        upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        delivery_enabled=config.get("delivery_enabled", True) if config else True,
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+    )
+
+    transcript = []
+    timestamp_counter = 0
+
+    greeting = await get_conversation_response(system_prompt, [], "")
+    transcript.append({
+        "role": "ai",
+        "text": greeting or f"Hi! I'm the AI assistant for {restaurant.get('name')}. How can I help you?",
+        "timestamp": f"00:{timestamp_counter:02d}",
+    })
+    timestamp_counter += 3
+
+    for customer_msg in scenario["messages"]:
+        transcript.append({
+            "role": "customer",
+            "text": customer_msg,
+            "timestamp": f"00:{timestamp_counter:02d}",
+        })
+        timestamp_counter += 2
+
+        ai_response = await get_conversation_response(system_prompt, transcript, customer_msg)
+        transcript.append({
+            "role": "ai",
+            "text": ai_response or "I'd be happy to help with that!",
+            "timestamp": f"00:{timestamp_counter:02d}",
+        })
+        timestamp_counter += 3
+
+    order_items = []
+    total = 0
+    for item_name in scenario.get("expected_items", []):
+        menu_item = next((m for m in menu_items if item_name.lower() in m["name"].lower()), None)
+        if menu_item:
+            price = menu_item.get("price", 999)
+            order_items.append({
+                "name": menu_item["name"],
+                "quantity": 1,
+                "price": price,
+                "modifiers": [],
+                "subtotal": price,
+            })
+            total += price
+
+    order_json = {
+        "items": order_items,
+        "total": total,
+        "type": scenario.get("order_type", "pickup"),
+        "special_instructions": "",
+    } if order_items else None
+
+    analysis = await analyse_call_transcript(transcript, order_json, menu_items)
+
+    now = datetime.now(timezone.utc)
+    call = CallRecord(
+        restaurant_id=restaurant_id,
+        caller_number=f"+1555{random.randint(1000000, 9999999)}",
+        caller_name=scenario["caller_name"],
+        started_at=now.isoformat(),
+        ended_at=(now + timedelta(seconds=timestamp_counter)).isoformat(),
+        duration_seconds=timestamp_counter,
+        status="ESCALATED" if scenario.get("order_type") == "escalation" else "COMPLETED",
+        contained_by_ai=scenario.get("order_type") != "escalation",
+        escalated_to_human=scenario.get("order_type") == "escalation",
+        transcript=transcript,
+        order_json=order_json,
+        quality_score=analysis.get("quality_score", 85),
+        analysis_json=analysis,
+        order_total=total,
+    )
+
+    await db.call_records.insert_one(call.model_dump())
+
+    return {
+        "call": call.model_dump(),
+        "scenario": {"id": scenario_id, "name": scenario["name"]},
+        "ai_powered": is_gemini_available(),
+    }
+
+
+# ============================================================
+# CORS MIDDLEWARE
+# ============================================================
+
+cors_origins = get_cors_origins()
+cors_origin_regex = os.environ.get("CORS_ORIGIN_REGEX")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex if cors_origin_regex else None,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================
+# INCLUDE ROUTER
+# ============================================================
+
+app.include_router(api_router)
+
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()

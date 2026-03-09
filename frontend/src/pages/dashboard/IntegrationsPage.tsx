@@ -1,0 +1,106 @@
+import { useCallback, useEffect, useState } from "react";
+import { useAppSession } from "@/context/AppSessionContext";
+import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube } from "lucide-react";
+import { toast } from "sonner";
+
+const IntegrationsPage = () => {
+  const { activeRestaurant } = useAppSession();
+  const [testMode, setTestMode] = useState<any>(null);
+  const [status, setStatus] = useState<any>(null);
+  const [twilioStatus, setTwilioStatusState] = useState<any>(null);
+  const [areaCode, setAreaCode] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      const [testModeRes, statusRes, twilioRes] = await Promise.all([
+        getTestModeStatus(),
+        getStatus(),
+        getTwilioStatus(restaurantId),
+      ]);
+      setTestMode(testModeRes.data);
+      setStatus(statusRes.data);
+      setTwilioStatusState(twilioRes.data);
+    } catch {
+      toast.error("Failed to load integrations");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeRestaurant]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const connectSquare = async () => {
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      const res = await getSquareConnectUrl(restaurantId);
+      const url = res?.data?.connect_url;
+      if (!url) return toast.error("Square connect URL not available");
+      window.location.href = url;
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to start Square connection");
+    }
+  };
+
+  const provisionNumber = async () => {
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      await provisionTwilioNumber(restaurantId, areaCode);
+      await fetchData();
+      toast.success("Twilio number provisioned");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to provision Twilio number");
+    }
+  };
+
+  if (loading) return <Card className="premium-card h-48 animate-pulse" />;
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      <Card className="premium-card p-6">
+        <h3 className="font-display font-bold text-lg mb-4 flex items-center gap-2"><Key className="w-4 h-4" /> Integration Status</h3>
+        <p className="text-xs text-muted-foreground mb-4">Current mode: <Badge variant="secondary" className={`ml-1 ${(testMode?.mode === "sandbox") ? "bg-primary/10 text-primary" : (testMode?.mode === "live") ? "bg-success/10 text-success" : "bg-muted"} border-0`}>{testMode?.mode || "simulation"}</Badge></p>
+        <div className="space-y-3">
+          {[
+            { name: "Gemini AI", icon: Sparkles, configured: !!status?.gemini?.available, message: testMode?.integrations?.gemini?.message || "Not configured" },
+            { name: "Twilio Telephony", icon: Phone, configured: !!status?.twilio?.available, message: testMode?.integrations?.twilio?.message || "Not configured" },
+            { name: "Stripe Billing", icon: CreditCard, configured: !!testMode?.integrations?.stripe?.configured, message: testMode?.integrations?.stripe?.message || "Not configured" },
+            { name: "Clerk Authentication", icon: ShieldAlert, configured: !!testMode?.integrations?.clerk?.configured, message: testMode?.integrations?.clerk?.message || "Not configured" },
+          ].map((item) => <div key={item.name} className="flex items-center justify-between p-4 rounded-lg border border-border"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-lg flex items-center justify-center ${item.configured ? "bg-success/10" : "bg-muted"}`}><item.icon className={`w-5 h-5 ${item.configured ? "text-success" : "text-muted-foreground"}`} /></div><div><p className="text-sm font-medium">{item.name}</p><p className="text-xs text-muted-foreground">{item.message}</p></div></div>{item.configured ? <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1"><CheckCircle2 className="w-3 h-3" /> Active</Badge> : <Badge variant="secondary" className="bg-warning/10 text-warning border-0 gap-1"><TestTube className="w-3 h-3" /> Simulated</Badge>}</div>)}
+        </div>
+      </Card>
+
+      <Card className="premium-card p-6 space-y-4">
+        <h3 className="font-display font-bold text-lg">Twilio Number</h3>
+        <div className="space-y-2"><Label>Current Number</Label><Input value={twilioStatus?.phone_number || status?.twilio?.phone_number || ""} readOnly placeholder="No number assigned yet" /></div>
+        <div className="space-y-2"><Label>Preferred Area Code</Label><Input value={areaCode} onChange={(e) => setAreaCode(e.target.value)} placeholder="815" /></div>
+        <div className="flex gap-2 flex-wrap"><Button className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90" onClick={provisionNumber}>Provision Twilio Number</Button><Button variant="outline" onClick={connectSquare}>Connect Square</Button></div>
+      </Card>
+
+      <Card className="premium-card p-6">
+        <h3 className="font-display font-bold text-lg mb-2">Required Environment Variables</h3>
+        <div className="space-y-2 text-xs font-mono bg-muted/30 p-4 rounded-lg">
+          <p className="text-muted-foreground"># Frontend</p>
+          <p>VITE_BACKEND_URL=https://your-backend.onrender.com</p>
+          <p>VITE_CLERK_PUBLISHABLE_KEY=pk_test_xxxxx</p>
+          <p className="text-muted-foreground mt-3"># Backend</p>
+          <p>TWILIO_ACCOUNT_SID=ACxxxxxx</p>
+          <p>TWILIO_AUTH_TOKEN=xxxxxx</p>
+          <p>STRIPE_SECRET_KEY=sk_test_xxxxx</p>
+          <p>STRIPE_DEFAULT_PRICE_ID=price_xxxxx</p>
+          <p>CLERK_JWKS_URL=https://your-clerk/.well-known/jwks.json</p>
+          <p>MONGO_URL=mongodb+srv://...</p>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+export default IntegrationsPage;

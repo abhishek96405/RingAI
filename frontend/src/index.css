@@ -1,0 +1,392 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-display: 'Plus Jakarta Sans', sans-serif;
+    --font-body: 'Inter', sans-serif;
+
+    --background: 220 20% 97%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 250 80% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 250 80% 96%;
+    --accent-foreground: 250 80% 40%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 250 80% 55%;
+
+    --radius: 0.75rem;
+
+    --success: 152 69% 41%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 210 92% 55%;
+    --info-foreground: 0 0% 100%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(250, 80%, 55%) 0%, hsl(280, 80%, 55%) 50%, hsl(310, 70%, 55%) 100%);
+    --gradient-hero: linear-gradient(135deg, hsl(250, 80%, 55%) 0%, hsl(280, 70%, 50%) 100%);
+    --gradient-surface: linear-gradient(135deg, hsl(250, 80%, 97%) 0%, hsl(280, 60%, 97%) 100%);
+    --gradient-glass: linear-gradient(135deg, hsla(0,0%,100%,0.9) 0%, hsla(0,0%,100%,0.7) 100%);
+    --gradient-dark: linear-gradient(135deg, hsl(250, 40%, 8%) 0%, hsl(280, 40%, 12%) 100%);
+
+    --shadow-sm: 0 1px 2px 0 hsla(250, 30%, 20%, 0.05);
+    --shadow-md: 0 4px 6px -1px hsla(250, 30%, 20%, 0.07), 0 2px 4px -2px hsla(250, 30%, 20%, 0.05);
+    --shadow-lg: 0 10px 25px -5px hsla(250, 30%, 20%, 0.08), 0 8px 10px -6px hsla(250, 30%, 20%, 0.04);
+    --shadow-xl: 0 20px 50px -12px hsla(250, 30%, 20%, 0.15);
+    --shadow-glow: 0 0 40px -10px hsla(250, 80%, 55%, 0.3);
+    --shadow-card: 0 1px 3px hsla(250, 20%, 20%, 0.04), 0 1px 2px hsla(250, 20%, 20%, 0.06);
+    --shadow-card-hover: 0 10px 30px -10px hsla(250, 30%, 20%, 0.12);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 250 80% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 250 80% 96%;
+    --sidebar-accent-foreground: 250 80% 40%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 250 80% 55%;
+  }
+
+  .dark {
+    --background: 240 10% 6%;
+    --foreground: 0 0% 95%;
+
+    --card: 240 10% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 240 10% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 250 80% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 6% 15%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 240 6% 15%;
+    --muted-foreground: 240 5% 60%;
+
+    --accent: 250 30% 18%;
+    --accent-foreground: 250 80% 75%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 95%;
+
+    --border: 240 6% 18%;
+    --input: 240 6% 18%;
+    --ring: 250 80% 60%;
+
+    --sidebar-background: 240 10% 8%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 250 80% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 250 30% 15%;
+    --sidebar-accent-foreground: 250 80% 75%;
+    --sidebar-border: 240 6% 18%;
+    --sidebar-ring: 250 80% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: var(--font-body);
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-body);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-primary);
+  }
+
+  .bg-gradient-primary {
+    background-image: var(--gradient-primary);
+  }
+
+  .bg-gradient-hero {
+    background-image: var(--gradient-hero);
+  }
+
+  .bg-gradient-surface {
+    background-image: var(--gradient-surface);
+  }
+
+  .bg-gradient-dark {
+    background-image: var(--gradient-dark);
+  }
+
+  .glass {
+    @apply bg-white/80 backdrop-blur-xl border border-white/20;
+  }
+
+  .glass-card {
+    @apply bg-white/90 backdrop-blur-xl border border-white/40 rounded-2xl;
+    box-shadow: var(--shadow-card);
+  }
+
+  .glass-card:hover {
+    box-shadow: var(--shadow-card-hover);
+  }
+
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .premium-card {
+    @apply bg-card rounded-2xl border border-border/50;
+    box-shadow: var(--shadow-card);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .premium-card:hover {
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .kpi-card {
+    @apply premium-card p-6;
+  }
+
+  .section-padding {
+    @apply py-14 md:py-20 lg:py-24;
+  }
+
+  .section-divider {
+    @apply relative;
+  }
+
+  .section-divider::after {
+    content: '';
+    @apply absolute bottom-0 left-1/2 -translate-x-1/2 w-24 h-px;
+    background: linear-gradient(90deg, transparent, hsl(250 80% 55% / 0.3), transparent);
+  }
+
+  .container-tight {
+    @apply max-w-5xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  .container-wide {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-20px); }
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent, hsla(250, 80%, 55%, 0.08), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 20px -5px hsla(250, 80%, 55%, 0.2); }
+    50% { box-shadow: 0 0 30px -5px hsla(250, 80%, 55%, 0.4); }
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 3s ease-in-out infinite;
+  }
+
+  .hover-lift {
+    @apply transition-all duration-300;
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* Clerk auth isolation */
+.ringai-auth-shell {
+  width: 100%;
+}
+
+.ringai-auth-shell .cl-rootBox,
+.ringai-auth-shell .cl-cardBox,
+.ringai-auth-shell .cl-card,
+.ringai-auth-shell .cl-main {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.ringai-auth-shell .cl-rootBox {
+  font-family: var(--font-body) !important;
+}
+
+.ringai-auth-shell .cl-cardBox {
+  box-shadow: none !important;
+}
+
+.ringai-auth-shell .cl-card {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.ringai-auth-shell .cl-main {
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+.ringai-auth-shell .cl-header,
+.ringai-auth-shell .cl-headerTitle,
+.ringai-auth-shell .cl-headerSubtitle {
+  display: none !important;
+}
+
+.ringai-auth-shell .cl-formFieldLabel,
+.ringai-auth-shell .cl-footer,
+.ringai-auth-shell .cl-dividerText,
+.ringai-auth-shell .cl-formResendCodeLink,
+.ringai-auth-shell .cl-footerActionText,
+.ringai-auth-shell .cl-footerActionLink,
+.ringai-auth-shell .cl-alertText,
+.ringai-auth-shell .cl-identityPreviewText {
+  font-family: var(--font-body) !important;
+}
+
+.ringai-auth-shell .cl-formFieldRow {
+  gap: 0.75rem !important;
+}
+
+.ringai-auth-shell .cl-formFieldInput,
+.ringai-auth-shell .cl-socialButtonsBlockButton,
+.ringai-auth-shell .cl-formButtonPrimary,
+.ringai-auth-shell .cl-otpCodeFieldInput {
+  min-height: 44px !important;
+  height: 44px !important;
+  font-size: 14px !important;
+  line-height: 20px !important;
+  border-radius: 0.75rem !important;
+}
+
+.ringai-auth-shell .cl-formFieldInput,
+.ringai-auth-shell .cl-otpCodeFieldInput {
+  background: hsl(var(--background)) !important;
+  border: 1px solid hsl(var(--input)) !important;
+  color: hsl(var(--foreground)) !important;
+  box-shadow: none !important;
+}
+
+.ringai-auth-shell .cl-formFieldInput:focus,
+.ringai-auth-shell .cl-otpCodeFieldInput:focus {
+  outline: none !important;
+  border-color: hsl(var(--ring)) !important;
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.15) !important;
+}
+
+.ringai-auth-shell .cl-socialButtonsBlockButton {
+  border: 1px solid hsl(var(--border)) !important;
+  background: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+  box-shadow: none !important;
+}
+
+.ringai-auth-shell .cl-socialButtonsBlockButton:hover {
+  background: hsl(var(--secondary)) !important;
+}
+
+.ringai-auth-shell .cl-formButtonPrimary {
+  border: 0 !important;
+  color: white !important;
+  background-image: var(--gradient-primary) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.ringai-auth-shell .cl-formButtonPrimary:hover {
+  opacity: 0.92;
+}
+
+.ringai-auth-shell .cl-dividerLine {
+  background: hsl(var(--border)) !important;
+}
+
+.ringai-auth-shell .cl-dividerText {
+  color: hsl(var(--muted-foreground)) !important;
+  font-size: 12px !important;
+}
+
+.ringai-auth-shell .cl-footerActionLink,
+.ringai-auth-shell .cl-formResendCodeLink {
+  color: hsl(var(--primary)) !important;
+  font-weight: 600 !important;
+}
+
+.ringai-auth-shell .cl-footerActionLink:hover,
+.ringai-auth-shell .cl-formResendCodeLink:hover {
+  opacity: 0.9;
+}
+
+.ringai-auth-shell .cl-footer {
+  padding-top: 1rem !important;
+}
+
+.ringai-auth-shell .cl-alert {
+  border-radius: 0.75rem !important;
+}
+
+.ringai-clerk-card {
+  width: 100%;
+}
+
+.ringai-clerk-input {
+  width: 100%;
+}
+
+.ringai-clerk-primary-btn {
+  width: 100%;
+}
+
+.ringai-clerk-social-btn {
+  width: 100%;
+}

@@ -1,0 +1,384 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { activateRestaurant, confirmMenu, createRestaurant as createRestaurantApi, parseMenu as parseMenuApi, setRestaurantId as persistRestaurantId, updateConfig } from "@/lib/api";
+import { useAppSession } from "@/context/AppSessionContext";
+import { Building2, Check, CreditCard, Phone, Settings, Utensils, ArrowLeft, ArrowRight } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { toast } from "sonner";
+
+const steps = [
+  { icon: Building2, label: "Restaurant Info" },
+  { icon: Utensils, label: "Menu Setup" },
+  { icon: Settings, label: "AI Configuration" },
+  { icon: CreditCard, label: "Connect & Launch" },
+];
+
+const defaultHours = {
+  monday: { closed: false, open: "09:00", close: "21:00" },
+  tuesday: { closed: false, open: "09:00", close: "21:00" },
+  wednesday: { closed: false, open: "09:00", close: "21:00" },
+  thursday: { closed: false, open: "09:00", close: "21:00" },
+  friday: { closed: false, open: "09:00", close: "22:00" },
+  saturday: { closed: false, open: "09:00", close: "22:00" },
+  sunday: { closed: false, open: "09:00", close: "20:00" },
+};
+
+const days: [keyof typeof defaultHours, string][] = [
+  ["monday", "Monday"],
+  ["tuesday", "Tuesday"],
+  ["wednesday", "Wednesday"],
+  ["thursday", "Thursday"],
+  ["friday", "Friday"],
+  ["saturday", "Saturday"],
+  ["sunday", "Sunday"],
+];
+
+export default function Onboarding() {
+  const navigate = useNavigate();
+  const { activeRestaurant, onboardingComplete, refreshSession, setActiveRestaurant } = useAppSession();
+
+  const [currentStep, setCurrentStep] = useState(0);
+  const [restaurantId, setRestaurantId] = useState<string | null>(null);
+  const [restaurantData, setRestaurantData] = useState<any>({
+    name: "",
+    cuisine_type: "",
+    address: "",
+    timezone: "America/Chicago",
+    owner_name: "",
+    owner_email: "",
+    owner_phone: "",
+    billing_email: "",
+    business_phone: "",
+    website: "",
+    primary_language: "en",
+    pickup_enabled: true,
+    delivery_enabled: true,
+    dine_in_enabled: true,
+    reservations_enabled: false,
+    catering_enabled: false,
+    avg_prep_time_minutes: 20,
+    reservation_party_limit: 8,
+  });
+  const [menuText, setMenuText] = useState("");
+  const [parsedItems, setParsedItems] = useState<any[]>([]);
+  const [parsing, setParsing] = useState(false);
+  const [aiConfig, setAiConfig] = useState<any>({
+    persona: "friendly",
+    disclosure_text: "",
+    upsell_enabled: true,
+    primary_language: "en",
+    after_hours_mode: "voicemail",
+    voicemail_enabled: true,
+    escalation_phone_number: "",
+    operating_hours: defaultHours,
+  });
+  const [activating, setActivating] = useState(false);
+
+  useEffect(() => {
+    if (activeRestaurant && !restaurantId) {
+      setRestaurantId(activeRestaurant.id);
+      setRestaurantData((prev: any) => ({
+        ...prev,
+        ...activeRestaurant,
+        timezone: activeRestaurant.timezone || "America/Chicago",
+        primary_language: activeRestaurant.primary_language || "en",
+      }));
+      if (activeRestaurant.is_active) {
+        setCurrentStep(3);
+      }
+    }
+  }, [activeRestaurant, restaurantId]);
+
+  useEffect(() => {
+    if (activeRestaurant && onboardingComplete) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [activeRestaurant, onboardingComplete, navigate]);
+
+  const createRestaurant = async () => {
+    if (!restaurantData.name.trim()) {
+      toast.error("Restaurant name is required");
+      return;
+    }
+    try {
+      const res = await createRestaurantApi(restaurantData);
+      const createdRestaurant = res.data;
+      setRestaurantId(createdRestaurant.id);
+      persistRestaurantId(createdRestaurant.id);
+      await setActiveRestaurant(createdRestaurant);
+      setAiConfig((prev: any) => ({
+        ...prev,
+        primary_language: createdRestaurant.primary_language || "en",
+        disclosure_text: `Hi! I'm an AI assistant for ${createdRestaurant.name}. How can I help you today?`,
+      }));
+      toast.success("Restaurant created!");
+      setCurrentStep(1);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to create restaurant");
+    }
+  };
+
+  const parseMenu = async () => {
+    if (!menuText.trim()) {
+      toast.error("Please enter your menu text");
+      return;
+    }
+    setParsing(true);
+    try {
+      const res = await parseMenuApi({ menu_text: menuText, restaurant_id: restaurantId });
+      setParsedItems(res.data.items || []);
+      if (res.data.items?.length > 0) toast.success(`Parsed ${res.data.items.length} menu items!`);
+      else toast.warning("No items could be parsed. Try a different format.");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to parse menu");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const saveMenuAndProceed = async () => {
+    if (parsedItems.length === 0) {
+      toast.warning("Parse your menu first");
+      return;
+    }
+    try {
+      await confirmMenu(restaurantId, parsedItems);
+      toast.success("Menu saved!");
+      setCurrentStep(2);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to save menu");
+    }
+  };
+
+  const saveConfigAndProceed = async () => {
+    try {
+      await updateConfig(restaurantId, aiConfig);
+      toast.success("AI configuration saved!");
+      setCurrentStep(3);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to save config");
+    }
+  };
+
+  const goLive = async () => {
+    setActivating(true);
+    try {
+      await activateRestaurant(restaurantId);
+      await refreshSession(restaurantId);
+      toast.success("Your AI phone agent is live!");
+      setTimeout(() => navigate("/dashboard"), 700);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to activate");
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  const updateHours = (dayKey: keyof typeof defaultHours, field: string, value: any) => {
+    setAiConfig((prev: any) => ({
+      ...prev,
+      operating_hours: {
+        ...prev.operating_hours,
+        [dayKey]: {
+          ...prev.operating_hours[dayKey],
+          [field]: value,
+        },
+      },
+    }));
+  };
+
+  const renderStep = () => {
+    switch (currentStep) {
+      case 0:
+        return (
+          <div className="space-y-5">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Restaurant Name *</Label><Input value={restaurantData.name} onChange={(e) => setRestaurantData({ ...restaurantData, name: e.target.value })} className="h-11 rounded-xl" /></div>
+              <div className="space-y-2"><Label>Cuisine Type</Label><Input value={restaurantData.cuisine_type} onChange={(e) => setRestaurantData({ ...restaurantData, cuisine_type: e.target.value })} className="h-11 rounded-xl" /></div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Owner Name</Label><Input value={restaurantData.owner_name} onChange={(e) => setRestaurantData({ ...restaurantData, owner_name: e.target.value })} className="h-11 rounded-xl" /></div>
+              <div className="space-y-2"><Label>Owner Email</Label><Input type="email" value={restaurantData.owner_email} onChange={(e) => setRestaurantData({ ...restaurantData, owner_email: e.target.value })} className="h-11 rounded-xl" /></div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Business Phone</Label><Input value={restaurantData.business_phone} onChange={(e) => setRestaurantData({ ...restaurantData, business_phone: e.target.value })} className="h-11 rounded-xl" /></div>
+              <div className="space-y-2"><Label>Billing Email</Label><Input type="email" value={restaurantData.billing_email} onChange={(e) => setRestaurantData({ ...restaurantData, billing_email: e.target.value })} className="h-11 rounded-xl" /></div>
+            </div>
+            <div className="space-y-2"><Label>Address</Label><Input value={restaurantData.address} onChange={(e) => setRestaurantData({ ...restaurantData, address: e.target.value })} className="h-11 rounded-xl" /></div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Timezone</Label><Select value={restaurantData.timezone} onValueChange={(v) => setRestaurantData({ ...restaurantData, timezone: v })}><SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="America/New_York">Eastern</SelectItem><SelectItem value="America/Chicago">Central</SelectItem><SelectItem value="America/Denver">Mountain</SelectItem><SelectItem value="America/Los_Angeles">Pacific</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2"><Label>Primary Language</Label><Select value={restaurantData.primary_language} onValueChange={(v) => setRestaurantData({ ...restaurantData, primary_language: v })}><SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="en">English</SelectItem><SelectItem value="es">Spanish</SelectItem></SelectContent></Select></div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Average Prep Time (minutes)</Label><Input type="number" value={restaurantData.avg_prep_time_minutes} onChange={(e) => setRestaurantData({ ...restaurantData, avg_prep_time_minutes: Number(e.target.value || 0) })} className="h-11 rounded-xl" /></div>
+              <div className="space-y-2"><Label>Reservation Party Limit</Label><Input type="number" value={restaurantData.reservation_party_limit} onChange={(e) => setRestaurantData({ ...restaurantData, reservation_party_limit: Number(e.target.value || 0) })} className="h-11 rounded-xl" /></div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {[
+                ["pickup_enabled", "Pickup Enabled"],
+                ["delivery_enabled", "Delivery Enabled"],
+                ["dine_in_enabled", "Dine-in Enabled"],
+                ["reservations_enabled", "Reservations Enabled"],
+              ].map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                  <span className="text-sm">{label}</span>
+                  <input type="checkbox" className="accent-primary" checked={restaurantData[key]} onChange={(e) => setRestaurantData({ ...restaurantData, [key]: e.target.checked })} />
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      case 1:
+        return (
+          <div className="space-y-5">
+            <div className="space-y-2"><Label>Paste Menu Text</Label><Textarea value={menuText} onChange={(e) => setMenuText(e.target.value)} className="rounded-xl min-h-[200px]" placeholder="APPETIZERS\nBruschetta - $12.99\nCalamari - $14.99\n\nPASTA\nSpaghetti Bolognese - $18.99" /></div>
+            <Button variant="outline" className="rounded-xl" onClick={parseMenu} disabled={parsing}>{parsing ? "Parsing with AI..." : "Parse Menu"}</Button>
+            {parsedItems.length > 0 && (
+              <Card className="p-0 overflow-hidden border-border">
+                <div className="p-3 bg-muted/30 text-sm font-medium">{parsedItems.length} items parsed</div>
+                <div className="divide-y divide-border max-h-72 overflow-y-auto">
+                  {parsedItems.map((item: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between px-4 py-3 text-sm">
+                      <div><p className="font-medium">{item.name}</p><p className="text-xs text-muted-foreground">{item.category}</p></div>
+                      <span>{item.price ? `$${(item.price / 100).toFixed(2)}` : "--"}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+        );
+      case 2:
+        return (
+          <div className="space-y-5">
+            <div className="space-y-2"><Label>AI Persona</Label><Select value={aiConfig.persona} onValueChange={(v) => setAiConfig({ ...aiConfig, persona: v })}><SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="friendly">Friendly & Warm</SelectItem><SelectItem value="professional">Professional & Formal</SelectItem><SelectItem value="casual">Casual & Relaxed</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label>Greeting Message</Label><Textarea value={aiConfig.disclosure_text} onChange={(e) => setAiConfig({ ...aiConfig, disclosure_text: e.target.value })} className="rounded-xl min-h-[80px]" /></div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Primary Language</Label><Select value={aiConfig.primary_language} onValueChange={(v) => setAiConfig({ ...aiConfig, primary_language: v })}><SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="en">English</SelectItem><SelectItem value="es">Spanish</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2"><Label>After-hours Behavior</Label><Select value={aiConfig.after_hours_mode} onValueChange={(v) => setAiConfig({ ...aiConfig, after_hours_mode: v })}><SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="voicemail">Take voicemail</SelectItem><SelectItem value="close_message">Play closed message</SelectItem><SelectItem value="forward">Forward to escalation number</SelectItem></SelectContent></Select></div>
+            </div>
+            <div className="space-y-2"><Label>Escalation Phone Number</Label><Input value={aiConfig.escalation_phone_number} onChange={(e) => setAiConfig({ ...aiConfig, escalation_phone_number: e.target.value })} className="h-11 rounded-xl" /></div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30"><span className="text-sm">Enable Upselling</span><input type="checkbox" className="accent-primary" checked={aiConfig.upsell_enabled} onChange={(e) => setAiConfig({ ...aiConfig, upsell_enabled: e.target.checked })} /></div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30"><span className="text-sm">Voicemail Enabled</span><input type="checkbox" className="accent-primary" checked={aiConfig.voicemail_enabled} onChange={(e) => setAiConfig({ ...aiConfig, voicemail_enabled: e.target.checked })} /></div>
+            </div>
+            <div>
+              <Label className="mb-3 block">Operating Hours</Label>
+              <div className="space-y-3">
+                {days.map(([key, label]) => {
+                  const day = aiConfig.operating_hours[key];
+                  return (
+                    <div key={key} className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-muted/20">
+                      <div className="col-span-3"><p className="text-sm font-medium">{label}</p></div>
+                      <div className="col-span-2 flex items-center gap-2"><input type="checkbox" className="accent-primary" checked={day.closed} onChange={(e) => updateHours(key, "closed", e.target.checked)} /><span className="text-xs text-muted-foreground">Closed</span></div>
+                      <div className="col-span-3"><Input type="time" value={day.open} disabled={day.closed} onChange={(e) => updateHours(key, "open", e.target.value)} /></div>
+                      <div className="col-span-1 text-center text-xs text-muted-foreground">to</div>
+                      <div className="col-span-3"><Input type="time" value={day.close} disabled={day.closed} onChange={(e) => updateHours(key, "close", e.target.value)} /></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      case 3:
+        return (
+          <div className="space-y-5">
+            <Card className="premium-card p-6 bg-success/5 border-success/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center"><Check className="w-5 h-5 text-success" /></div>
+                <div>
+                  <h3 className="font-display font-semibold text-sm">You're almost ready!</h3>
+                  <p className="text-xs text-muted-foreground">Activate your restaurant now. Then connect Twilio and billing from the dashboard.</p>
+                </div>
+              </div>
+            </Card>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>• Your restaurant profile is saved</p>
+              <p>• Your menu is stored</p>
+              <p>• Your AI voice configuration is ready</p>
+              <p>• Next step after launch: provision Twilio number and connect billing</p>
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const handleNext = () => {
+    if (currentStep === 0) return createRestaurant();
+    if (currentStep === 1) return saveMenuAndProceed();
+    if (currentStep === 2) return saveConfigAndProceed();
+    return goLive();
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) setCurrentStep(currentStep - 1);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-surface flex flex-col">
+      <div className="border-b border-border/50 bg-card/80 backdrop-blur-xl">
+        <div className="container-tight flex items-center justify-between h-16">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-primary flex items-center justify-center"><Phone className="w-4 h-4 text-primary-foreground" /></div>
+            <span className="font-display font-bold text-lg">Ring<span className="text-gradient">AI</span></span>
+          </div>
+          <span className="text-sm text-muted-foreground">Step {currentStep + 1} of {steps.length}</span>
+        </div>
+      </div>
+
+      <div className="container-tight pt-8 pb-4">
+        <div className="flex items-center justify-between mb-8">
+          {steps.map((step, i) => (
+            <div key={i} className="flex items-center flex-1">
+              <div className="flex flex-col items-center gap-2">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${i <= currentStep ? "bg-gradient-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground"}`}>
+                  {i < currentStep ? <Check className="w-5 h-5" /> : <step.icon className="w-5 h-5" />}
+                </div>
+                <span className={`text-xs font-medium hidden sm:block ${i <= currentStep ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+              </div>
+              {i < steps.length - 1 && <div className={`flex-1 h-px mx-3 ${i < currentStep ? "bg-primary" : "bg-border"}`} />}
+            </div>
+          ))}
+        </div>
+        <Progress value={((currentStep + 1) / steps.length) * 100} className="h-1" />
+      </div>
+
+      <div className="container-tight flex-1 pb-8">
+        <div className="premium-card p-8">
+          <h2 className="font-display font-bold text-xl mb-1">{steps[currentStep].label}</h2>
+          <p className="text-sm text-muted-foreground mb-6">
+            {currentStep === 0 && "Tell us about your restaurant so we can personalize your AI."}
+            {currentStep === 1 && "Paste your menu so the AI knows what to offer callers."}
+            {currentStep === 2 && "Customize how your AI sounds and behaves."}
+            {currentStep === 3 && "Launch your workspace and finish live integrations in the dashboard."}
+          </p>
+
+          <AnimatePresence mode="wait">
+            <motion.div key={currentStep} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.2 }}>
+              {renderStep()}
+            </motion.div>
+          </AnimatePresence>
+
+          <div className="flex justify-between mt-8 pt-6 border-t border-border/50">
+            <Button variant="ghost" onClick={handleBack} disabled={currentStep === 0} className="rounded-xl"><ArrowLeft className="mr-2 w-4 h-4" /> Back</Button>
+            <Button onClick={handleNext} disabled={parsing || activating} className="bg-gradient-primary text-primary-foreground rounded-xl px-8 shadow-glow hover:opacity-90">
+              {currentStep === steps.length - 1 ? (activating ? "Activating..." : "Launch RingAI 🚀") : "Continue"}
+              {currentStep < steps.length - 1 && <ArrowRight className="ml-2 w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
