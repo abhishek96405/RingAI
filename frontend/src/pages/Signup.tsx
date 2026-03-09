@@ -12,19 +12,22 @@ const clerkAppearance = {
     header: "hidden",
     headerTitle: "hidden",
     headerSubtitle: "hidden",
-    socialButtonsBlockButton: "ringai-clerk-social-btn !h-11 !rounded-xl !text-sm !font-medium",
+    socialButtonsBlockButton:
+      "ringai-clerk-social-btn !h-11 !rounded-xl !text-sm !font-medium",
     socialButtonsBlockButtonText: "!text-sm !font-medium",
     form: "!gap-4",
     formFieldRow: "!gap-2",
     formFieldLabel: "!text-sm !font-medium !text-foreground !mb-1.5",
     formFieldInput: "ringai-clerk-input !h-11 !rounded-xl !text-sm",
-    formButtonPrimary: "ringai-clerk-primary-btn !h-11 !rounded-xl !text-sm !font-medium",
+    formButtonPrimary:
+      "ringai-clerk-primary-btn !h-11 !rounded-xl !text-sm !font-medium",
     footerActionLink: "!text-primary hover:!text-primary",
     dividerLine: "!bg-border",
     dividerText: "!text-muted-foreground !text-xs",
     identityPreviewText: "!text-sm",
     formResendCodeLink: "!text-primary hover:!text-primary",
-    otpCodeFieldInput: "ringai-clerk-input !h-11 !rounded-xl !text-sm",
+    otpCodeFieldInput:
+      "ringai-clerk-input !h-11 !w-11 !rounded-xl !text-sm !text-center",
     alertText: "!text-sm",
     formFieldSuccessText: "!text-sm",
     formFieldWarningText: "!text-sm",
@@ -64,7 +67,9 @@ const Signup = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <h1 className="font-display font-extrabold text-2xl mb-2">Create your account</h1>
+            <h1 className="font-display font-extrabold text-2xl mb-2">
+              Create your account
+            </h1>
             <p className="text-sm text-muted-foreground mb-8">
               Start your RingAI setup and launch your AI receptionist.
             </p>
@@ -80,7 +85,10 @@ const Signup = () => {
                 routing="path"
                 path="/signup"
                 signInUrl="/login"
-                forceRedirectUrl="/"
+                forceRedirectUrl="/onboarding"
+                fallbackRedirectUrl="/onboarding"
+                signInForceRedirectUrl="/dashboard"
+                signInFallbackRedirectUrl="/dashboard"
                 appearance={clerkAppearance}
               />
             </div>
@@ -97,7 +105,12 @@ const Signup = () => {
         <motion.div
           className="absolute bottom-1/4 right-1/3 w-56 h-56 rounded-full bg-primary/10 blur-3xl"
           animate={{ scale: [1, 1.3, 1], opacity: [0.1, 0.2, 0.1] }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut", delay: 2 }}
+          transition={{
+            duration: 8,
+            repeat: Infinity,
+            ease: "easeInOut",
+            delay: 2,
+          }}
         />
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
@@ -126,7 +139,8 @@ const Signup = () => {
             transition={{ delay: 0.65, duration: 0.6 }}
             className="text-primary-foreground/60 text-sm"
           >
-            Set up your premium voice ordering assistant and monitor the entire operation from one dashboard.
+            Set up your premium voice ordering assistant and monitor the entire
+            operation from one dashboard.
           </motion.p>
         </motion.div>
       </div>
