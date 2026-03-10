@@ -1,10 +1,18 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useAuth, useUser } from "@clerk/clerk-react";
 import {
   bootstrapSession,
   clearRestaurantId,
   getRestaurantId,
-  selectRestaurant,
   setAuthTokenGetter,
   setRestaurantId,
 } from "@/lib/api";
@@ -34,10 +42,10 @@ type SessionContextType = {
 const AppSessionContext = createContext<SessionContextType | null>(null);
 
 const getSafeRestaurants = (payload: BootstrapPayload | null | undefined) =>
-  Array.isArray(payload?.restaurants) ? payload!.restaurants! : [];
+  Array.isArray(payload?.restaurants) ? payload.restaurants : [];
 
 const getSafeMemberships = (payload: BootstrapPayload | null | undefined) =>
-  Array.isArray(payload?.memberships) ? payload!.memberships! : [];
+  Array.isArray(payload?.memberships) ? payload.memberships : [];
 
 const getResolvedActiveRestaurant = (payload: BootstrapPayload | null | undefined) => {
   if (payload?.active_restaurant?.id) return payload.active_restaurant;
@@ -46,30 +54,66 @@ const getResolvedActiveRestaurant = (payload: BootstrapPayload | null | undefine
 };
 
 const getResolvedOnboardingComplete = (payload: BootstrapPayload | null | undefined) => {
-  const activeRestaurant = getResolvedActiveRestaurant(payload);
-  if (activeRestaurant) {
-    return Boolean(activeRestaurant.is_active);
+  if (typeof payload?.onboarding_complete === "boolean") {
+    return payload.onboarding_complete;
   }
-  return false;
+
+  const activeRestaurant = getResolvedActiveRestaurant(payload);
+  return Boolean(activeRestaurant?.is_active);
 };
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const { user } = useUser();
 
+  const [tokenResolved, setTokenResolved] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [bootstrapData, setBootstrapData] = useState<BootstrapPayload | null>(null);
 
+  const bootstrapDataRef = useRef<BootstrapPayload | null>(null);
+
   useEffect(() => {
-    setAuthTokenGetter(async () => {
-      if (!isSignedIn) return null;
-      return getToken();
-    });
+    bootstrapDataRef.current = bootstrapData;
+  }, [bootstrapData]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const configureTokenGetter = async () => {
+      if (!authLoaded) return;
+
+      if (!isSignedIn) {
+        setAuthTokenGetter(null);
+        if (!cancelled) setTokenResolved(true);
+        return;
+      }
+
+      const getter = async () => {
+        try {
+          return await getToken();
+        } catch (error) {
+          console.error("Failed to obtain Clerk token", error);
+          return null;
+        }
+      };
+
+      setAuthTokenGetter(getter);
+
+      try {
+        await getter();
+      } finally {
+        if (!cancelled) setTokenResolved(true);
+      }
+    };
+
+    setTokenResolved(false);
+    void configureTokenGetter();
 
     return () => {
+      cancelled = true;
       setAuthTokenGetter(null);
     };
-  }, [getToken, isSignedIn]);
+  }, [authLoaded, isSignedIn, getToken]);
 
   const resetSessionState = useCallback(() => {
     clearRestaurantId();
@@ -107,8 +151,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         return payload;
       } catch (error) {
         console.error("Failed to bootstrap session", error);
-        resetSessionState();
-        return null;
+        return bootstrapDataRef.current;
       } finally {
         setBootstrapping(false);
       }
@@ -118,51 +161,44 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!authLoaded) return;
+    if (!tokenResolved) return;
 
-    refreshSession();
-  }, [authLoaded, isSignedIn, refreshSession]);
+    if (!isSignedIn) {
+      resetSessionState();
+      return;
+    }
 
-  const setActiveRestaurant = useCallback(
-    async (restaurant: any) => {
-      if (!restaurant?.id) return;
+    void refreshSession();
+  }, [authLoaded, tokenResolved, isSignedIn, refreshSession, resetSessionState]);
 
-      setBootstrapping(true);
+  const setActiveRestaurant = useCallback(async (restaurant: any) => {
+    if (!restaurant?.id) return;
 
-      try {
-        await selectRestaurant(restaurant.id);
-        setRestaurantId(restaurant.id);
+    setRestaurantId(restaurant.id);
 
-        setBootstrapData((current) => {
-          if (!current) {
-            return {
-              active_restaurant: restaurant,
-              memberships: [],
-              restaurants: [restaurant],
-              onboarding_complete: Boolean(restaurant?.is_active),
-            };
-          }
-
-          const existingRestaurants = Array.isArray(current.restaurants) ? current.restaurants : [];
-          const nextRestaurants = existingRestaurants.some((item: any) => item?.id === restaurant.id)
-            ? existingRestaurants.map((item: any) => (item?.id === restaurant.id ? restaurant : item))
-            : [restaurant, ...existingRestaurants];
-
-          return {
-            ...current,
-            active_restaurant: restaurant,
-            restaurants: nextRestaurants,
-            onboarding_complete: Boolean(restaurant?.is_active),
-          };
-        });
-      } catch (error) {
-        console.error("Failed to select restaurant", error);
-        await refreshSession(restaurant.id);
-      } finally {
-        setBootstrapping(false);
+    setBootstrapData((current) => {
+      if (!current) {
+        return {
+          active_restaurant: restaurant,
+          memberships: [],
+          restaurants: [restaurant],
+          onboarding_complete: Boolean(restaurant?.is_active),
+        };
       }
-    },
-    [refreshSession]
-  );
+
+      const existingRestaurants = Array.isArray(current.restaurants) ? current.restaurants : [];
+      const nextRestaurants = existingRestaurants.some((item: any) => item?.id === restaurant.id)
+        ? existingRestaurants.map((item: any) => (item?.id === restaurant.id ? restaurant : item))
+        : [restaurant, ...existingRestaurants];
+
+      return {
+        ...current,
+        active_restaurant: restaurant,
+        restaurants: nextRestaurants,
+        onboarding_complete: Boolean(restaurant?.is_active),
+      };
+    });
+  }, []);
 
   const activeRestaurant = getResolvedActiveRestaurant(bootstrapData);
   const restaurants = getSafeRestaurants(bootstrapData);

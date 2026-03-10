@@ -64,7 +64,8 @@ function getSignedInDestination({
 }
 
 function PublicAuthRoute({ children }: { children: ReactNode }) {
-  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } = useAppSession();
+  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } =
+    useAppSession();
 
   if (!authLoaded) {
     return <FullPageLoader />;
@@ -75,32 +76,20 @@ function PublicAuthRoute({ children }: { children: ReactNode }) {
   }
 
   if (isSignedIn) {
-    return <Navigate to={getSignedInDestination({ activeRestaurant, onboardingComplete })} replace />;
+    return (
+      <Navigate
+        to={getSignedInDestination({ activeRestaurant, onboardingComplete })}
+        replace
+      />
+    );
   }
 
   return <>{children}</>;
 }
 
-function AppEntryRoute() {
-  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } = useAppSession();
-
-  if (!authLoaded) {
-    return <FullPageLoader />;
-  }
-
-  if (isSignedIn && bootstrapping) {
-    return <FullPageLoader />;
-  }
-
-  if (isSignedIn) {
-    return <Navigate to={getSignedInDestination({ activeRestaurant, onboardingComplete })} replace />;
-  }
-
-  return <Index />;
-}
-
 function OnboardingGate() {
-  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } = useAppSession();
+  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } =
+    useAppSession();
 
   if (!authLoaded) {
     return <FullPageLoader />;
@@ -118,7 +107,8 @@ function OnboardingGate() {
 }
 
 function ProtectedAppRoute({ children }: { children: ReactNode }) {
-  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } = useAppSession();
+  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } =
+    useAppSession();
 
   if (!authLoaded) {
     return <FullPageLoader />;
@@ -137,7 +127,7 @@ function ProtectedAppRoute({ children }: { children: ReactNode }) {
 
 const AppRoutes = () => (
   <Routes>
-    <Route path="/" element={<AppEntryRoute />} />
+    <Route path="/" element={<Index />} />
     <Route
       path="/login/*"
       element={

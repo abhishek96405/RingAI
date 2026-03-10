@@ -301,8 +301,7 @@
 
 .ringai-auth-shell .cl-formFieldInput,
 .ringai-auth-shell .cl-socialButtonsBlockButton,
-.ringai-auth-shell .cl-formButtonPrimary,
-.ringai-auth-shell .cl-otpCodeFieldInput {
+.ringai-auth-shell .cl-formButtonPrimary {
   min-height: 44px !important;
   height: 44px !important;
   font-size: 14px !important;
@@ -310,16 +309,52 @@
   border-radius: 0.75rem !important;
 }
 
-.ringai-auth-shell .cl-formFieldInput,
-.ringai-auth-shell .cl-otpCodeFieldInput {
+.ringai-auth-shell .cl-formFieldInput {
   background: hsl(var(--background)) !important;
   border: 1px solid hsl(var(--input)) !important;
   color: hsl(var(--foreground)) !important;
   box-shadow: none !important;
 }
 
-.ringai-auth-shell .cl-formFieldInput:focus,
-.ringai-auth-shell .cl-otpCodeFieldInput:focus {
+.ringai-auth-shell .cl-formFieldInput:focus {
+  outline: none !important;
+  border-color: hsl(var(--ring)) !important;
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.15) !important;
+}
+
+.ringai-auth-shell .cl-otpCodeFieldInput {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.5rem !important;
+  width: 100% !important;
+}
+
+.ringai-auth-shell .cl-otpCodeFieldInput input,
+.ringai-auth-shell .cl-otpCodeFieldInput__input,
+.ringai-auth-shell .ringai-clerk-otp-input {
+  width: 2.75rem !important;
+  min-width: 2.75rem !important;
+  max-width: 2.75rem !important;
+  height: 2.75rem !important;
+  min-height: 2.75rem !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid hsl(var(--input)) !important;
+  background: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+  text-align: center !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  line-height: 2.75rem !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+  caret-color: hsl(var(--foreground)) !important;
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+}
+
+.ringai-auth-shell .cl-otpCodeFieldInput input:focus,
+.ringai-auth-shell .cl-otpCodeFieldInput__input:focus,
+.ringai-auth-shell .ringai-clerk-otp-input:focus {
   outline: none !important;
   border-color: hsl(var(--ring)) !important;
   box-shadow: 0 0 0 3px hsl(var(--ring) / 0.15) !important;

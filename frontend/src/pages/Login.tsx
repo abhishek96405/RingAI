@@ -24,7 +24,7 @@ const clerkAppearance = {
     dividerText: "!text-muted-foreground !text-xs",
     identityPreviewText: "!text-sm",
     formResendCodeLink: "!text-primary hover:!text-primary",
-    otpCodeFieldInput: "ringai-clerk-input !h-11 !rounded-xl !text-sm",
+    otpCodeFieldInput: "ringai-clerk-otp-input !h-11 !w-11 !min-w-11 !rounded-xl !text-base !font-semibold !text-center !px-0",
     alertText: "!text-sm",
     formFieldSuccessText: "!text-sm",
     formFieldWarningText: "!text-sm",
