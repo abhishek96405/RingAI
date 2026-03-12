@@ -5,6 +5,14 @@ Uses: Google Gemini directly via the official OpenAI-compatible Gemini API
 Handles: Menu parsing, post-call analysis, conversation intelligence,
          order state machine, structured order extraction, kitchen dispatch
 Audio: Handled via Pipecat + Gemini Live Audio API (see call_pipeline.py)
+
+CHANGES:
+- AI no longer reads full menu aloud — only category names on request
+- STEP 2: removed per-item "Is that correct?" — save confirmation for readback only
+- STEP 4: readback lists items+qty only, total only (no per-item prices repeated)
+- Edge case: "Hello" during active order flow no longer restarts conversation
+- Order extraction: max_tokens 600→1200, confirmed=None treated as True
+- Transcript limit for extraction: 3000→1500 chars
 """
 import os
 import json
@@ -27,7 +35,7 @@ def _repair_json(text: str) -> str:
     """Attempt to repair common JSON issues from LLM output."""
     if not text:
         return "{}"
-    
+
     # Remove markdown code blocks
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
@@ -35,7 +43,7 @@ def _repair_json(text: str) -> str:
         parts = text.split("```")
         if len(parts) >= 2:
             text = parts[1].strip()
-    
+
     # Find JSON object boundaries
     start = text.find("{")
     end = text.rfind("}")
@@ -43,42 +51,33 @@ def _repair_json(text: str) -> str:
         text = text[start:end + 1]
     else:
         return "{}"
-    
+
     # Remove newlines and carriage returns within strings (common issue)
     text = text.replace('\n', ' ').replace('\r', ' ')
-    
-    # Try to fix unterminated strings by finding incomplete string patterns
-    # This handles the "Unterminated string" error
+
     try:
         json.loads(text)
         return text
     except json.JSONDecodeError as e:
-        # Attempt repairs for common issues
-        
-        # Fix: truncated JSON - close any unclosed strings and objects
         if "Unterminated string" in str(e):
-            # Count quotes to see if we have an odd number
             quote_count = text.count('"') - text.count('\\"')
             if quote_count % 2 != 0:
-                # Add closing quote
                 text = text.rstrip() + '"'
-        
-        # Ensure we have balanced braces and brackets
+
         open_braces = text.count('{') - text.count('}')
         open_brackets = text.count('[') - text.count(']')
-        
+
         if open_brackets > 0:
             text = text.rstrip() + ']' * open_brackets
         if open_braces > 0:
             text = text.rstrip() + '}' * open_braces
-        
-        # Try again
+
         try:
             json.loads(text)
             return text
         except json.JSONDecodeError:
             return "{}"
-    
+
     return text
 
 
@@ -88,26 +87,22 @@ def _extract_json_fields(text: str, expected_fields: List[str]) -> Dict[str, Any
     Last resort fallback when JSON parsing completely fails.
     """
     result = {}
-    
-    # Try to extract quality_score
+
     if "quality_score" in expected_fields:
         match = re.search(r'"quality_score"\s*:\s*(\d+)', text)
         if match:
             result["quality_score"] = int(match.group(1))
-    
-    # Try to extract order_accuracy
+
     if "order_accuracy" in expected_fields:
         match = re.search(r'"order_accuracy"\s*:\s*"([^"]*)"', text)
         if match:
             result["order_accuracy"] = match.group(1)
-    
-    # Try to extract summary
+
     if "summary" in expected_fields:
         match = re.search(r'"summary"\s*:\s*"([^"]*)"', text)
         if match:
             result["summary"] = match.group(1)
-    
-    # Try to extract arrays (issues, highlights)
+
     for field in ["issues", "highlights", "menu_suggestions", "rule_suggestions"]:
         if field in expected_fields:
             match = re.search(rf'"{field}"\s*:\s*\[(.*?)\]', text, re.DOTALL)
@@ -117,14 +112,16 @@ def _extract_json_fields(text: str, expected_fields: List[str]) -> Dict[str, Any
                     result[field] = items
                 except Exception:
                     result[field] = []
-    
+
     return result
+
 
 # ---------------------------------------------------------------------------
 # Client (lazy-init via the official OpenAI-compatible Gemini API)
 # ---------------------------------------------------------------------------
 _client = None
 MODEL = "gemini-2.5-flash"
+
 
 def _get_client():
     global _client
@@ -142,11 +139,8 @@ def _get_client():
             "GEMINI_OPENAI_BASE_URL",
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         )
-        _client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-        )
-        logger.info(f"Gemini client initialised via official Gemini OpenAI compatibility endpoint (model: {MODEL})")
+        _client = OpenAI(api_key=api_key, base_url=base_url)
+        logger.info(f"Gemini client initialised (model: {MODEL})")
         return _client
     except Exception as e:
         logger.error(f"Failed to initialise Gemini client: {e}")
@@ -156,10 +150,6 @@ def _get_client():
 def is_gemini_available() -> bool:
     return _get_client() is not None
 
-
-# ---------------------------------------------------------------------------
-# 1. SYSTEM PROMPT BUILDER
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Menu Index — fast validated lookup (no AI, no hallucinations)
@@ -212,6 +202,13 @@ class MenuIndex:
                 allergens = f" ⚠ {', '.join(item['allergens'])}" if item.get("allergens") else ""
                 lines.append(f"  • {item['name']} {price}{allergens}")
         return "\n".join(lines)
+
+    def category_names(self) -> List[str]:
+        """Return unique category names — used for verbal menu summary."""
+        return sorted(set(
+            item.get("category", "Other")
+            for item in self.items.values()
+        ))
 
 
 # ---------------------------------------------------------------------------
@@ -307,20 +304,22 @@ async def extract_order_from_transcript(
         for e in transcript
     )
     prompt = f"""Extract the confirmed order from this restaurant call transcript.
-Return ONLY valid JSON, no markdown.
+Return ONLY valid JSON, no markdown, no code blocks.
 
 Menu (use EXACT names from this list only):
-{menu_index.as_prompt_text()}
+{chr(10).join(f"  • {item['name']} ${item['price']/100:.2f}" for item in menu_index.items.values())}
 
-JSON format:
-{{"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":[],"special_instructions":""}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":"","order_confirmed":true}}
+Required JSON format:
+{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":[],"special_instructions":""}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
 
-RULES: Only include items the customer explicitly ordered AND the AI confirmed.
-Set order_confirmed to false if the customer never said yes.
-Never invent items not in the menu above.
+RULES:
+- order_confirmed must be true or false — never omit this field
+- Only include items the customer explicitly ordered AND the AI confirmed
+- Set order_confirmed to false if the customer never said yes
+- Never invent items not in the menu above
 
 TRANSCRIPT:
-{transcript_text[:3000]}
+{transcript_text[:1500]}
 
 JSON:"""
 
@@ -331,7 +330,7 @@ JSON:"""
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=600,
+                max_tokens=2000,  # Increased from 600 to prevent truncation
             )
             raw = resp.choices[0].message.content.strip()
         except Exception as e:
@@ -348,9 +347,14 @@ JSON:"""
         logger.error(f"Could not parse order extraction JSON: {raw[:200]}")
         return None
 
-    logger.info(f"Order extraction parsed: confirmed={data.get('order_confirmed')}, items={data.get('items', [])}")
+    confirmed = data.get("order_confirmed")
+    items = data.get("items", [])
+    logger.info(f"Order extraction parsed: confirmed={confirmed}, items={items}")
 
-    if data.get("order_confirmed") is False:
+    # Only reject if explicitly False.
+    # None means the field was missing (truncated JSON) — ORDER_CONFIRMED signal
+    # already fired upstream, so we trust the signal and proceed.
+    if confirmed is False:
         return None
 
     order = LiveOrder(
@@ -362,6 +366,7 @@ JSON:"""
         special_instructions=data.get("special_instructions", ""),
         confirmed_at=datetime.now(timezone.utc).isoformat(),
     )
+
     for raw_item in data.get("items", []):
         name = raw_item.get("name", "").strip()
         if not name:
@@ -380,6 +385,7 @@ JSON:"""
             special_instructions=raw_item.get("special_instructions", ""),
             allergens=menu_item.get("allergens", []),
         ))
+
     return order if order.items else None
 
 
@@ -394,10 +400,11 @@ def format_order_readback(order: LiveOrder) -> str:
     for item in order.items:
         qty = f"{item.quantity}x " if item.quantity > 1 else ""
         mods = f" with {', '.join(item.modifiers)}" if item.modifiers else ""
-        parts.append(f"{qty}{item.name}{mods} — ${item.subtotal/100:.2f}")
+        parts.append(f"{qty}{item.name}{mods}")
     order_type = "for delivery" if order.order_type == "delivery" else "for pickup"
+    # FIX: items listed without per-item prices — total only
     return (
-        f"Let me read that back to you. You have: {', '.join(parts)}. "
+        f"Let me read that back: {', '.join(parts)}. "
         f"Your total is ${order.total/100:.2f} {order_type}. Does that sound right?"
     )
 
@@ -549,7 +556,7 @@ def evaluate_call_quality(
 
 
 # ---------------------------------------------------------------------------
-# 1. SYSTEM PROMPT BUILDER (hardened)
+# System Prompt Builder (hardened)
 # ---------------------------------------------------------------------------
 
 def build_system_prompt(
@@ -575,7 +582,6 @@ def build_system_prompt(
         tz = pytz.timezone(restaurant_timezone)
         local_now = datetime.now(tz)
         current_time_str = local_now.strftime("%A, %I:%M %p %Z")
-        # Compute open/closed so AI doesn't have to guess
         current_day = local_now.strftime("%A").lower()
         current_minutes = local_now.hour * 60 + local_now.minute
         is_open = False
@@ -585,13 +591,11 @@ def build_system_prompt(
                 def time_to_minutes(t):
                     try:
                         from datetime import datetime as dt
-                        # Try 24-hour format first (e.g. "21:00")
                         parsed = dt.strptime(t, "%H:%M")
                         return parsed.hour * 60 + parsed.minute
                     except Exception:
                         try:
                             from datetime import datetime as dt
-                            # Fall back to 12-hour format (e.g. "9:00 PM")
                             parsed = dt.strptime(t, "%I:%M %p")
                             return parsed.hour * 60 + parsed.minute
                         except Exception:
@@ -599,7 +603,6 @@ def build_system_prompt(
                 open_min = time_to_minutes(day_hours.get("open", "12:00 AM"))
                 close_min = time_to_minutes(day_hours.get("close", "11:59 PM"))
                 if close_min <= open_min:
-                    # Crosses midnight (e.g. 11AM - 12AM)
                     is_open = current_minutes >= open_min or current_minutes <= close_min
                 else:
                     is_open = open_min <= current_minutes <= close_min
@@ -607,7 +610,9 @@ def build_system_prompt(
     except Exception:
         current_time_str = datetime.now().strftime("%A, %I:%M %p")
         open_status = "UNKNOWN"
+
     menu_block = menu_index.as_prompt_text()
+    category_list = ", ".join(menu_index.category_names())
     rules_block = "\n".join(f"  • {r}" for r in business_rules) if business_rules else "  • (No additional rules)"
     escalation_block = "\n".join(f"  ⚠ {r}" for r in escalation_rules) if escalation_rules else "  ⚠ Customer requests a manager\n  ⚠ Food safety complaint or allergic reaction"
     delivery_section = (
@@ -616,7 +621,8 @@ def build_system_prompt(
         "DELIVERY: Not available. Pickup only."
     )
     upsell_section = (
-        "UPSELL: After the main order, suggest ONE drink, dessert, or side. Accept any decline immediately — never push twice."
+        "UPSELL: After the main order, suggest ONE drink, dessert, or side. "
+        "Accept any decline immediately — never push twice."
         if upsell_enabled else ""
     )
     escalation_target = escalation_phone or "a team member"
@@ -624,7 +630,7 @@ def build_system_prompt(
 
     hours_block = ""
     if operating_hours:
-        days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         lines = []
         for day in days:
             h = operating_hours.get(day, {})
@@ -654,21 +660,30 @@ CRITICAL MENU RULES — NEVER VIOLATE:
 3. NEVER invent items, prices, descriptions, or availability.
 4. Prices are exact. Never estimate or round.
 5. If you are unsure whether an item exists — it doesn't. Do not guess.
+6. NEVER read the full menu aloud. If a customer asks what's on the menu, say:
+   "We have {category_list}. What sounds good?" — then answer specific questions.
+   Reading the entire menu wastes time and confuses customers.
 
 ═══════════════════════════
 ORDER PROTOCOL — FOLLOW EVERY STEP
 ═══════════════════════════
 STEP 1: Ask order type first — "Are you calling for pickup, or would you like delivery?"
-STEP 2: Take the order. Confirm each item as added. If unclear, ask once to confirm.
+STEP 2: Take the order. When the customer names an item, acknowledge briefly:
+  "Got it" / "Added" / "Perfect" — then ask "Anything else?"
+  Do NOT ask "Is that correct?" after each item — confirmation happens at STEP 4 only.
 STEP 3: Ask for customer name: "Could I get a name for the order?"
 {upsell_section}
 STEP 4: MANDATORY READBACK — never skip this:
-  "Let me read that back: [every item, quantity, price]. Your total is $[exact]. Is that correct?"
+  "Let me read that back: [every item and quantity, NO individual prices].
+  Your total is $[exact total]. Is that correct?"
+  • Customers already heard individual prices — only the total matters at readback.
   • If YES → go to STEP 5
   • If NO → "Of course, what would you like to change?" → return to STEP 2
 STEP 5: Confirm only after explicit yes from the customer:
   "Perfect! Your order is confirmed. Ready in about {prep_time}. Thank you for calling {restaurant_name}!"
   [INTERNAL SIGNAL — DO NOT SAY ALOUD: ORDER_CONFIRMED]
+STEP 6: After saying the confirmation phrase, say nothing further. The call will end.
+  Do NOT ask follow-up questions or offer more help after ORDER_CONFIRMED.
 
 ═══════════════════════════
 ALLERGEN PROTOCOL — LIABILITY ISSUE
@@ -704,11 +719,20 @@ EDGE CASES
 • Customer frustrated: slow down, never rush, escalate if it worsens.
 • Discount request: "I can't apply discounts on this call — ask our team at pickup."
 • Outside hours: tell them hours, wish them well.
+• Customer says "Hello" or "Are you there" mid-order: do NOT restart the conversation.
+  Continue exactly where you left off. Example: if waiting for readback confirmation,
+  re-ask only: "Just to confirm — does that total sound right?"
+• After readback, if silence >5 seconds: ask ONCE "Just to confirm, is that total correct?"
+  then wait. Do not repeat again.
 
 ═══════════════════════════
 NEVER DO THESE
 ═══════════════════════════
 ✗ Reveal you are powered by Google, Gemini, or any specific AI
+✗ Read the full menu aloud — summarize by category only
+✗ Ask "Is that correct?" after each individual item — save it for the final readback
+✗ Repeat individual item prices during readback — total only
+✗ Continue talking after the order confirmation farewell
 ✗ Skip the order readback — even if the customer sounds rushed
 ✗ Confirm an order before the customer explicitly says yes
 ✗ Give allergen safety guarantees
@@ -723,17 +747,11 @@ If asked what AI you are: "I'm the virtual assistant for {restaurant_name}. How 
 # ---------------------------------------------------------------------------
 
 def _summarize_conversation_context(transcript: List[Dict], max_turns: int = 6) -> List[Dict]:
-    """
-    Summarize conversation history to stay within token budget.
-    Keeps first greeting and last N turns for context.
-    """
+    """Keep first greeting + last N turns to stay within token budget."""
     if len(transcript) <= max_turns:
         return transcript
-    
-    # Keep first exchange (greeting) and last (max_turns - 2) exchanges
     first_exchange = transcript[:2] if len(transcript) >= 2 else transcript[:1]
     recent_exchanges = transcript[-(max_turns - len(first_exchange)):]
-    
     return first_exchange + recent_exchanges
 
 
@@ -748,22 +766,18 @@ async def get_conversation_response(
         return _mock_conversation_response(new_customer_message)
 
     try:
-        # P1 fix: Summarize context to prevent budget exceeded errors
         summarized_transcript = _summarize_conversation_context(transcript)
-        
-        # Use a shorter system prompt for conversation to save tokens
+
         condensed_prompt = system_prompt
         if len(system_prompt) > 1500:
-            # Keep first 1500 chars which include core identity and menu
             condensed_prompt = system_prompt[:1500] + "\n\n[Additional rules truncated for brevity]"
-        
+
         messages = [{"role": "system", "content": condensed_prompt}]
         for entry in summarized_transcript:
             role = "user" if entry.get("role") == "customer" else "assistant"
-            # Truncate individual messages if too long
             content = entry["text"][:300] if len(entry.get("text", "")) > 300 else entry.get("text", "")
             messages.append({"role": role, "content": content})
-        
+
         if new_customer_message:
             messages.append({"role": "user", "content": new_customer_message[:500]})
 
@@ -771,7 +785,7 @@ async def get_conversation_response(
             model=MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=250,  # Slightly reduced to stay within budget
+            max_tokens=250,
         )
         text = response.choices[0].message.content.strip()
         return text if text else _mock_conversation_response(new_customer_message)
@@ -828,7 +842,6 @@ Return ONLY a JSON object with this exact structure:
         )
 
         text = response.choices[0].message.content.strip()
-        # Extract JSON from the response (handle markdown code blocks)
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
@@ -913,8 +926,6 @@ async def analyse_call_transcript(
     if not client:
         return _mock_call_analysis(transcript, order_json)
 
-    # Truncate transcript to avoid token limits (P1 fix)
-    # Keep first 2 and last 4 exchanges for context
     if len(transcript) > 8:
         truncated = transcript[:2] + transcript[-4:]
         transcript_for_analysis = truncated
@@ -925,8 +936,7 @@ async def analyse_call_transcript(
         f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e['text'][:150]}"
         for e in transcript_for_analysis
     )
-    
-    # Keep transcript concise to avoid budget issues
+
     if len(transcript_text) > 1200:
         transcript_text = transcript_text[:1200] + "..."
 
@@ -937,31 +947,27 @@ async def analyse_call_transcript(
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
                 {"role": "user", "content": f"TRANSCRIPT:\n{transcript_text}"}
             ],
-            temperature=0.1,  # Lower temp for more consistent JSON
-            max_tokens=500,   # Increased to prevent truncation
+            temperature=0.1,
+            max_tokens=500,
         )
 
         raw_text = response.choices[0].message.content.strip()
         logger.debug(f"Gemini analysis raw response: {raw_text[:200]}...")
-        
-        # Step 1: Try to repair and parse JSON
+
         repaired_text = _repair_json(raw_text)
-        
+
         try:
             result = json.loads(repaired_text)
         except json.JSONDecodeError:
-            # Step 2: Try regex extraction as fallback
             logger.warning(f"JSON repair failed, attempting regex extraction. Raw: {raw_text[:100]}...")
             result = _extract_json_fields(
-                raw_text, 
+                raw_text,
                 ["quality_score", "order_accuracy", "issues", "highlights", "summary"]
             )
             if not result or "quality_score" not in result:
-                # Complete failure - use mock
                 logger.error(f"JSON extraction failed completely. Raw: {raw_text[:200]}")
                 return _mock_call_analysis(transcript, order_json)
-        
-        # Validate and normalize result
+
         result["quality_score"] = max(1, min(100, int(result.get("quality_score", 85))))
         result["order_accuracy"] = result.get("order_accuracy", "accurate")
         result.setdefault("issues", [])
@@ -969,14 +975,13 @@ async def analyse_call_transcript(
         result.setdefault("menu_suggestions", [])
         result.setdefault("rule_suggestions", [])
         result.setdefault("summary", f"Call with {len(transcript)} exchanges analyzed.")
-        
-        # Ensure lists are actually lists
+
         for key in ["issues", "highlights", "menu_suggestions", "rule_suggestions"]:
             if not isinstance(result.get(key), list):
                 result[key] = []
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Gemini analysis error: {e}")
         return _mock_call_analysis(transcript, order_json)
