@@ -87,7 +87,9 @@ from call_pipeline import (
     generate_twiml_stream_response,
     provision_phone_number,
     validate_twilio_request,
+    CallSession,
 )
+
 from auth_helpers import verify_clerk_token
 
 from test_mode import (
@@ -521,7 +523,27 @@ async def me_bootstrap(
     return payload
 
 
-@api_router.post("/me/select-restaurant")
+@api_router.post("/me/repair-membership")
+async def repair_membership(user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Dev/fix endpoint: finds any restaurant where the user is NOT yet a member
+    and auto-creates an owner membership. Safe to call multiple times.
+    """
+    all_restaurants = await db.restaurants.find({}, {"_id": 0}).to_list(100)
+    repaired = []
+    for restaurant in all_restaurants:
+        rid = restaurant.get("id")
+        if not rid:
+            continue
+        existing = await db.memberships.find_one({"user_id": user["id"], "restaurant_id": rid})
+        if not existing:
+            membership = Membership(user_id=user["id"], restaurant_id=rid, role="owner")
+            await db.memberships.insert_one(membership.model_dump())
+            repaired.append(rid)
+    return {"repaired": repaired, "message": f"Created {len(repaired)} membership(s)"}
+
+
+
 async def select_restaurant(data: RestaurantSelection, user: Dict[str, Any] = Depends(get_current_user)):
     restaurant = await ensure_restaurant_access(data.restaurant_id, user)
     return {"active_restaurant": restaurant}
@@ -839,7 +861,17 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
     }
 
     if not existing.get("phone_number"):
-        update_fields["phone_number"] = None
+        try:
+            twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+            twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
+            if twilio_sid and twilio_token:
+                twilio_client = TwilioClient(twilio_sid, twilio_token)
+                numbers = twilio_client.incoming_phone_numbers.list(limit=1)
+                if numbers:
+                    update_fields["phone_number"] = numbers[0].phone_number
+                    update_fields["twilio_number_sid"] = numbers[0].sid
+        except Exception as e:
+            logger.warning(f"Could not auto-assign Twilio number: {e}")
 
     result = await db.restaurants.update_one({"id": data.restaurant_id}, {"$set": update_fields})
     if result.matched_count == 0:
@@ -913,6 +945,7 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
             upsell_enabled=config.get("upsell_enabled", True),
             delivery_enabled=config.get("delivery_enabled", True),
             delivery_minimum=config.get("delivery_minimum", 1500),
+            restaurant_timezone=restaurant.get("timezone", "UTC"),
         )
 
     transcript = []
@@ -1287,7 +1320,19 @@ async def twilio_assign_existing_number(data: TwilioAssignNumberRequest, user: D
 
 @api_router.post("/twilio/incoming")
 async def twilio_incoming_call(request: Request):
-    form = await request.form()
+    # ── Security: validate request is genuinely from Twilio ──
+    backend_url = get_backend_public_url()
+    if "localhost" not in backend_url and "127.0.0.1" not in backend_url:
+        sig = request.headers.get("X-Twilio-Signature", "")
+        full_url = str(request.url)
+        form_dict = dict(await request.form())
+        if not validate_twilio_request(full_url, form_dict, sig):
+            logger.warning(f"Rejected forged Twilio request from {request.client.host}")
+            return Response(status_code=403, content="Forbidden")
+        form = form_dict
+    else:
+        form = await request.form()
+
     called_number = form.get("Called", "")
     call_sid = form.get("CallSid", "")
     caller_number = form.get("From", "")
@@ -1301,13 +1346,39 @@ async def twilio_incoming_call(request: Request):
             media_type="application/xml",
         )
 
+    # Pre-fetch all pipeline data NOW so WebSocket handler starts instantly
+    restaurant_id = restaurant["id"]
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+
+    system_prompt = build_system_prompt(
+        restaurant_name=restaurant.get("name", "the restaurant"),
+        cuisine_type=restaurant.get("cuisine_type", ""),
+        persona=config.get("persona", "friendly") if config else "friendly",
+        business_rules=config.get("business_rules", []) if config else [],
+        escalation_rules=config.get("escalation_rules", []) if config else [],
+        menu_items=menu_items,
+        disclosure_text=config.get("disclosure_text", "Hi! I'm an AI assistant. How can I help you today?") if config else "Hi! I'm an AI assistant. How can I help you today?",
+        upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        delivery_enabled=config.get("delivery_enabled", True) if config else True,
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        avg_prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
+        escalation_phone=config.get("escalation_phone_number") if config else None,
+        operating_hours=config.get("operating_hours") if config else None,
+        restaurant_timezone=restaurant.get("timezone", "UTC"),
+    )
+
     await db.active_calls.update_one(
         {"call_sid": call_sid},
         {"$set": {
             "call_sid": call_sid,
-            "restaurant_id": restaurant["id"],
+            "restaurant_id": restaurant_id,
             "caller_number": caller_number,
             "started_at": datetime.now(timezone.utc).isoformat(),
+            "system_prompt": system_prompt,
+            "restaurant": restaurant,
+            "config": config or {},
+            "menu_items": menu_items,
         }},
         upsert=True,
     )
@@ -1325,12 +1396,24 @@ async def twilio_media_stream(websocket: WebSocket):
     await websocket.accept()
 
     try:
-        initial = await websocket.receive_json()
-        stream_sid = initial.get("streamSid", "")
-        call_sid = initial.get("start", {}).get("callSid", "")
+        # Read messages to get stream_sid and call_sid
+        # Twilio sends: 'connected' first, then 'start' with callSid
+        stream_sid = ""
+        call_sid = ""
+        while not call_sid:
+            msg = await websocket.receive_json()
+            event = msg.get("event", "")
+            if event == "start":
+                stream_sid = msg.get("streamSid", "")
+                call_sid = msg.get("start", {}).get("callSid", "")
+            elif event == "connected":
+                continue
+            else:
+                break
 
         logger.info(f"Media stream started: stream={stream_sid} call={call_sid}")
 
+        # All data was pre-fetched during POST /twilio/incoming — just read it
         active_call = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
         if not active_call:
             logger.error(f"No active call found for SID {call_sid}")
@@ -1338,42 +1421,66 @@ async def twilio_media_stream(websocket: WebSocket):
             return
 
         restaurant_id = active_call["restaurant_id"]
-        restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
-        config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
-        menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+        system_prompt = active_call.get("system_prompt", "")
+        restaurant = active_call.get("restaurant", {})
+        config = active_call.get("config", {})
+        menu_items = active_call.get("menu_items", [])
 
-        system_prompt = build_system_prompt(
-            restaurant_name=restaurant.get("name", "the restaurant"),
-            cuisine_type=restaurant.get("cuisine_type", ""),
-            persona=config.get("persona", "friendly") if config else "friendly",
-            business_rules=config.get("business_rules", []) if config else [],
-            escalation_rules=config.get("escalation_rules", []) if config else [],
+        # ── Create isolated call session for order tracking ──
+        session = CallSession(
+            call_sid=call_sid,
+            restaurant_id=restaurant_id,
+            caller_number=active_call.get("caller_number", ""),
+            restaurant=restaurant,
+            config=config or {},
             menu_items=menu_items,
-            disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
-            upsell_enabled=config.get("upsell_enabled", True) if config else True,
-            delivery_enabled=config.get("delivery_enabled", True) if config else True,
-            delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
         )
 
-        async def on_call_complete(call_sid, restaurant_id, transcript):
-            analysis = await analyse_call_transcript(transcript, None, menu_items)
-            call = CallRecord(
-                restaurant_id=restaurant_id,
-                twilio_call_sid=call_sid,
-                caller_number=active_call.get("caller_number", ""),
-                started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
-                ended_at=datetime.now(timezone.utc).isoformat(),
-                duration_seconds=0,
-                status="COMPLETED",
-                contained_by_ai=True,
-                transcript=transcript,
-                quality_score=analysis.get("quality_score", 85),
-                analysis_json=analysis,
-                order_total=0,
-            )
-            await db.call_records.insert_one(call.model_dump())
-            await db.active_calls.delete_one({"call_sid": call_sid})
-            logger.info(f"Call {call_sid} saved to DB")
+        async def on_call_complete(call_sid, restaurant_id, transcript, session=None):
+            """Save full call record including extracted order and quality eval."""
+            try:
+                # Use session data if available (has order + quality eval)
+                if session:
+                    record_data = session.build_final_call_record()
+                    order_data = record_data.get("order")
+                    order_total = record_data.get("order_total", 0)
+                    quality_eval = record_data.get("quality_eval", {})
+                    quality_score = quality_eval.get("rule_based_score", 85)
+                    status = record_data.get("status", "COMPLETED")
+                    escalated = record_data.get("escalated_to_human", False)
+                    contained = record_data.get("contained_by_ai", True)
+                else:
+                    order_data = None
+                    order_total = 0
+                    quality_score = 85
+                    status = "COMPLETED"
+                    escalated = False
+                    contained = True
+
+                # Run AI analysis on transcript
+                analysis = await analyse_call_transcript(transcript, order_data, menu_items)
+
+                call = CallRecord(
+                    restaurant_id=restaurant_id,
+                    twilio_call_sid=call_sid,
+                    caller_number=active_call.get("caller_number", ""),
+                    started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
+                    ended_at=datetime.now(timezone.utc).isoformat(),
+                    duration_seconds=len(transcript) * 8,
+                    status=status,
+                    contained_by_ai=contained,
+                    escalated_to_human=escalated,
+                    transcript=transcript,
+                    order_json=order_data,
+                    quality_score=analysis.get("quality_score", quality_score),
+                    analysis_json={**analysis, "rule_eval": quality_eval if session else {}},
+                    order_total=order_total,
+                )
+                await db.call_records.insert_one(call.model_dump())
+                await db.active_calls.delete_one({"call_sid": call_sid})
+                logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
+            except Exception as e:
+                logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
 
         if is_pipeline_available():
             await create_call_pipeline(
@@ -1381,7 +1488,9 @@ async def twilio_media_stream(websocket: WebSocket):
                 system_prompt=system_prompt,
                 restaurant_id=restaurant_id,
                 call_sid=call_sid,
+                stream_sid=stream_sid,
                 on_call_complete=on_call_complete,
+                session=session,
             )
         else:
             logger.warning("Pipecat pipeline not available — closing WebSocket")
@@ -1643,6 +1752,7 @@ async def run_test_scenario(
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
         delivery_enabled=config.get("delivery_enabled", True) if config else True,
         delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        restaurant_timezone=restaurant.get("timezone", "UTC"),
     )
 
     transcript = []

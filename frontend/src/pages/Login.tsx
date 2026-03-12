@@ -80,7 +80,8 @@ const Login = () => {
                 routing="path"
                 path="/login"
                 signUpUrl="/signup"
-                forceRedirectUrl="/"
+                forceRedirectUrl="/dashboard"
+                fallbackRedirectUrl="/dashboard"
                 appearance={clerkAppearance}
               />
             </div>
