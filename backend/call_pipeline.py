@@ -7,15 +7,14 @@ Handles real-time phone calls:
   → TwilioFrameSerializer → Twilio
 
 CHANGES IN THIS VERSION:
-  - Auto-hangup: after ORDER_CONFIRMED, Twilio call is terminated via REST API
-    after a short delay to let the farewell phrase finish playing
-  - Pipeline teardown: task.cancel() called after hangup to stop Gemini Live
-    and close the WebSocket, preventing continued Twilio/Gemini billing
-  - Escalation hangup: same auto-hangup logic fires after ESCALATE_TO_HUMAN
-  - Dispatch is now triggered immediately on ORDER_CONFIRMED signal (not just
-    on disconnect) so orders are saved even if customer hangs up first
-  - Retry loop in dispatch_order_if_ready: up to 3 attempts with backoff
-  - Transcript patching unchanged from previous version
+  - on_call_complete now fires reliably from _schedule_hangup BEFORE pipeline cancel
+  - Previously on_client_disconnected was skipped when task.cancel() fired first
+  - _hangup_scheduled flag prevents double-call to on_call_complete
+  - on_client_disconnected only fires on_call_complete if _schedule_hangup didn't
+  - session._on_call_complete stored so _schedule_hangup can invoke it directly
+  - Auto-hangup after ORDER_CONFIRMED via Twilio REST API
+  - Pipeline teardown stops Gemini Live billing
+  - Order dispatch with 3 retries + backoff
 
 Requires:
   - GOOGLE_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN env vars
@@ -30,7 +29,6 @@ from datetime import datetime, timezone
 
 import httpx
 
-# Pre-load pipecat at module startup to eliminate per-call import delay (~15s)
 try:
     from pipecat.pipeline.pipeline import Pipeline
     from pipecat.pipeline.runner import PipelineRunner
@@ -62,7 +60,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def is_pipeline_available() -> bool:
-    """Check if all required services are configured."""
     return all([
         os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY"),
         os.environ.get("TWILIO_ACCOUNT_SID"),
@@ -77,20 +74,18 @@ VAD_STOP_SECS  = float(os.environ.get("VAD_STOP_SECS",  "0.4"))
 VAD_START_SECS = float(os.environ.get("VAD_START_SECS", "0.2"))
 VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 
-# How long (seconds) to wait after AI says farewell before hanging up.
-# Long enough for TTS to finish playing, short enough not to leave dead air.
+# Seconds to wait after farewell TTS before hanging up
 HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "3.5"))
 
 
 # ---------------------------------------------------------------------------
-# Twilio REST hangup — terminates the call programmatically
+# Twilio REST hangup
 # ---------------------------------------------------------------------------
 
 async def hang_up_twilio_call(call_sid: str) -> bool:
     """
-    End a Twilio call via the REST API by setting its status to 'completed'.
-    This stops Twilio billing immediately and closes the media stream.
-    Returns True on success.
+    End a Twilio call via REST API by setting status to 'completed'.
+    Stops Twilio billing immediately and closes the media stream.
     """
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
     auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
@@ -123,7 +118,7 @@ async def hang_up_twilio_call(call_sid: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# CallSession — isolated per-call state (never shared between calls)
+# CallSession — isolated per-call state
 # ---------------------------------------------------------------------------
 
 class CallSession:
@@ -151,12 +146,14 @@ class CallSession:
             call_sid=call_sid,
             caller_number=caller_number,
         )
-        self._order_dispatched = False
-        self._escalated        = False
-        self._hangup_scheduled = False   # prevent double-hangup
+        self._order_dispatched  = False
+        self._escalated         = False
+        self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
 
-        # Set by create_call_pipeline so session can trigger pipeline teardown
+        # Set by create_call_pipeline after task is created
         self._pipeline_task: Optional[Any] = None
+        # Set by create_call_pipeline so _schedule_hangup can invoke it directly
+        self._on_call_complete: Optional[Callable] = None
 
     # ------------------------------------------------------------------
     # Transcript + signal handling
@@ -175,30 +172,27 @@ class CallSession:
                 logger.info(f"[{self.call_sid}] ORDER_CONFIRMED signal detected")
                 self.order.transition(OrderState.CONFIRMED, "confirmed via AI signal")
                 self.order.confirmed_at = datetime.now(timezone.utc).isoformat()
-                # Dispatch order immediately, don't wait for disconnect
                 asyncio.ensure_future(self._handle_order_confirmed())
 
             if signals["escalate_to_human"] and not self._escalated:
                 logger.info(f"[{self.call_sid}] ESCALATE signal detected")
                 self.order.transition(OrderState.ESCALATED, "escalation via AI signal")
                 self._escalated = True
-                # Schedule hangup after escalation phrase finishes
                 asyncio.ensure_future(self._schedule_hangup(reason="escalation"))
 
     # ------------------------------------------------------------------
-    # Order confirmed handler — dispatch + schedule hangup
+    # Order confirmed — dispatch then hang up
     # ------------------------------------------------------------------
 
     async def _handle_order_confirmed(self):
-        """Dispatch the order then hang up after farewell TTS finishes."""
-        # 1. Dispatch order to kitchen / DB
         await self.dispatch_order_if_ready()
-
-        # 2. Wait for farewell TTS to finish playing before hanging up
         await self._schedule_hangup(reason="order_confirmed")
 
+    # ------------------------------------------------------------------
+    # Schedule hangup — calls on_call_complete FIRST, then terminates
+    # ------------------------------------------------------------------
+
     async def _schedule_hangup(self, reason: str = "order_confirmed"):
-        """Wait HANGUP_DELAY_SECS then terminate the Twilio call + pipeline."""
         if self._hangup_scheduled:
             return
         self._hangup_scheduled = True
@@ -208,10 +202,26 @@ class CallSession:
         )
         await asyncio.sleep(HANGUP_DELAY_SECS)
 
-        # Terminate Twilio call (stops billing)
+        # ✅ Fire on_call_complete BEFORE cancelling the pipeline
+        # on_client_disconnected will see _hangup_scheduled=True and skip it
+        if self._on_call_complete:
+            try:
+                logger.info(f"[{self.call_sid}] Calling on_call_complete from _schedule_hangup")
+                await self._on_call_complete(
+                    call_sid=self.call_sid,
+                    restaurant_id=self.restaurant_id,
+                    transcript=self.transcript,
+                    session=self,
+                )
+            except Exception as e:
+                logger.error(
+                    f"[{self.call_sid}] on_call_complete error in hangup: {e}", exc_info=True
+                )
+
+        # Terminate Twilio (stops billing)
         await hang_up_twilio_call(self.call_sid)
 
-        # Stop Pipecat pipeline (closes Gemini Live WebSocket + stops Gemini billing)
+        # Cancel Pipecat pipeline (closes Gemini Live WebSocket, stops Gemini billing)
         if self._pipeline_task is not None:
             try:
                 await self._pipeline_task.cancel()
@@ -220,7 +230,7 @@ class CallSession:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
 
     # ------------------------------------------------------------------
-    # Order dispatch (with retry)
+    # Order dispatch with retry
     # ------------------------------------------------------------------
 
     async def dispatch_order_if_ready(self, max_retries: int = 3) -> bool:
@@ -229,7 +239,6 @@ class CallSession:
         if self.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED):
             return False
 
-        # Extract items from transcript if not already populated
         if not self.order.items:
             for attempt in range(1, max_retries + 1):
                 extracted = await extract_order_from_transcript(
@@ -247,7 +256,9 @@ class CallSession:
                     )
                     await asyncio.sleep(2)
             else:
-                logger.warning(f"[{self.call_sid}] Confirmed but no items extracted after {max_retries} attempts")
+                logger.warning(
+                    f"[{self.call_sid}] Confirmed but no items extracted after {max_retries} attempts"
+                )
                 return False
 
         self._order_dispatched = True
@@ -267,7 +278,7 @@ class CallSession:
         return True
 
     # ------------------------------------------------------------------
-    # Final call record
+    # Final call record builder
     # ------------------------------------------------------------------
 
     def build_final_call_record(self) -> Dict[str, Any]:
@@ -277,19 +288,19 @@ class CallSession:
             escalated=self._escalated,
         )
         return {
-            "call_sid":            self.call_sid,
-            "restaurant_id":       self.restaurant_id,
-            "caller_number":       self.caller_number,
-            "started_at":          self.started_at,
-            "ended_at":            datetime.now(timezone.utc).isoformat(),
-            "status":              "ESCALATED" if self._escalated else "COMPLETED",
-            "contained_by_ai":     not self._escalated,
-            "escalated_to_human":  self._escalated,
-            "transcript":          self.transcript,
-            "order":               self.order.to_dict() if self.order.items else None,
-            "order_total":         self.order.total,
-            "kitchen_order_id":    self.order.kitchen_order_id,
-            "quality_eval":        quality,
+            "call_sid":           self.call_sid,
+            "restaurant_id":      self.restaurant_id,
+            "caller_number":      self.caller_number,
+            "started_at":         self.started_at,
+            "ended_at":           datetime.now(timezone.utc).isoformat(),
+            "status":             "ESCALATED" if self._escalated else "COMPLETED",
+            "contained_by_ai":    not self._escalated,
+            "escalated_to_human": self._escalated,
+            "transcript":         self.transcript,
+            "order":              self.order.to_dict() if self.order.items else None,
+            "order_total":        self.order.total,
+            "kitchen_order_id":   self.order.kitchen_order_id,
+            "quality_eval":       quality,
         }
 
 
@@ -345,14 +356,13 @@ async def create_call_pipeline(
         )
 
         # ------------------------------------------------------------------
-        # Patch Gemini's internal handlers to capture transcript.
+        # Patch Gemini's internal handlers to capture transcript
         # pipecat 0.0.104: GeminiLiveLLMService processes audio natively
-        # and does not emit transcript frames into the pipeline.
+        # and does not emit transcript frames into the pipeline
         # ------------------------------------------------------------------
         if session:
             _ai_buffer: List[str] = []
 
-            # Flush buffer → full AI turn on turn_complete
             original_turn_complete = gemini_live._handle_msg_turn_complete
 
             async def patched_turn_complete(message, *args, **kwargs):
@@ -366,7 +376,6 @@ async def create_call_pipeline(
 
             gemini_live._handle_msg_turn_complete = patched_turn_complete
 
-            # Accumulate AI output text chunks (word-by-word from Gemini Live)
             original_push_output = gemini_live._push_output_transcription_text_frames
 
             async def patched_push_output(*args, **kwargs):
@@ -376,7 +385,6 @@ async def create_call_pipeline(
 
             gemini_live._push_output_transcription_text_frames = patched_push_output
 
-            # Customer transcription (arrives as full sentences from Gemini)
             original_push_user = gemini_live._push_user_transcription
 
             async def patched_push_user(*args, **kwargs):
@@ -406,11 +414,12 @@ async def create_call_pipeline(
             ),
         )
 
-        # Give session a reference to the task so it can cancel it on hangup
+        # Give session references it needs for hangup + record saving
         if session:
             session._pipeline_task = task
+            if on_call_complete:
+                session._on_call_complete = on_call_complete
 
-        # Trigger AI greeting when Twilio connects
         from pipecat.processors.aggregators.llm_response import LLMMessagesAppendFrame
 
         @transport.event_handler("on_client_connected")
@@ -422,22 +431,20 @@ async def create_call_pipeline(
             ))
 
         # ------------------------------------------------------------------
-        # Disconnect handler — post-call cleanup
-        # Called when:
-        #   (a) Customer hangs up first, OR
-        #   (b) Our hang_up_twilio_call() fires above
-        # Either way we ensure order is dispatched and record is saved.
+        # Disconnect handler
+        # Only fires on_call_complete if _schedule_hangup hasn't already done so.
+        # Covers the case where customer hangs up before ORDER_CONFIRMED.
         # ------------------------------------------------------------------
         @transport.event_handler("on_client_disconnected")
         async def on_disconnect(transport, client):
             logger.info(f"[{call_sid}] Disconnected — post-call processing")
             try:
                 if session:
-                    # Ensure order is dispatched if not already done
+                    # Ensure order dispatched if not already
                     if session.order.state == OrderState.CONFIRMED and not session._order_dispatched:
                         await session.dispatch_order_if_ready()
 
-                    # Last-chance extraction: if still no items, try once more
+                    # Last-chance extraction if still no items
                     if not session.order.items and session.transcript:
                         extracted = await extract_order_from_transcript(
                             session.transcript, session.menu_index
@@ -451,7 +458,9 @@ async def create_call_pipeline(
                             if result["success"]:
                                 session.order.kitchen_order_id = result["order_id"]
 
-                if on_call_complete:
+                # ✅ Only call on_call_complete if _schedule_hangup hasn't already called it
+                if on_call_complete and (not session or not session._hangup_scheduled):
+                    logger.info(f"[{call_sid}] Calling on_call_complete from on_client_disconnected")
                     t = session.transcript if session else []
                     await on_call_complete(
                         call_sid=call_sid,
@@ -459,13 +468,17 @@ async def create_call_pipeline(
                         transcript=t,
                         session=session,
                     )
+                else:
+                    logger.info(
+                        f"[{call_sid}] Skipping on_call_complete in disconnect "
+                        f"(already called via _schedule_hangup)"
+                    )
 
             except Exception as e:
                 logger.error(f"[{call_sid}] Post-call error: {e}", exc_info=True)
 
             finally:
-                # Always cancel pipeline on disconnect to stop Gemini billing.
-                # Safe to call even if already cancelled via _schedule_hangup.
+                # Always cancel pipeline on disconnect — safe even if already cancelled
                 try:
                     await task.cancel()
                 except Exception:
