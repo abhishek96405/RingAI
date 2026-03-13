@@ -12,6 +12,7 @@ import DashboardLayout from "./components/layout/DashboardLayout";
 import DashboardHome from "./pages/dashboard/DashboardHome";
 import CallsPage from "./pages/dashboard/CallsPage";
 import MenuPage from "./pages/dashboard/MenuPage";
+import OrdersPage from "./pages/dashboard/OrdersPage";
 import SettingsPage from "./pages/dashboard/SettingsPage";
 import BillingPage from "./pages/dashboard/BillingPage";
 import IntegrationsPage from "./pages/dashboard/IntegrationsPage";
@@ -169,6 +170,7 @@ const AppRoutes = () => (
       <Route index element={<DashboardHome />} />
       <Route path="calls" element={<CallsPage />} />
       <Route path="menu" element={<MenuPage />} />
+      <Route path="orders" element={<OrdersPage />} />
       <Route path="settings" element={<SettingsPage />} />
       <Route path="billing" element={<BillingPage />} />
       <Route path="integrations" element={<IntegrationsPage />} />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Bell, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, UtensilsCrossed } from "lucide-react";
+import { Bell, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -12,6 +12,7 @@ const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: PhoneCall, label: "Calls", path: "/dashboard/calls" },
   { icon: UtensilsCrossed, label: "Menu", path: "/dashboard/menu" },
+  { icon: ShoppingBag, label: "Orders", path: "/dashboard/orders" },
   { icon: Plug, label: "Integrations", path: "/dashboard/integrations" },
   { icon: CreditCard, label: "Billing", path: "/dashboard/billing" },
   { icon: Settings, label: "Settings", path: "/dashboard/settings" },
