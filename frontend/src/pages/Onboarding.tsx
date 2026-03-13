@@ -31,7 +31,9 @@ import {
   Utensils,
   ArrowLeft,
   ArrowRight,
+  LogOut,
 } from "lucide-react";
+import { SignOutButton } from "@clerk/clerk-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -797,9 +799,17 @@ Spaghetti Bolognese - $18.99`}
             <div className="w-8 h-8 rounded-xl bg-gradient-primary flex items-center justify-center">
               <Phone className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="font-display font-bold text-lg">
-              Ring<span className="text-gradient">AI</span>
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                Step {currentStep + 1} of {steps.length}
+              </span>
+              <SignOutButton redirectUrl="/">
+                <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  <LogOut className="w-3.5 h-3.5" />
+                  Switch account
+                </button>
+              </SignOutButton>
+            </div>
           </div>
           <span className="text-sm text-muted-foreground">
             Step {currentStep + 1} of {steps.length}
