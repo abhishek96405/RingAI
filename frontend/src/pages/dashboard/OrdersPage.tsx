@@ -33,10 +33,23 @@ const OrdersPage = () => {
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch all completed calls — filter those with order_json
       const restaurantId = getRestaurantId();
-      const res = await getCalls(restaurantId, { page: 1, limit: 200, status: "COMPLETED" });
-      const allCalls = res.data.calls || [];
+      if (!restaurantId) { setOrders([]); setFiltered([]); return; }
+
+    // Fetch up to 3 pages to get up to 300 orders
+      const res1 = await getCalls(restaurantId, { page: 1, limit: 100, status: "COMPLETED" });
+      const data = res1.data;
+      let allCalls = data.calls || [];
+
+      if (data.pages > 1) {
+        const res2 = await getCalls(restaurantId, { page: 2, limit: 100, status: "COMPLETED" });
+        allCalls = [...allCalls, ...(res2.data.calls || [])];
+      }
+      if (data.pages > 2) {
+        const res3 = await getCalls(restaurantId, { page: 3, limit: 100, status: "COMPLETED" });
+        allCalls = [...allCalls, ...(res3.data.calls || [])];
+      }
+
       const withOrders = allCalls.filter(
         (c: any) => c.order_json && c.order_json.items && c.order_json.items.length > 0
       );
