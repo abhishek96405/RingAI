@@ -67,9 +67,20 @@ const DashboardHome = () => {
     }
   }, []);
 
+  
   useEffect(() => {
     fetchData();
+    const interval = setInterval(fetchData, 30_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") fetchData();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [fetchData]);
+  
 
   if (loading) {
     return (
