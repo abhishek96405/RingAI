@@ -607,8 +607,9 @@ def build_system_prompt(
                 else:
                     is_open = open_min <= current_minutes <= close_min
         open_status = "OPEN" if is_open else "CLOSED"
-    except Exception:
-        current_time_str = datetime.now().strftime("%A, %I:%M %p")
+    except Exception as e:
+        logger.error(f"Timezone error for '{restaurant_timezone}': {e}")
+        current_time_str = datetime.now(timezone.utc).strftime("%A, %I:%M %p UTC")
         open_status = "UNKNOWN"
 
     menu_block = menu_index.as_prompt_text()

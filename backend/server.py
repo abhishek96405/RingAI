@@ -1751,7 +1751,8 @@ async def run_test_scenario(
         disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
         delivery_enabled=config.get("delivery_enabled", True) if config else True,
-        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        delivery_minimum=config.get("delivery_minimum", 1500),
+        operating_hours=config.get("operating_hours"),
         restaurant_timezone=restaurant.get("timezone", "UTC"),
     )
 
