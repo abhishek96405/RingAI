@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { getCalls } from "@/lib/api";
+import { getCalls, getRestaurantId } from "@/lib/api";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
@@ -34,7 +34,8 @@ const OrdersPage = () => {
     setLoading(true);
     try {
       // Fetch all completed calls — filter those with order_json
-      const res = await getCalls(null, { page: 1, limit: 200, status: "COMPLETED" });
+      const restaurantId = getRestaurantId();
+      const res = await getCalls(restaurantId, { page: 1, limit: 200, status: "COMPLETED" });
       const allCalls = res.data.calls || [];
       const withOrders = allCalls.filter(
         (c: any) => c.order_json && c.order_json.items && c.order_json.items.length > 0
