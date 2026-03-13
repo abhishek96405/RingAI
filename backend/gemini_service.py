@@ -443,7 +443,13 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
 # ---------------------------------------------------------------------------
 
 async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
-    """Try Square POS → kitchen webhook → DB fallback. Always returns a result."""
+    """Try Clover POS → Square POS → kitchen webhook → DB fallback. Always returns a result."""
+    # Try Clover first
+    if os.environ.get("CLOVER_API_TOKEN") and os.environ.get("CLOVER_MERCHANT_ID"):
+        result = await _send_to_clover(order)
+        if result["success"]:
+            return result
+
     if restaurant.get("square_connected"):
         result = await _send_to_square(order, restaurant)
         if result["success"]:
@@ -458,6 +464,71 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
     order_id = f"RNG-{order.call_sid[-8:].upper()}"
     logger.info(f"Order {order_id} saved to DB only")
     return {"success": True, "order_id": order_id, "method": "database"}
+
+
+async def _send_to_clover(order: LiveOrder) -> Dict[str, Any]:
+    """Create an order in Clover POS via REST API."""
+    api_token    = os.environ.get("CLOVER_API_TOKEN", "")
+    merchant_id  = os.environ.get("CLOVER_MERCHANT_ID", "")
+    clover_env   = os.environ.get("CLOVER_ENV", "sandbox")
+
+    base_url = (
+        "https://sandbox.dev.clover.com"
+        if clover_env == "sandbox"
+        else "https://api.clover.com"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+
+            # Step 1 — Create empty order
+            order_payload = {
+                "title": f"Phone Order — {order.customer_name or 'Guest'}",
+                "note": f"RingAI | {order.order_type.upper()} | {order.special_instructions or ''}".strip(" |"),
+                "orderType": {"id": "TAKEOUT"},
+            }
+            resp = await client.post(
+                f"{base_url}/v3/merchants/{merchant_id}/orders",
+                headers=headers,
+                json=order_payload,
+            )
+            if resp.status_code not in (200, 201):
+                logger.error(f"Clover create order failed: {resp.status_code} {resp.text}")
+                return {"success": False, "order_id": "", "method": "clover"}
+
+            clover_order = resp.json()
+            clover_order_id = clover_order.get("id")
+            logger.info(f"Clover order created: {clover_order_id}")
+
+            # Step 2 — Add line items
+            for item in order.items:
+                line_item = {
+                    "name": item.name,
+                    "price": item.unit_price,  # in cents
+                    "unitQty": item.quantity * 1000,  # Clover uses 1000 = 1 unit
+                }
+                if item.special_instructions:
+                    line_item["note"] = item.special_instructions
+
+                li_resp = await client.post(
+                    f"{base_url}/v3/merchants/{merchant_id}/orders/{clover_order_id}/line_items",
+                    headers=headers,
+                    json=line_item,
+                )
+                if li_resp.status_code not in (200, 201):
+                    logger.warning(f"Clover line item failed for {item.name}: {li_resp.text}")
+
+            logger.info(f"Clover order {clover_order_id} created with {len(order.items)} items")
+            return {"success": True, "order_id": clover_order_id, "method": "clover"}
+
+    except Exception as e:
+        logger.error(f"Clover dispatch error: {e}", exc_info=True)
+        return {"success": False, "order_id": "", "method": "clover"}
 
 
 async def _send_to_kitchen_webhook(order: LiveOrder, url: str) -> Dict[str, Any]:
