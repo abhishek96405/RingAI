@@ -185,6 +185,7 @@ class CallSession:
     # ------------------------------------------------------------------
 
     async def _handle_order_confirmed(self):
+        self._hangup_scheduled = True  # blocks on_client_disconnected immediately
         await self.dispatch_order_if_ready()
         await self._schedule_hangup(reason="order_confirmed")
 
