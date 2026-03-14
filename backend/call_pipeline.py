@@ -201,10 +201,9 @@ class CallSession:
         logger.info(
             f"[{self.call_sid}] Hangup scheduled in {HANGUP_DELAY_SECS}s — reason: {reason}"
         )
-        await asyncio.sleep(HANGUP_DELAY_SECS)
 
-        # ✅ Fire on_call_complete BEFORE cancelling the pipeline
-        # on_client_disconnected will see _hangup_scheduled=True and skip it
+        # ✅ Fire on_call_complete IMMEDIATELY — before sleep and before pipeline cancel
+        # This ensures the record saves even if the customer hangs up during the delay
         if self._on_call_complete:
             try:
                 logger.info(f"[{self.call_sid}] Calling on_call_complete from _schedule_hangup")
@@ -219,17 +218,15 @@ class CallSession:
                     f"[{self.call_sid}] on_call_complete error in hangup: {e}", exc_info=True
                 )
 
-        # Terminate Twilio (stops billing)
+        await asyncio.sleep(HANGUP_DELAY_SECS)
         await hang_up_twilio_call(self.call_sid)
 
-        # Cancel Pipecat pipeline (closes Gemini Live WebSocket, stops Gemini billing)
         if self._pipeline_task is not None:
             try:
                 await self._pipeline_task.cancel()
                 logger.info(f"[{self.call_sid}] Pipeline task cancelled")
             except Exception as e:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
-
     # ------------------------------------------------------------------
     # Order dispatch with retry
     # ------------------------------------------------------------------
