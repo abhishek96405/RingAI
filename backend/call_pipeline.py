@@ -70,7 +70,7 @@ def is_pipeline_available() -> bool:
 # ---------------------------------------------------------------------------
 # VAD configuration
 # ---------------------------------------------------------------------------
-VAD_STOP_SECS  = float(os.environ.get("VAD_STOP_SECS",  "0.4"))
+VAD_STOP_SECS  = float(os.environ.get("VAD_STOP_SECS",  "0.2"))
 VAD_START_SECS = float(os.environ.get("VAD_START_SECS", "0.2"))
 VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 
@@ -185,10 +185,9 @@ class CallSession:
     # ------------------------------------------------------------------
 
     async def _handle_order_confirmed(self):
-        self._hangup_scheduled = True  # set immediately to block on_client_disconnected
+        self._hangup_scheduled = True
         await self.dispatch_order_if_ready()
-
-        # Fire on_call_complete immediately — before pipeline can be cancelled
+        # Fire on_call_complete immediately
         if self._on_call_complete:
             try:
                 logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_order_confirmed")
@@ -200,7 +199,6 @@ class CallSession:
                 )
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-
         await self._schedule_hangup(reason="order_confirmed")
 
     # ------------------------------------------------------------------
@@ -437,7 +435,7 @@ async def create_call_pipeline(
             try:
                 if session:
                     # Ensure order dispatched if not already
-                    if session.order.state == OrderState.CONFIRMED and not session._order_dispatched:
+                    if session.order.state == OrderState.CONFIRMED and not session._order_dispatched and not session._hangup_scheduled:
                         await session.dispatch_order_if_ready()
 
                     # Last-chance extraction if still no items
