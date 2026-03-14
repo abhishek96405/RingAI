@@ -492,7 +492,6 @@ async def _send_to_clover(order: LiveOrder) -> Dict[str, Any]:
             order_payload = {
                 "title": f"Phone Order — {order.customer_name or 'Guest'}",
                 "note": f"RingAI | {order.order_type.upper()} | {order.special_instructions or ''}".strip(" |"),
-                "orderType": {"id": "TAKEOUT"},
             }
             resp = await client.post(
                 f"{base_url}/v3/merchants/{merchant_id}/orders",
