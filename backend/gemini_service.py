@@ -626,6 +626,89 @@ def evaluate_call_quality(
         "protocol_highlights": highlights,
     }
 
+def generate_menu_examples(menu_index: MenuIndex) -> str:
+    """Generate dynamic few-shot examples from the restaurant's actual menu."""
+    items = list(menu_index.items.values())
+    if len(items) < 2:
+        return ""
+
+    # Pick items from different categories for better examples
+    categories: Dict[str, list] = {}
+    for item in items:
+        categories.setdefault(item.get("category", "Other"), []).append(item)
+    
+    cat_list = list(categories.values())
+    real_item = cat_list[0][0]  # first item from first category
+    real_item2 = cat_list[1][0] if len(cat_list) > 1 else cat_list[0][1] if len(cat_list[0]) > 1 else real_item
+
+    # Generate a phonetic mispronunciation example
+    real_name = real_item["name"]
+    real_name2 = real_item2["name"]
+    real_price = f"${real_item['price'] / 100:.2f}"
+
+    # Create a "sounds like" mispronunciation by mangling first word
+    words = real_name.split()
+    if len(words[0]) > 4:
+        mangled = words[0][:-2] + "y" + (" " + " ".join(words[1:]) if len(words) > 1 else "")
+    else:
+        mangled = words[0] + "i" + (" " + " ".join(words[1:]) if len(words) > 1 else "")
+
+    # Create a "wrong item" example — something plausible but not on menu
+    wrong_items = {
+        "chicken": "Chicken Alfredo",
+        "lamb": "Mutton Curry",
+        "paneer": "Tofu Curry",
+        "rice": "Fried Rice",
+        "naan": "Pita Bread",
+        "fish": "Fish Tacos",
+        "beef": "Beef Burger",
+        "pork": "Pork Ribs",
+        "shrimp": "Shrimp Scampi",
+        "noodle": "Pad Thai",
+        "soup": "Wonton Soup",
+        "pizza": "Pepperoni Pizza",
+        "pasta": "Spaghetti Bolognese",
+        "taco": "Beef Taco",
+        "burger": "Cheeseburger",
+        "sushi": "California Roll",
+        "dumpling": "Pork Dumplings",
+        "wrap": "Chicken Wrap",
+    }
+    
+    # Find a wrong item that's NOT on the menu
+    wrong_item = "Pizza"  # safe default
+    all_names_lower = [i["name"].lower() for i in items]
+    for keyword, suggestion in wrong_items.items():
+        if not any(keyword in n for n in all_names_lower):
+            if not any(suggestion.lower() in n for n in all_names_lower):
+                wrong_item = suggestion
+                break
+
+    return f"""
+═══════════════════════════
+BEHAVIORAL EXAMPLES — FOLLOW EXACTLY
+═══════════════════════════
+These examples show correct and incorrect behavior. Apply the same logic to ALL items.
+
+✅ EXAMPLE 1 — Mispronunciation (accept, use correct name):
+Customer: "I want one {mangled}"
+You: "Got it, one {real_name}. Anything else?"
+[Reason: "{mangled}" is a mispronunciation of "{real_name}" which IS on the menu]
+
+✅ EXAMPLE 2 — Item not on menu (reject, suggest alternative):
+Customer: "Do you have {wrong_item}?"
+You: "I'm sorry, we don't have {wrong_item}. Can I suggest {real_name2} instead?"
+[Reason: "{wrong_item}" does not exist in the menu list above]
+
+✅ EXAMPLE 3 — Similar sounding but different item (reject clearly):
+Customer: "I want {real_name.split()[0]} [different preparation not on menu]"
+You: "I don't see that on our menu. We do have {real_name} for {real_price} — would that work?"
+[Reason: Even if it sounds similar, only confirm items word-for-word from the menu]
+
+❌ NEVER DO THIS:
+Customer: "Do you have {wrong_item}?"
+You: "Yes, we have {wrong_item} for $X.XX." ← HALLUCINATION — never confirm unlisted items
+"""
 
 # ---------------------------------------------------------------------------
 # System Prompt Builder (hardened)
@@ -648,6 +731,7 @@ def build_system_prompt(
     restaurant_timezone: str = "UTC",
 ) -> str:
     menu_index = MenuIndex(menu_items)
+    menu_examples = generate_menu_examples(menu_index)
 
     try:
         import pytz
@@ -686,6 +770,7 @@ def build_system_prompt(
 
     menu_block = menu_index.as_prompt_text()
     category_list = ", ".join(menu_index.category_names())
+    menu_examples = generate_menu_examples(menu_index)
     rules_block = "\n".join(f"  • {r}" for r in business_rules) if business_rules else "  • (No additional rules)"
     escalation_block = "\n".join(f"  ⚠ {r}" for r in escalation_rules) if escalation_rules else "  ⚠ Customer requests a manager\n  ⚠ Food safety complaint or allergic reaction"
     delivery_section = (
@@ -730,12 +815,18 @@ MENU — YOUR ONLY SOURCE OF TRUTH
 CRITICAL MENU RULES — NEVER VIOLATE:
 1. Only confirm, recommend, or discuss items listed above.
 2. If a customer asks for an item NOT in this list: "I'm sorry, we don't have that. Can I suggest something similar?"
+   Phonetic mispronunciations ARE acceptable — match them to the correct menu item name.
+   Example: "gobby manchurian" = "Gobi Manchurian"
+   Different items with similar names are NOT acceptable — reject them clearly.
+   Example: "Mutton Biryani" ≠ "Lamb Biryani"
 3. NEVER invent items, prices, descriptions, or availability.
 4. Prices are exact. Never estimate or round.
 5. If you are unsure whether an item exists — it doesn't. Do not guess.
+   NEVER confirm a price for any item not listed above.
 6. NEVER read the full menu aloud. If a customer asks what's on the menu, say:
    "We have {category_list}. What sounds good?" — then answer specific questions.
    Reading the entire menu wastes time and confuses customers.
+{menu_examples}
 
 ═══════════════════════════
 ORDER PROTOCOL — FOLLOW EVERY STEP
@@ -752,8 +843,6 @@ STEP 4: MANDATORY READBACK — never skip this:
   For orders with 6 or more items:
   "Just to confirm — that's [count] items, total $[exact total]. Is that correct?"
   • Never list more than 5 items in the readback — it confuses customers.
-  • If YES → go to STEP 5
-  • If NO → "Of course, what would you like to change?" → return to STEP 2
   • Customers already heard individual prices — only the total matters at readback.
   • If YES → go to STEP 5
   • If NO → "Of course, what would you like to change?" → return to STEP 2
