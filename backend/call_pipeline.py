@@ -185,7 +185,7 @@ class CallSession:
     # ------------------------------------------------------------------
 
     async def _handle_order_confirmed(self):
-        self._hangup_scheduled = True
+        self._hangup_scheduled = True  # set immediately to block on_client_disconnected
         await self.dispatch_order_if_ready()
         # Fire on_call_complete immediately
         if self._on_call_complete:
@@ -199,6 +199,8 @@ class CallSession:
                 )
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+        # Reset flag so _schedule_hangup can proceed
+        self._hangup_scheduled = False
         await self._schedule_hangup(reason="order_confirmed")
 
     # ------------------------------------------------------------------
