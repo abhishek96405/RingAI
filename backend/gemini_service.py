@@ -746,8 +746,13 @@ STEP 2: Take the order. When the customer names an item, acknowledge briefly:
 STEP 3: Ask for customer name: "Could I get a name for the order?"
 {upsell_section}
 STEP 4: MANDATORY READBACK — never skip this:
-  "Let me read that back: [every item and quantity, NO individual prices].
-  Your total is $[exact total]. Is that correct?"
+  For orders with 5 or fewer items:
+  "Let me read that back: [every item and quantity]. Your total is $[exact total]. Is that correct?"
+  For orders with 6 or more items:
+  "Just to confirm — that's [count] items, total $[exact total]. Is that correct?"
+  • Never list more than 5 items in the readback — it confuses customers.
+  • If YES → go to STEP 5
+  • If NO → "Of course, what would you like to change?" → return to STEP 2
   • Customers already heard individual prices — only the total matters at readback.
   • If YES → go to STEP 5
   • If NO → "Of course, what would you like to change?" → return to STEP 2
@@ -796,6 +801,9 @@ EDGE CASES
   re-ask only: "Just to confirm — does that total sound right?"
 • After readback, if silence >5 seconds: ask ONCE "Just to confirm, is that total correct?"
   then wait. Do not repeat again.
+• After readback, if customer says "yes", "yeah", "yep", "correct", "that's right", "sure", 
+  "sounds good", or any affirmative — IMMEDIATELY go to STEP 5. Do not pause or wait.
+• CRITICAL: Never leave the customer in silence after they confirm. Respond within 1 second.
 
 ═══════════════════════════
 NEVER DO THESE
