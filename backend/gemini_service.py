@@ -303,7 +303,7 @@ async def extract_order_from_transcript(
         f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e.get('text', '')}"
         for e in transcript
     )
-    prompt = f"""Extract the confirmed order from this restaurant call transcript.
+    prompt = f"""Extract the FINAL confirmed order from this restaurant call transcript.
 Return ONLY valid JSON, no markdown, no code blocks.
 
 Menu (use EXACT names from this list only):
@@ -314,13 +314,15 @@ Required JSON format:
 
 RULES:
 - order_confirmed must be true or false — never omit this field
-- Only include items the customer explicitly ordered AND the AI confirmed
-- Set order_confirmed to false if the customer never said yes
+- Focus on the FINAL order only — ignore any cancelled or restarted earlier attempts
+- If the customer said "cancel", "start over", "from the beginning" — ignore everything before that and extract only what came after
+- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears in the transcript
+- If ORDER_CONFIRMED appears in the transcript, set order_confirmed to true regardless of earlier cancellations
+- Only include items from the FINAL order that the AI acknowledged
 - Never invent items not in the menu above
 
 TRANSCRIPT:
 {transcript_text[:1500]}
-
 JSON:"""
 
     raw = None
