@@ -185,8 +185,22 @@ class CallSession:
     # ------------------------------------------------------------------
 
     async def _handle_order_confirmed(self):
-        self._hangup_scheduled = True  # blocks on_client_disconnected immediately
+        self._hangup_scheduled = True  # set immediately to block on_client_disconnected
         await self.dispatch_order_if_ready()
+
+        # Fire on_call_complete immediately — before pipeline can be cancelled
+        if self._on_call_complete:
+            try:
+                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_order_confirmed")
+                await self._on_call_complete(
+                    call_sid=self.call_sid,
+                    restaurant_id=self.restaurant_id,
+                    transcript=self.transcript,
+                    session=self,
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+
         await self._schedule_hangup(reason="order_confirmed")
 
     # ------------------------------------------------------------------
@@ -201,22 +215,6 @@ class CallSession:
         logger.info(
             f"[{self.call_sid}] Hangup scheduled in {HANGUP_DELAY_SECS}s — reason: {reason}"
         )
-
-        # ✅ Fire on_call_complete IMMEDIATELY — before sleep and before pipeline cancel
-        # This ensures the record saves even if the customer hangs up during the delay
-        if self._on_call_complete:
-            try:
-                logger.info(f"[{self.call_sid}] Calling on_call_complete from _schedule_hangup")
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(
-                    f"[{self.call_sid}] on_call_complete error in hangup: {e}", exc_info=True
-                )
 
         await asyncio.sleep(HANGUP_DELAY_SECS)
         await hang_up_twilio_call(self.call_sid)
