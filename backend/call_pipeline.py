@@ -347,6 +347,7 @@ async def create_call_pipeline(
             voice=voice,
             transcribe_user_audio=True,
             transcribe_model_output=True,
+            thinking_config={"thinking_budget": 0},  # disable thinking for lower latency
         )
 
         # ------------------------------------------------------------------
@@ -499,6 +500,7 @@ async def create_call_pipeline(
 def generate_twiml_stream_response(websocket_url: str, call_sid: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    <Say voice="Polly.Joanna">Please hold while we connect you.</Say>
     <Connect>
         <Stream url="{websocket_url}">
             <Parameter name="callSid" value="{call_sid}" />
