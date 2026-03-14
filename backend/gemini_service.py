@@ -444,8 +444,10 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
 
 async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
     """Try Clover POS → Square POS → kitchen webhook → DB fallback. Always returns a result."""
-    # Try Clover first
-    if os.environ.get("CLOVER_API_TOKEN") and os.environ.get("CLOVER_MERCHANT_ID"):
+    clover_token = os.environ.get("CLOVER_API_TOKEN", "")
+    clover_mid = os.environ.get("CLOVER_MERCHANT_ID", "")
+    logger.info(f"Clover env check — token={'SET' if clover_token else 'MISSING'}, merchant={'SET' if clover_mid else 'MISSING'}")
+    if clover_token and clover_mid:
         result = await _send_to_clover(order)
         if result["success"]:
             return result
