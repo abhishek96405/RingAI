@@ -231,8 +231,11 @@ class CallSession:
 
     async def dispatch_order_if_ready(self, max_retries: int = 3) -> bool:
         if self._order_dispatched:
+            logger.info(f"[{self.call_sid}] Order already dispatched — skipping")
             return False
+        self._order_dispatched = True
         if self.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED):
+            self._order_dispatched = False
             return False
 
         if not self.order.items:
@@ -352,9 +355,11 @@ async def create_call_pipeline(
             transcribe_user_audio=True,
             transcribe_model_output=True,
             thinking_config={"thinking_budget": 0},
+            http_options={"api_version": "v1alpha"},
             vad=GeminiVADParams(
-                end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
+                end_sensitivity=EndSensitivity.END_SENSITIVITY_LOW,
             ),
+            proactivity={"proactive_audio": True},
         )
 
         # ------------------------------------------------------------------

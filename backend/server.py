@@ -5,15 +5,66 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import signal
+import asyncio
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from bson import ObjectId
 import uuid
 import random
 from datetime import datetime, timezone, timedelta
 import stripe
 from twilio.rest import Client as TwilioClient
+
+
+# ============================================================
+# GRACEFUL SHUTDOWN
+# ============================================================
+_active_websockets: Set[WebSocket] = set()
+_shutdown_requested = False
+
+def register_active_websocket(ws: WebSocket):
+    _active_websockets.add(ws)
+
+def unregister_active_websocket(ws: WebSocket):
+    _active_websockets.discard(ws)
+
+def is_shutdown_requested() -> bool:
+    return _shutdown_requested
+
+async def graceful_shutdown_handler(sig, frame):
+    global _shutdown_requested
+    logger = logging.getLogger(__name__)
+    if _shutdown_requested:
+        return
+    _shutdown_requested = True
+    active_count = len(_active_websockets)
+    logger.info(f"🛑 Graceful shutdown initiated (signal: {sig})")
+    logger.info(f"📞 Active calls: {active_count}")
+    if active_count == 0:
+        logger.info("✅ No active calls — shutting down immediately")
+        return
+    logger.info(f"⏳ Waiting up to 600s for {active_count} active call(s) to complete...")
+    start_time = asyncio.get_event_loop().time()
+    while len(_active_websockets) > 0:
+        elapsed = asyncio.get_event_loop().time() - start_time
+        if elapsed > 600:
+            logger.warning(f"⚠️ Timeout — forcibly closing {len(_active_websockets)} call(s)")
+            break
+        await asyncio.sleep(1)
+        if int(elapsed) % 30 == 0:
+            logger.info(f"⏳ Still waiting... {len(_active_websockets)} call(s) active")
+    logger.info("✅ Graceful shutdown complete")
+
+def setup_signal_handlers():
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: asyncio.create_task(graceful_shutdown_handler(s, None))
+        )
+    logging.getLogger(__name__).info("✅ Graceful shutdown handlers registered")
 
 
 def serialize_mongo_doc(value):
@@ -1153,6 +1204,7 @@ async def simulate_call_internal(restaurant_id: str, call_time: datetime):
 
 @app.on_event("startup")
 async def startup_seed():
+    setup_signal_handlers()
     logger.info("Allowed CORS origins: %s", get_cors_origins())
 
     if os.environ.get("SEED_DEMO_DATA", "false").lower() != "true":
@@ -1394,6 +1446,7 @@ async def twilio_incoming_call(request: Request):
 @app.websocket("/api/twilio/media-stream")
 async def twilio_media_stream(websocket: WebSocket):
     await websocket.accept()
+    register_active_websocket(websocket)
 
     try:
         # Read messages to get stream_sid and call_sid
@@ -1502,6 +1555,8 @@ async def twilio_media_stream(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        unregister_active_websocket(websocket)
 
 
 # ============================================================

@@ -744,33 +744,49 @@ def build_system_prompt(
         current_time_str = local_now.strftime("%A, %I:%M %p %Z")
         current_day = local_now.strftime("%A").lower()
         current_minutes = local_now.hour * 60 + local_now.minute
-        is_open = False
+        is_open = True
         if operating_hours:
             day_hours = operating_hours.get(current_day, {})
-            if not day_hours.get("closed"):
+            if day_hours.get("closed"):
+                is_open = False
+            else:
                 def time_to_minutes(t):
+                    if not t or not isinstance(t, str):
+                        return None
+                    t = t.strip()
                     try:
                         from datetime import datetime as dt
                         parsed = dt.strptime(t, "%H:%M")
                         return parsed.hour * 60 + parsed.minute
-                    except Exception:
-                        try:
-                            from datetime import datetime as dt
-                            parsed = dt.strptime(t, "%I:%M %p")
-                            return parsed.hour * 60 + parsed.minute
-                        except Exception:
-                            return 0
-                open_min = time_to_minutes(day_hours.get("open", "12:00 AM"))
-                close_min = time_to_minutes(day_hours.get("close", "11:59 PM"))
-                if close_min <= open_min:
-                    is_open = current_minutes >= open_min or current_minutes <= close_min
+                    except ValueError:
+                        pass
+                    try:
+                        from datetime import datetime as dt
+                        parsed = dt.strptime(t, "%I:%M %p")
+                        return parsed.hour * 60 + parsed.minute
+                    except ValueError:
+                        pass
+                    logger.warning(f"Could not parse time string: '{t}'")
+                    return None
+                open_min = time_to_minutes(day_hours.get("open", ""))
+                close_min = time_to_minutes(day_hours.get("close", ""))
+                if open_min is None or close_min is None:
+                    logger.warning(
+                        f"Time parse failure for {restaurant_timezone} on {current_day} "
+                        f"— defaulting to OPEN"
+                    )
+                    is_open = True
                 else:
-                    is_open = open_min <= current_minutes <= close_min
+                    if close_min <= open_min:
+                        is_open = current_minutes >= open_min or current_minutes <= close_min
+                    else:
+                        is_open = open_min <= current_minutes <= close_min
         open_status = "OPEN" if is_open else "CLOSED"
     except Exception as e:
-        logger.error(f"Timezone error for '{restaurant_timezone}': {e}")
+        logger.error(f"Timezone error for '{restaurant_timezone}': {e}", exc_info=True)
         current_time_str = datetime.now(timezone.utc).strftime("%A, %I:%M %p UTC")
-        open_status = "UNKNOWN"
+        open_status = "OPEN"
+        logger.warning("Defaulting to OPEN status due to timezone error")
 
     menu_block = menu_index.as_prompt_text()
     category_list = ", ".join(menu_index.category_names())
