@@ -130,6 +130,7 @@ from gemini_service import (
     parse_menu_text,
     analyse_call_transcript,
     get_conversation_response,
+    build_system_prompt,
     send_order_sms,
 )
 from call_pipeline import (
