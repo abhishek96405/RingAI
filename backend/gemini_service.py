@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import httpx
+import base64
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
@@ -1273,3 +1274,68 @@ def _mock_call_analysis(transcript, order_json):
         "summary": f"Call completed with {len(transcript)} exchanges. "
                    f"{'Order placed successfully.' if order_json else 'No order placed.'}",
     }
+
+# ---------------------------------------------------------------------------
+# SMS Confirmation
+# ---------------------------------------------------------------------------
+
+async def send_order_sms(
+    caller_number: str,
+    order: "LiveOrder",
+    restaurant_name: str,
+    prep_time_minutes: int = 20,
+    payment_link: Optional[str] = None,
+) -> bool:
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
+    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
+
+    if not all([account_sid, auth_token, from_number]):
+        logger.warning("SMS not sent — missing Twilio credentials")
+        return False
+
+    if not order.items:
+        logger.warning("SMS not sent — no items in order")
+        return False
+
+    name_line = f"Hi {order.customer_name}! " if order.customer_name else ""
+    order_type = "Delivery" if order.order_type == "delivery" else "Pickup"
+
+    lines = []
+    for item in order.items:
+        item_total = item.unit_price * item.quantity / 100
+        qty_prefix = f"{item.quantity}x " if item.quantity > 1 else "1x "
+        lines.append(f"{qty_prefix}{item.name} — ${item_total:.2f}")
+
+    total = f"${order.total / 100:.2f}"
+
+    body = (
+        f"{name_line}Your {restaurant_name} order:\n\n"
+        + "\n".join(lines)
+        + f"\n\nTotal: {total}"
+        + f"\nReady in ~{prep_time_minutes} min ({order_type})"
+    )
+
+    if payment_link:
+        body += f"\n\nPay now: {payment_link}"
+
+    try:
+        credentials = base64.b64encode(
+            f"{account_sid}:{auth_token}".encode()
+        ).decode()
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                url,
+                data={"From": from_number, "To": caller_number, "Body": body},
+                headers={"Authorization": f"Basic {credentials}"},
+            )
+            if resp.status_code in (200, 201):
+                logger.info(f"SMS sent to {caller_number}")
+                return True
+            else:
+                logger.error(f"SMS failed: {resp.status_code} {resp.text}")
+                return False
+    except Exception as e:
+        logger.error(f"SMS error: {e}")
+        return False

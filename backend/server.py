@@ -129,8 +129,8 @@ from gemini_service import (
     is_gemini_available,
     parse_menu_text,
     analyse_call_transcript,
-    get_conversation_response,
-    build_system_prompt,
+    get_conversation_response
+    send_order_sms,
 )
 from call_pipeline import (
     is_pipeline_available,
@@ -341,7 +341,8 @@ class RestaurantConfig(BaseModel):
     after_hours_mode: str = "voicemail"
     voicemail_enabled: bool = True
     escalation_phone_number: Optional[str] = None
-
+    sms_enabled: bool = True
+    sms_payment_enabled: bool = False
     operating_hours: Dict[str, Any] = {
         "monday": {"closed": False, "open": "09:00", "close": "21:00"},
         "tuesday": {"closed": False, "open": "09:00", "close": "21:00"},
@@ -360,6 +361,8 @@ class RestaurantConfigUpdate(BaseModel):
 
     business_rules: Optional[List[str]] = None
     escalation_rules: Optional[List[str]] = None
+    sms_enabled: Optional[bool] = None
+    sms_payment_enabled: Optional[bool] = None
 
     upsell_enabled: Optional[bool] = None
     disclosure_text: Optional[str] = None
@@ -1202,6 +1205,38 @@ async def simulate_call_internal(restaurant_id: str, call_time: datetime):
 # SEED INITIAL DEMO RESTAURANT
 # ============================================================
 
+async def create_stripe_payment_link(
+    order_total_cents: int,
+    restaurant_name: str,
+    call_sid: str,
+) -> Optional[str]:
+    if not stripe.api_key:
+        return None
+    if order_total_cents <= 0:
+        return None
+    try:
+        # Create a one-time price
+        price = stripe.Price.create(
+            unit_amount=order_total_cents,
+            currency="usd",
+            product_data={
+                "name": f"{restaurant_name} Phone Order",
+            },
+        )
+        # Create payment link
+        payment_link = stripe.PaymentLink.create(
+            line_items=[{"price": price.id, "quantity": 1}],
+            metadata={"call_sid": call_sid},
+            after_completion={
+                "type": "message",
+                "message": {"message": "Payment received! See you soon."},
+            },
+        )
+        return payment_link.url
+    except Exception as e:
+        logger.error(f"Stripe payment link error: {e}")
+        return None
+
 @app.on_event("startup")
 async def startup_seed():
     setup_signal_handlers()
@@ -1532,6 +1567,25 @@ async def twilio_media_stream(websocket: WebSocket):
                 await db.call_records.insert_one(call.model_dump())
                 await db.active_calls.delete_one({"call_sid": call_sid})
                 logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
+                # Send SMS confirmation
+                sms_enabled = config.get("sms_enabled", True) if config else True
+                sms_payment_enabled = config.get("sms_payment_enabled", False) if config else False
+
+                if sms_enabled and session and session.order.items:
+                    payment_link = None
+                    if sms_payment_enabled and order_total > 0:
+                        payment_link = await create_stripe_payment_link(
+                            order_total_cents=order_total,
+                            restaurant_name=restaurant.get("name", "the restaurant"),
+                            call_sid=call_sid,
+                        )
+                    await send_order_sms(
+                        caller_number=active_call.get("caller_number", ""),
+                        order=session.order,
+                        restaurant_name=restaurant.get("name", "the restaurant"),
+                        prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
+                        payment_link=payment_link,
+                    )
             except Exception as e:
                 logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
 
