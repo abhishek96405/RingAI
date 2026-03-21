@@ -75,7 +75,7 @@ VAD_START_SECS = float(os.environ.get("VAD_START_SECS", "0.2"))
 VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 
 # Seconds to wait after farewell TTS before hanging up
-HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "3.5"))
+HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "1.5"))
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +379,17 @@ async def create_call_pipeline(
                     if full_text:
                         logger.info(f"[{call_sid}] AI: {full_text}")
                         session.add_transcript_entry("ai", full_text)
+                        # Fire menu SMS if AI sends menu trigger phrase
+                        if "i'll text you our full menu" in full_text.lower():
+                            from gemini_service import send_menu_sms
+                            asyncio.create_task(send_menu_sms(
+                           
+                                caller_number=session.caller_number,
+                                restaurant_name=session.restaurant.get("name", "the restaurant"),
+                                restaurant_id=session.restaurant_id,
+                                base_url="https://ringai-v2.onrender.com",
+                            ))
+                            logger.info(f"[{call_sid}] Menu SMS triggered")
                 return await original_turn_complete(message, *args, **kwargs)
 
             gemini_live._handle_msg_turn_complete = patched_turn_complete

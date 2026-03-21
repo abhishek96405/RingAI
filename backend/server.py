@@ -132,6 +132,7 @@ from gemini_service import (
     get_conversation_response,
     build_system_prompt,
     send_order_sms,
+    send_menu_sms,
 )
 from call_pipeline import (
     is_pipeline_available,
@@ -668,6 +669,101 @@ async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpd
         await db.restaurant_configs.insert_one(config.model_dump())
     config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     return config
+
+# ---------------------------------------------------------------------------
+# PUBLIC MENU PAGE (no auth required)
+# ---------------------------------------------------------------------------
+@app.get("/menu/{restaurant_id}", include_in_schema=False)
+async def public_menu_page(restaurant_id: str):
+    restaurant = await db.restaurants.find_one(
+        {"id": restaurant_id}, {"_id": 0}
+    )
+    if not restaurant:
+        return HTMLResponse("<h2>Menu not found</h2>", status_code=404)
+
+    items = await db.menu_items.find(
+        {"restaurant_id": restaurant_id}, {"_id": 0}
+    ).to_list(500)
+
+    # Group by category
+    categories: Dict[str, list] = {}
+    for item in sorted(items, key=lambda x: (x.get("category", ""), x.get("name", ""))):
+        cat = item.get("category", "Other").title()
+        if cat not in categories:
+            categories[cat] = []
+        price = f"${item.get('price', 0) / 100:.2f}"
+        categories[cat].append({
+            "name": item.get("name", ""),
+            "price": price,
+            "description": item.get("description", ""),
+        })
+
+    restaurant_name = restaurant.get("name", "Restaurant")
+    cuisine = restaurant.get("cuisine_type", "")
+
+    # Build HTML
+    category_html = ""
+    for cat_name, cat_items in categories.items():
+        items_html = ""
+        for i in cat_items:
+            desc_html = f'<p class="desc">{i["description"]}</p>' if i["description"] else ""
+            items_html += f"""
+            <div class="item">
+                <div class="item-header">
+                    <span class="item-name">{i["name"]}</span>
+                    <span class="item-price">{i["price"]}</span>
+                </div>
+                {desc_html}
+            </div>"""
+        category_html += f"""
+        <div class="category">
+            <h2>{cat_name}</h2>
+            {items_html}
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{restaurant_name} Menu</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+                background: #f9f5f0; color: #1a1a1a; }}
+        .header {{ background: #c8602a; color: white; padding: 24px 20px; text-align: center; }}
+        .header h1 {{ font-size: 1.8rem; font-weight: 700; }}
+        .header p {{ font-size: 0.95rem; opacity: 0.85; margin-top: 4px; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 16px; }}
+        .category {{ background: white; border-radius: 12px; margin-bottom: 16px; 
+                     overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+        .category h2 {{ background: #f0e8df; color: #c8602a; padding: 12px 16px; 
+                        font-size: 0.85rem; font-weight: 700; text-transform: uppercase; 
+                        letter-spacing: 0.05em; }}
+        .item {{ padding: 12px 16px; border-bottom: 1px solid #f5f5f5; }}
+        .item:last-child {{ border-bottom: none; }}
+        .item-header {{ display: flex; justify-content: space-between; align-items: baseline; }}
+        .item-name {{ font-size: 0.95rem; font-weight: 500; }}
+        .item-price {{ font-size: 0.95rem; font-weight: 600; color: #c8602a; 
+                       margin-left: 12px; white-space: nowrap; }}
+        .desc {{ font-size: 0.8rem; color: #888; margin-top: 3px; }}
+        .footer {{ text-align: center; padding: 20px; font-size: 0.75rem; color: #aaa; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{restaurant_name}</h1>
+        <p>{cuisine} cuisine</p>
+    </div>
+    <div class="container">
+        {category_html}
+        <div class="footer">Powered by RingAI</div>
+    </div>
+</body>
+</html>"""
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html)
 
 
 # ============================================================
@@ -1404,6 +1500,32 @@ async def twilio_assign_existing_number(data: TwilioAssignNumberRequest, user: D
         "twilio_number_sid": updated.sid,
         "voice_url": voice_url,
     }
+
+@api_router.post("/restaurants/{restaurant_id}/send-menu-sms")
+async def send_menu_sms_endpoint(
+    restaurant_id: str,
+    request: Request,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    restaurant = await db.restaurants.find_one(
+        {"id": restaurant_id}, {"_id": 0}
+    )
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    body = await request.json()
+    caller_number = body.get("caller_number")
+    if not caller_number:
+        raise HTTPException(status_code=400, detail="caller_number required")
+
+    base_url = str(request.base_url).rstrip("/")
+    success = await send_menu_sms(
+        caller_number=caller_number,
+        restaurant_name=restaurant.get("name", "the restaurant"),
+        restaurant_id=restaurant_id,
+        base_url=base_url,
+    )
+    return {"sent": success}
 
 
 @api_router.post("/twilio/incoming")
