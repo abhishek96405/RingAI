@@ -243,11 +243,18 @@ class CallSession:
                 extracted = await extract_order_from_transcript(
                     self.transcript, self.menu_index
                 )
-                if extracted:
+                # Use extracted items if present — ignore confirmed flag
+                # ORDER_CONFIRMED signal is the source of truth, not extraction
+                if extracted and extracted.items:
                     extracted.restaurant_id = self.restaurant_id
                     extracted.call_sid      = self.call_sid
                     extracted.caller_number = self.caller_number
+                    extracted.order_confirmed = True
                     self.order = extracted
+                    logger.info(
+                        f"[{self.call_sid}] Extraction succeeded with "
+                        f"{len(extracted.items)} items (confirmed override)"
+                    )
                     break
                 if attempt < max_retries:
                     logger.warning(

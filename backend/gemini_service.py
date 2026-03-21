@@ -317,15 +317,17 @@ RULES:
 - order_confirmed must be true or false — never omit this field
 - Focus on the FINAL order only — ignore any cancelled or restarted earlier attempts
 - If the customer said "cancel", "start over", "from the beginning" — ignore everything before that and extract only what came after
-- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears in the transcript
-- If ORDER_CONFIRMED appears in the transcript, set order_confirmed to true regardless of earlier cancellations
+- CRITICAL: If the SIGNAL above shows order_confirmed_signal detected=True, you MUST set order_confirmed=true — no exceptions
+- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears anywhere in the transcript
+- If ORDER_CONFIRMED appears in the transcript, set order_confirmed=true regardless of anything else
 - Only include items from the FINAL order that the AI acknowledged
 - Never invent items not in the menu above
 - customer_name: always write in English/Latin characters, romanize if spoken in another script
   Example: "అభిషేక్" → "Abhishek", "अभिषेक" → "Abhishek", "அபிஷேக்" → "Abhishek"
 
+SIGNAL: {"order_confirmed_signal": {"detected": {"ORDER_CONFIRMED" in transcript_text}}}
 TRANSCRIPT:
-{transcript_text[:1500]}
+{transcript_text[:4000]}
 JSON:"""
 
     raw = None
