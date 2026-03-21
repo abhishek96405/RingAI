@@ -79,7 +79,7 @@ const DashboardLayout = () => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const location = useLocation();
   const { activeRestaurant, user } = useAppSession();
-  const isAdmin = user?.publicMetadata?.role === "admin" || user?.role === "admin";
+  const isAdmin = user?.publicMetadata?.role === "admin";
 
   // WebSocket notifications with real-time updates
   const handleWebSocketNotification = useCallback((wsNotification: any) => {
