@@ -304,6 +304,7 @@ async def extract_order_from_transcript(
         f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e.get('text', '')}"
         for e in transcript
     )
+    order_confirmed_signal = "ORDER_CONFIRMED" in transcript_text
     prompt = f"""Extract the FINAL confirmed order from this restaurant call transcript.
 Return ONLY valid JSON, no markdown, no code blocks.
 
@@ -325,7 +326,7 @@ RULES:
 - customer_name: always write in English/Latin characters, romanize if spoken in another script
   Example: "అభిషేక్" → "Abhishek", "अभिषेक" → "Abhishek", "அபிஷேக்" → "Abhishek"
 
-SIGNAL: {"order_confirmed_signal": {"detected": {"ORDER_CONFIRMED" in transcript_text}}}
+SIGNAL: order_confirmed_detected={order_confirmed_signal}
 TRANSCRIPT:
 {transcript_text[:4000]}
 JSON:"""
