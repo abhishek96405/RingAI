@@ -345,7 +345,7 @@ async def create_call_pipeline(
             ),
         )
 
-        from pipecat.services.google.gemini_live.llm import GeminiVADParams, EndSensitivity
+        from pipecat.services.google.gemini_live.llm import GeminiVADParams, EndSensitivity, StartSensitivity
 
         gemini_live = GeminiLiveLLMService(
             api_key=api_key,
@@ -357,6 +357,7 @@ async def create_call_pipeline(
             thinking_config={"thinking_budget": 0},
             http_options={"api_version": "v1alpha"},
             vad=GeminiVADParams(
+                start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
                 end_sensitivity=EndSensitivity.END_SENSITIVITY_LOW,
             ),
             proactivity={"proactive_audio": True},
