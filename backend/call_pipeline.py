@@ -380,7 +380,7 @@ async def create_call_pipeline(
                         logger.info(f"[{call_sid}] AI: {full_text}")
                         session.add_transcript_entry("ai", full_text)
                         # Fire menu SMS if AI sends menu trigger phrase
-                        if "i'll text you our full menu" in full_text.lower():
+                        if "i'll text you" in full_text.lower() and "menu" in full_text.lower():
                             from gemini_service import send_menu_sms
                             asyncio.create_task(send_menu_sms(
                            
