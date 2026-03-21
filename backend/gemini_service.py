@@ -1038,6 +1038,58 @@ If asked what AI you are: "I'm the virtual assistant for {restaurant_name}. How 
 
 
 # ---------------------------------------------------------------------------
+# System Prompt Router (NEW - routes to correct prompt builder by business type)
+# ---------------------------------------------------------------------------
+
+def get_system_prompt(
+    business_type: str,
+    **kwargs
+) -> str:
+    """
+    Routes to the correct prompt builder based on business type.
+    
+    restaurant → build_system_prompt() [EXISTING — DO NOT MODIFY]
+    appointment → build_appointment_prompt() [NEW]
+    
+    This is additive code that does not modify existing restaurant logic.
+    """
+    if business_type in ("restaurant",):
+        # Remove appointment-specific kwargs that restaurant prompt doesn't use
+        restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+        return build_system_prompt(**restaurant_kwargs)
+    
+    elif business_type in ("clinic", "salon", "home_services", "legal"):
+        # Use appointment prompt
+        try:
+            from appointment_service import build_appointment_prompt
+            
+            # Map kwargs for appointment prompt
+            appointment_kwargs = {
+                "business_name": kwargs.get("restaurant_name", "Business"),
+                "business_type": business_type,
+                "services": kwargs.get("services", []),
+                "business_rules": kwargs.get("business_rules", []),
+                "escalation_phone": kwargs.get("escalation_phone"),
+                "operating_hours": kwargs.get("operating_hours"),
+                "restaurant_timezone": kwargs.get("restaurant_timezone", "UTC"),
+                "disclosure_text": kwargs.get("disclosure_text", "Hi! How can I help you today?"),
+            }
+            return build_appointment_prompt(**appointment_kwargs)
+        except ImportError as e:
+            logger.error(f"Could not import appointment_service: {e}")
+            # Fall back to restaurant prompt
+            restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+            return build_system_prompt(**restaurant_kwargs)
+    
+    else:
+        # Default to restaurant for unknown types
+        restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+        return build_system_prompt(**restaurant_kwargs)
+
+
+
+
+# ---------------------------------------------------------------------------
 # 2. CONVERSATION RESPONSE (text-only, for non-live / demo scenarios)
 # ---------------------------------------------------------------------------
 

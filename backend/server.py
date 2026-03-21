@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, HTMLResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -327,6 +327,10 @@ class RestaurantConfig(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     restaurant_id: str
 
+    # Business type for horizontal platform support
+    # "restaurant" | "clinic" | "salon" | "home_services" | "legal"
+    business_type: str = "restaurant"
+
     persona: str = "friendly"
     voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     primary_language: str = "en"
@@ -355,8 +359,15 @@ class RestaurantConfig(BaseModel):
         "sunday": {"closed": False, "open": "09:00", "close": "20:00"},
     }
 
+    # Google Calendar integration for appointment businesses
+    google_calendar_tokens: Optional[Dict[str, Any]] = None
+    google_calendar_id: Optional[str] = None
+
 
 class RestaurantConfigUpdate(BaseModel):
+    # Business type for horizontal platform
+    business_type: Optional[str] = None
+
     persona: Optional[str] = None
     voice_id: Optional[str] = None
     primary_language: Optional[str] = None
@@ -375,6 +386,10 @@ class RestaurantConfigUpdate(BaseModel):
     voicemail_enabled: Optional[bool] = None
     escalation_phone_number: Optional[str] = None
     operating_hours: Optional[Dict[str, Any]] = None
+
+    # Google Calendar integration
+    google_calendar_tokens: Optional[Dict[str, Any]] = None
+    google_calendar_id: Optional[str] = None
 
 
 class MenuItemModifier(BaseModel):
@@ -478,6 +493,71 @@ class OnboardingMenuParse(BaseModel):
 
 class OnboardingActivate(BaseModel):
     restaurant_id: str
+
+
+# ============================================================
+# SERVICE ITEM MODEL (for appointment businesses)
+# ============================================================
+
+class ServiceItemBase(BaseModel):
+    name: str  # "Haircut", "Dental Cleaning", "Oil Change"
+    duration_minutes: int  # 30, 45, 60, 90, 120
+    buffer_minutes: int = 15  # cleanup/prep time after service
+    price_cents: Optional[int] = None  # optional price
+    description: Optional[str] = None
+    available: bool = True
+
+
+class ServiceItemCreate(ServiceItemBase):
+    pass
+
+
+class ServiceItemUpdate(BaseModel):
+    name: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    buffer_minutes: Optional[int] = None
+    price_cents: Optional[int] = None
+    description: Optional[str] = None
+    available: Optional[bool] = None
+
+
+class ServiceItem(ServiceItemBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+# ============================================================
+# APPOINTMENT/BOOKING MODEL (for appointment businesses)
+# ============================================================
+
+class AppointmentRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+    call_id: Optional[str] = None  # Link to call record if booked via phone
+    
+    # Customer info
+    customer_name: str
+    customer_phone: str
+    customer_email: Optional[str] = None
+    
+    # Appointment details
+    service_name: str
+    service_id: Optional[str] = None
+    scheduled_date: str  # ISO date YYYY-MM-DD
+    scheduled_time: str  # Time string e.g. "2:00 PM"
+    duration_minutes: int = 60
+    
+    # Status
+    status: str = "confirmed"  # confirmed, cancelled, completed, no_show
+    calendar_event_id: Optional[str] = None
+    
+    # Metadata
+    special_instructions: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Optional[str] = None
 
 
 # ============================================================
@@ -611,7 +691,22 @@ async def select_restaurant(data: RestaurantSelection, user: Dict[str, Any] = De
 
 @api_router.post("/restaurants", response_model=Restaurant)
 async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depends(get_current_user)):
-    restaurant = Restaurant(**data.model_dump())
+    from security_utils import sanitize_string, validate_phone, validate_email
+    
+    # Sanitize inputs
+    name = sanitize_string(data.name, max_length=200)
+    if not name or len(name) < 2:
+        raise HTTPException(status_code=400, detail="Business name must be at least 2 characters")
+    
+    # Create with sanitized data
+    restaurant_data = data.model_dump()
+    restaurant_data["name"] = name
+    if data.cuisine_type:
+        restaurant_data["cuisine_type"] = sanitize_string(data.cuisine_type, max_length=100)
+    if data.owner_email and not validate_email(data.owner_email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+    
+    restaurant = Restaurant(**restaurant_data)
     doc = restaurant.model_dump()
     await db.restaurants.insert_one(doc)
     membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner")
@@ -633,9 +728,26 @@ async def get_restaurant(restaurant_id: str, user: Dict[str, Any] = Depends(get_
 @api_router.put("/restaurants/{restaurant_id}")
 async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
+    from security_utils import sanitize_string, validate_email
+    
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+    
+    # Sanitize string fields
+    if "name" in update_data:
+        update_data["name"] = sanitize_string(update_data["name"], max_length=200)
+    if "cuisine_type" in update_data:
+        update_data["cuisine_type"] = sanitize_string(update_data["cuisine_type"], max_length=100)
+    if "address" in update_data:
+        update_data["address"] = sanitize_string(update_data["address"], max_length=300)
+    if "owner_email" in update_data and update_data["owner_email"]:
+        if not validate_email(update_data["owner_email"]):
+            raise HTTPException(status_code=400, detail="Invalid owner email format")
+    if "billing_email" in update_data and update_data["billing_email"]:
+        if not validate_email(update_data["billing_email"]):
+            raise HTTPException(status_code=400, detail="Invalid billing email format")
+    
     result = await db.restaurants.update_one({"id": restaurant_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -660,7 +772,34 @@ async def get_restaurant_config(restaurant_id: str, user: Dict[str, Any] = Depen
 @api_router.put("/restaurants/{restaurant_id}/config")
 async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpdate, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
+    from security_utils import sanitize_string, validate_phone, validate_business_type
+    
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    
+    # Validate business_type if provided
+    if "business_type" in update_data:
+        if not validate_business_type(update_data["business_type"]):
+            raise HTTPException(status_code=400, detail="Invalid business type")
+    
+    # Sanitize text fields
+    if "disclosure_text" in update_data:
+        update_data["disclosure_text"] = sanitize_string(update_data["disclosure_text"], max_length=500)
+    
+    # Validate escalation phone
+    if "escalation_phone_number" in update_data and update_data["escalation_phone_number"]:
+        if not validate_phone(update_data["escalation_phone_number"]):
+            raise HTTPException(status_code=400, detail="Invalid escalation phone number format")
+    
+    # Sanitize business rules
+    if "business_rules" in update_data and update_data["business_rules"]:
+        update_data["business_rules"] = [
+            sanitize_string(rule, max_length=200) for rule in update_data["business_rules"][:20]
+        ]
+    if "escalation_rules" in update_data and update_data["escalation_rules"]:
+        update_data["escalation_rules"] = [
+            sanitize_string(rule, max_length=200) for rule in update_data["escalation_rules"][:20]
+        ]
+    
     existing = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id})
     if existing:
         await db.restaurant_configs.update_one({"restaurant_id": restaurant_id}, {"$set": update_data})
@@ -828,6 +967,591 @@ async def toggle_menu_item_availability(item_id: str, user: Dict[str, Any] = Dep
 
 
 # ============================================================
+# SERVICE ITEM ENDPOINTS (for appointment businesses)
+# ============================================================
+
+@api_router.post("/restaurants/{restaurant_id}/services", response_model=ServiceItem)
+async def create_service(
+    restaurant_id: str,
+    data: ServiceItemCreate,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Create a new service for appointment businesses."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    # Validate inputs
+    from security_utils import sanitize_string
+    
+    # Sanitize and validate name
+    name = sanitize_string(data.name, max_length=100)
+    if not name or len(name) < 2:
+        raise HTTPException(status_code=400, detail="Service name must be at least 2 characters")
+    
+    # Validate duration
+    if data.duration_minutes < 5 or data.duration_minutes > 480:
+        raise HTTPException(status_code=400, detail="Duration must be between 5 and 480 minutes")
+    
+    # Validate buffer
+    if data.buffer_minutes < 0 or data.buffer_minutes > 120:
+        raise HTTPException(status_code=400, detail="Buffer time must be between 0 and 120 minutes")
+    
+    # Validate price
+    if data.price_cents is not None and (data.price_cents < 0 or data.price_cents > 10000000):
+        raise HTTPException(status_code=400, detail="Invalid price value")
+    
+    # Sanitize description
+    description = sanitize_string(data.description or "", max_length=500) or None
+    
+    # Create with sanitized data
+    service_data = data.model_dump()
+    service_data["name"] = name
+    service_data["description"] = description
+    
+    service = ServiceItem(restaurant_id=restaurant_id, **service_data)
+    await db.services.insert_one(service.model_dump())
+    return service
+
+
+@api_router.get("/restaurants/{restaurant_id}/services")
+async def list_services(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """List all services for a business."""
+    await ensure_restaurant_access(restaurant_id, user)
+    services = await db.services.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    ).to_list(100)
+    return services
+
+
+@api_router.put("/services/{service_id}")
+async def update_service(
+    service_id: str,
+    data: ServiceItemUpdate,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Update an existing service."""
+    existing = await db.services.find_one({"id": service_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Service not found")
+    await ensure_restaurant_access(existing["restaurant_id"], user)
+    
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    await db.services.update_one({"id": service_id}, {"$set": update_data})
+    service = await db.services.find_one({"id": service_id}, {"_id": 0})
+    return service
+
+
+@api_router.delete("/services/{service_id}")
+async def delete_service(
+    service_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Delete a service."""
+    existing = await db.services.find_one({"id": service_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Service not found")
+    await ensure_restaurant_access(existing["restaurant_id"], user)
+    
+    await db.services.delete_one({"id": service_id})
+    return {"message": "Service deleted"}
+
+
+# ============================================================
+# APPOINTMENT ENDPOINTS (for appointment businesses)
+# ============================================================
+
+@api_router.get("/restaurants/{restaurant_id}/appointments")
+async def list_appointments(
+    restaurant_id: str,
+    status: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """List appointments for a business."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    query = {"restaurant_id": restaurant_id}
+    if status and status != "ALL":
+        query["status"] = status
+    
+    total = await db.appointments.count_documents(query)
+    appointments = await (
+        db.appointments.find(query, {"_id": 0})
+        .sort("scheduled_date", -1)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .to_list(limit)
+    )
+    
+    return {
+        "appointments": appointments,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit
+    }
+
+
+@api_router.get("/appointments/{appointment_id}")
+async def get_appointment(
+    appointment_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get a single appointment."""
+    appointment = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    await ensure_restaurant_access(appointment["restaurant_id"], user)
+    return appointment
+
+
+@api_router.patch("/appointments/{appointment_id}/cancel")
+async def cancel_appointment(
+    appointment_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Cancel an appointment."""
+    appointment = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    await ensure_restaurant_access(appointment["restaurant_id"], user)
+    
+    await db.appointments.update_one(
+        {"id": appointment_id},
+        {"$set": {
+            "status": "cancelled",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    # TODO: Delete Google Calendar event if exists
+    
+    return {"message": "Appointment cancelled", "id": appointment_id}
+
+
+@api_router.post("/appointments/{appointment_id}/send-reminder")
+async def send_appointment_reminder(
+    appointment_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Manually send a reminder SMS for an appointment."""
+    appointment = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    await ensure_restaurant_access(appointment["restaurant_id"], user)
+    
+    if appointment.get("status") != "confirmed":
+        raise HTTPException(status_code=400, detail="Can only send reminders for confirmed appointments")
+    
+    try:
+        from reminder_service import send_single_reminder
+        success = await send_single_reminder(db, appointment_id)
+        
+        if success:
+            return {"message": "Reminder sent successfully", "id": appointment_id}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send reminder")
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Reminder service not available")
+
+
+@api_router.post("/admin/process-reminders")
+async def process_reminders(user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Process all due appointment reminders (admin/cron endpoint).
+    Sends reminders for appointments scheduled 24 hours from now.
+    """
+    # This could be protected further with admin role check
+    try:
+        from reminder_service import process_appointment_reminders
+        result = await process_appointment_reminders(db)
+        return result
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Reminder service not available")
+
+
+# ============================================================
+# GOOGLE CALENDAR INTEGRATION ENDPOINTS
+# ============================================================
+
+@api_router.get("/calendar/google/connect")
+async def google_calendar_connect(
+    restaurant_id: str = Query(...),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Start Google Calendar OAuth flow."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    try:
+        from calendar_service import is_google_calendar_configured, get_google_auth_url
+        
+        if not is_google_calendar_configured():
+            raise HTTPException(
+                status_code=400,
+                detail="Google Calendar integration not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+            )
+        
+        backend_url = get_backend_public_url()
+        redirect_uri = f"{backend_url}/api/calendar/google/callback"
+        
+        auth_url = get_google_auth_url(restaurant_id, redirect_uri)
+        return {"authorization_url": auth_url}
+        
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Calendar service not available")
+
+
+@api_router.get("/calendar/google/callback")
+async def google_calendar_callback(
+    code: str = Query(...),
+    state: str = Query(...),  # restaurant_id passed through state
+):
+    """Handle Google Calendar OAuth callback."""
+    try:
+        from calendar_service import exchange_code_for_tokens
+        
+        backend_url = get_backend_public_url()
+        redirect_uri = f"{backend_url}/api/calendar/google/callback"
+        
+        # Exchange code for tokens
+        tokens = await exchange_code_for_tokens(code, redirect_uri)
+        
+        # Calculate token expiry
+        expires_in = tokens.get("expires_in", 3600)
+        expires_at = datetime.now(timezone.utc).timestamp() + expires_in
+        tokens["expires_at"] = expires_at
+        
+        # Store tokens in config
+        restaurant_id = state
+        await db.restaurant_configs.update_one(
+            {"restaurant_id": restaurant_id},
+            {"$set": {
+                "google_calendar_tokens": tokens,
+                "google_calendar_id": "primary",  # Default to primary calendar
+            }},
+            upsert=True
+        )
+        
+        # Redirect to frontend settings page
+        frontend_url = get_frontend_url()
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/settings?calendar_connected=true"
+        )
+        
+    except Exception as e:
+        logger.error(f"Google Calendar callback error: {e}")
+        frontend_url = get_frontend_url()
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/settings?calendar_error=true"
+        )
+
+
+@api_router.get("/restaurants/{restaurant_id}/calendar/status")
+async def get_calendar_status(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Check if Google Calendar is connected."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    config = await db.restaurant_configs.find_one(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "google_calendar_tokens": 1, "google_calendar_id": 1}
+    )
+    
+    is_connected = bool(
+        config and 
+        config.get("google_calendar_tokens") and 
+        config["google_calendar_tokens"].get("access_token")
+    )
+    
+    return {
+        "connected": is_connected,
+        "calendar_id": config.get("google_calendar_id") if config else None
+    }
+
+
+@api_router.get("/restaurants/{restaurant_id}/calendar/availability")
+async def get_calendar_availability(
+    restaurant_id: str,
+    date: str = Query(..., description="Date in YYYY-MM-DD format"),
+    service_id: Optional[str] = None,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get available appointment slots for a given date."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    # Get config and tokens
+    config = await db.restaurant_configs.find_one(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    )
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    
+    # Get service duration
+    duration_minutes = 60  # default
+    buffer_minutes = 15
+    
+    if service_id:
+        service = await db.services.find_one({"id": service_id}, {"_id": 0})
+        if service:
+            duration_minutes = service.get("duration_minutes", 60)
+            buffer_minutes = service.get("buffer_minutes", 15)
+    
+    # Parse date
+    try:
+        target_date = datetime.strptime(date, "%Y-%m-%d")
+        target_date = target_date.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Get busy periods from Google Calendar if connected
+    busy_periods = []
+    calendar_tokens = config.get("google_calendar_tokens")
+    
+    if calendar_tokens and calendar_tokens.get("access_token"):
+        try:
+            from calendar_service import get_valid_access_token, get_free_busy
+            
+            access_token = await get_valid_access_token(
+                calendar_tokens, db, restaurant_id
+            )
+            
+            calendar_id = config.get("google_calendar_id", "primary")
+            start_time = target_date.replace(hour=0, minute=0)
+            end_time = target_date.replace(hour=23, minute=59)
+            
+            busy_periods = await get_free_busy(
+                access_token, calendar_id, start_time, end_time
+            )
+        except Exception as e:
+            logger.warning(f"Could not get calendar availability: {e}")
+    
+    # Calculate available slots
+    from calendar_service import calculate_available_slots
+    
+    operating_hours = config.get("operating_hours", {})
+    slots = calculate_available_slots(
+        date=target_date,
+        operating_hours=operating_hours,
+        service_duration_minutes=duration_minutes,
+        buffer_minutes=buffer_minutes,
+        busy_periods=busy_periods,
+    )
+    
+    return {"date": date, "slots": slots}
+
+
+@api_router.post("/restaurants/{restaurant_id}/calendar/book")
+async def book_appointment(
+    restaurant_id: str,
+    request: Request,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Book an appointment and create calendar event."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    body = await request.json()
+    
+    # Import security utils
+    from security_utils import (
+        validate_phone, validate_email, validate_date_format, 
+        validate_time_format, sanitize_string
+    )
+    
+    # Validate required fields
+    required = ["service_name", "scheduled_date", "scheduled_time", "customer_name", "customer_phone"]
+    for field in required:
+        if not body.get(field):
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+    
+    # Validate and sanitize inputs
+    customer_phone = body["customer_phone"]
+    if not validate_phone(customer_phone):
+        raise HTTPException(status_code=400, detail="Invalid phone number format")
+    
+    customer_email = body.get("customer_email")
+    if customer_email and not validate_email(customer_email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+    
+    scheduled_date = body["scheduled_date"]
+    if not validate_date_format(scheduled_date):
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    scheduled_time = body["scheduled_time"]
+    if not validate_time_format(scheduled_time):
+        raise HTTPException(status_code=400, detail="Invalid time format. Use HH:MM AM/PM or HH:MM")
+    
+    # Sanitize string inputs
+    customer_name = sanitize_string(body["customer_name"], max_length=100)
+    service_name = sanitize_string(body["service_name"], max_length=100)
+    special_instructions = sanitize_string(body.get("special_instructions", ""), max_length=500)
+    
+    if not customer_name:
+        raise HTTPException(status_code=400, detail="Customer name cannot be empty")
+    
+    # Get config
+    config = await db.restaurant_configs.find_one(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    )
+    
+    # Get restaurant
+    restaurant = await db.restaurants.find_one(
+        {"id": restaurant_id},
+        {"_id": 0}
+    )
+    
+    # Get service info
+    service_id = body.get("service_id")
+    duration_minutes = 60
+    
+    if service_id:
+        service = await db.services.find_one({"id": service_id}, {"_id": 0})
+        if service:
+            duration_minutes = service.get("duration_minutes", 60)
+    
+    # Create appointment record
+    appointment = AppointmentRecord(
+        restaurant_id=restaurant_id,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+        customer_email=customer_email,
+        service_name=service_name,
+        service_id=service_id,
+        scheduled_date=scheduled_date,
+        scheduled_time=scheduled_time,
+        duration_minutes=duration_minutes,
+        special_instructions=special_instructions,
+        status="confirmed",
+    )
+    
+    # Try to create calendar event
+    calendar_event_id = None
+    calendar_tokens = config.get("google_calendar_tokens") if config else None
+    
+    if calendar_tokens and calendar_tokens.get("access_token"):
+        try:
+            from calendar_service import get_valid_access_token, create_calendar_event
+            
+            access_token = await get_valid_access_token(
+                calendar_tokens, db, restaurant_id
+            )
+            
+            # Parse date and time
+            date_str = body["scheduled_date"]
+            time_str = body["scheduled_time"].upper().replace(".", "").strip()
+            
+            try:
+                if "AM" in time_str or "PM" in time_str:
+                    time_obj = datetime.strptime(time_str, "%I:%M %p")
+                else:
+                    time_obj = datetime.strptime(time_str, "%H:%M")
+            except ValueError:
+                time_obj = datetime.strptime("09:00", "%H:%M")
+            
+            start_dt = datetime.strptime(date_str, "%Y-%m-%d")
+            start_dt = start_dt.replace(
+                hour=time_obj.hour,
+                minute=time_obj.minute,
+                tzinfo=timezone.utc
+            )
+            end_dt = start_dt + timedelta(minutes=duration_minutes)
+            
+            calendar_id = config.get("google_calendar_id", "primary")
+            business_name = restaurant.get("name", "Business") if restaurant else "Business"
+            
+            event = await create_calendar_event(
+                access_token=access_token,
+                calendar_id=calendar_id,
+                summary=f"{body['service_name']} — {body['customer_name']}",
+                description=f"Booked via RingAI.\nPhone: {body['customer_phone']}\nEmail: {body.get('customer_email', '')}",
+                start_time=start_dt,
+                end_time=end_dt,
+                attendee_email=body.get("customer_email"),
+            )
+            
+            calendar_event_id = event.get("id")
+            appointment.calendar_event_id = calendar_event_id
+            
+        except Exception as e:
+            logger.error(f"Failed to create calendar event: {e}")
+    
+    # Save appointment
+    await db.appointments.insert_one(appointment.model_dump())
+    
+    # Send WebSocket notification
+    try:
+        from websocket_notifications import notify_new_appointment
+        await notify_new_appointment(
+            restaurant_id=restaurant_id,
+            appointment_id=appointment.id,
+            customer_name=customer_name,
+            service_name=service_name,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+        )
+    except Exception as e:
+        logger.warning(f"Could not send WebSocket notification: {e}")
+    
+    # Send SMS confirmation
+    try:
+        from appointment_service import send_appointment_sms
+        
+        business_name = restaurant.get("name", "Business") if restaurant else "Business"
+        
+        await send_appointment_sms(
+            caller_number=body["customer_phone"],
+            booking={
+                "customer_name": body["customer_name"],
+                "service_name": body["service_name"],
+                "preferred_date": body["scheduled_date"],
+                "preferred_time": body["scheduled_time"],
+            },
+            business_name=business_name,
+            duration_minutes=duration_minutes,
+        )
+    except Exception as e:
+        logger.warning(f"Could not send appointment SMS: {e}")
+    
+    return {
+        "success": True,
+        "appointment": appointment.model_dump(),
+        "calendar_event_id": calendar_event_id,
+    }
+
+
+@api_router.delete("/restaurants/{restaurant_id}/calendar/disconnect")
+async def disconnect_calendar(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Disconnect Google Calendar integration."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    await db.restaurant_configs.update_one(
+        {"restaurant_id": restaurant_id},
+        {"$set": {
+            "google_calendar_tokens": None,
+            "google_calendar_id": None,
+        }}
+    )
+    
+    return {"message": "Google Calendar disconnected"}
+
+
+# ============================================================
 # CALL RECORD ENDPOINTS
 # ============================================================
 
@@ -838,6 +1562,8 @@ async def list_calls(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     await ensure_restaurant_access(restaurant_id, user)
@@ -849,6 +1575,19 @@ async def list_calls(
             {"caller_number": {"$regex": search, "$options": "i"}},
             {"caller_name": {"$regex": search, "$options": "i"}},
         ]
+    
+    # Date range filtering
+    if date_from or date_to:
+        date_query = {}
+        if date_from:
+            # Start of the day
+            date_query["$gte"] = f"{date_from}T00:00:00"
+        if date_to:
+            # End of the day
+            date_query["$lte"] = f"{date_to}T23:59:59"
+        if date_query:
+            query["started_at"] = date_query
+    
     total = await db.call_records.count_documents(query)
     calls = await (
         db.call_records.find(query, {"_id": 0})
@@ -1560,14 +2299,26 @@ async def twilio_incoming_call(request: Request):
     restaurant_id = restaurant["id"]
     config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+    
+    # Get business type for horizontal platform support
+    business_type = config.get("business_type", "restaurant") if config else "restaurant"
+    
+    # For appointment businesses, get services instead of menu items
+    services = []
+    if business_type in ("clinic", "salon", "home_services", "legal"):
+        services = await db.services.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
 
-    system_prompt = build_system_prompt(
+    # Use system prompt router for correct prompt by business type
+    from gemini_service import get_system_prompt
+    system_prompt = get_system_prompt(
+        business_type=business_type,
         restaurant_name=restaurant.get("name", "the restaurant"),
         cuisine_type=restaurant.get("cuisine_type", ""),
         persona=config.get("persona", "friendly") if config else "friendly",
         business_rules=config.get("business_rules", []) if config else [],
         escalation_rules=config.get("escalation_rules", []) if config else [],
         menu_items=menu_items,
+        services=services,  # For appointment businesses
         disclosure_text=config.get("disclosure_text", "Hi! I'm an AI assistant. How can I help you today?") if config else "Hi! I'm an AI assistant. How can I help you today?",
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
@@ -1690,6 +2441,29 @@ async def twilio_media_stream(websocket: WebSocket):
                 await db.call_records.insert_one(call.model_dump())
                 await db.active_calls.delete_one({"call_sid": call_sid})
                 logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
+                
+                # Send WebSocket notification for completed call
+                try:
+                    from websocket_notifications import notify_new_call, notify_new_order
+                    await notify_new_call(
+                        restaurant_id=restaurant_id,
+                        call_sid=call_sid,
+                        caller_number=caller_number,
+                        status=status,
+                        order_total=order_total,
+                    )
+                    # Also notify about order if there was one
+                    if order_total > 0 and order_data:
+                        await notify_new_order(
+                            restaurant_id=restaurant_id,
+                            order_id=call_sid,
+                            total=order_total,
+                            order_type=order_data.get("type", "pickup"),
+                            items_count=len(order_data.get("items", [])),
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not send WebSocket notification: {e}")
+                
                 # Send SMS confirmation
                 sms_enabled = config.get("sms_enabled", True) if config else True
                 sms_payment_enabled = config.get("sms_payment_enabled", False) if config else False
@@ -2089,6 +2863,256 @@ app.add_middleware(
 app.include_router(api_router)
 
 
+# ============================================================
+# WEBSOCKET NOTIFICATION ENDPOINT
+# ============================================================
+
+@app.websocket("/ws/notifications")
+async def websocket_notifications(websocket: WebSocket, restaurant_id: Optional[str] = None):
+    """
+    WebSocket endpoint for real-time notifications.
+    
+    Connect with: ws://host/ws/notifications?restaurant_id=xxx
+    
+    Messages sent:
+    - {"type": "notification", "event": "call|order|appointment|system", ...}
+    """
+    from websocket_notifications import manager
+    
+    await manager.connect(websocket, restaurant_id)
+    
+    try:
+        # Send initial connection confirmation
+        await websocket.send_json({
+            "type": "connected",
+            "message": "WebSocket connected for real-time notifications",
+            "restaurant_id": restaurant_id,
+        })
+        
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                # Wait for messages (ping/pong or commands)
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                
+                # Handle ping
+                if data == "ping":
+                    await websocket.send_text("pong")
+                elif data.startswith("{"):
+                    # Could handle other commands here
+                    pass
+                    
+            except asyncio.TimeoutError:
+                # Send keepalive ping
+                try:
+                    await websocket.send_text("ping")
+                except:
+                    break
+                    
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning(f"WebSocket error: {e}")
+    finally:
+        await manager.disconnect(websocket)
+
+
+# ============================================================
+# STRIPE WEBHOOK ENDPOINT
+# ============================================================
+
+@api_router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    """
+    Handle Stripe webhook events.
+    
+    Handles:
+    - checkout.session.completed - Subscription started
+    - customer.subscription.updated - Plan changed
+    - customer.subscription.deleted - Subscription cancelled
+    - invoice.payment_succeeded - Payment successful
+    - invoice.payment_failed - Payment failed
+    """
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    
+    # Verify webhook signature if secret is configured
+    if webhook_secret and sig_header:
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, webhook_secret
+            )
+        except ValueError as e:
+            logger.error(f"Invalid Stripe payload: {e}")
+            raise HTTPException(status_code=400, detail="Invalid payload")
+        except stripe.error.SignatureVerificationError as e:
+            logger.error(f"Invalid Stripe signature: {e}")
+            raise HTTPException(status_code=400, detail="Invalid signature")
+    else:
+        # For development without signature verification
+        import json
+        try:
+            event = json.loads(payload)
+        except:
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+    
+    event_type = event.get("type", "")
+    data = event.get("data", {}).get("object", {})
+    
+    logger.info(f"Stripe webhook received: {event_type}")
+    
+    try:
+        if event_type == "checkout.session.completed":
+            # New subscription started
+            customer_email = data.get("customer_email")
+            subscription_id = data.get("subscription")
+            metadata = data.get("metadata", {})
+            restaurant_id = metadata.get("restaurant_id")
+            plan = metadata.get("plan", "starter")
+            
+            if restaurant_id:
+                await db.restaurants.update_one(
+                    {"id": restaurant_id},
+                    {"$set": {
+                        "billing_status": "active",
+                        "stripe_subscription_id": subscription_id,
+                        "stripe_customer_email": customer_email,
+                        "plan": plan.capitalize(),
+                        "subscription_started_at": datetime.now(timezone.utc).isoformat(),
+                    }}
+                )
+                logger.info(f"Subscription activated for restaurant {restaurant_id}")
+                
+                # Send WebSocket notification
+                from websocket_notifications import notify_system
+                await notify_system(
+                    restaurant_id,
+                    "Subscription Activated",
+                    f"Your {plan.capitalize()} plan is now active!",
+                )
+        
+        elif event_type == "customer.subscription.updated":
+            subscription_id = data.get("id")
+            status = data.get("status")
+            plan_name = data.get("items", {}).get("data", [{}])[0].get("plan", {}).get("nickname", "")
+            
+            # Find restaurant by subscription ID
+            restaurant = await db.restaurants.find_one(
+                {"stripe_subscription_id": subscription_id},
+                {"_id": 0, "id": 1}
+            )
+            
+            if restaurant:
+                update = {"billing_status": status}
+                if plan_name:
+                    update["plan"] = plan_name.capitalize()
+                
+                await db.restaurants.update_one(
+                    {"id": restaurant["id"]},
+                    {"$set": update}
+                )
+                logger.info(f"Subscription updated for restaurant {restaurant['id']}: {status}")
+        
+        elif event_type == "customer.subscription.deleted":
+            subscription_id = data.get("id")
+            
+            restaurant = await db.restaurants.find_one(
+                {"stripe_subscription_id": subscription_id},
+                {"_id": 0, "id": 1}
+            )
+            
+            if restaurant:
+                await db.restaurants.update_one(
+                    {"id": restaurant["id"]},
+                    {"$set": {
+                        "billing_status": "cancelled",
+                        "subscription_ended_at": datetime.now(timezone.utc).isoformat(),
+                    }}
+                )
+                logger.info(f"Subscription cancelled for restaurant {restaurant['id']}")
+                
+                from websocket_notifications import notify_system
+                await notify_system(
+                    restaurant["id"],
+                    "Subscription Cancelled",
+                    "Your subscription has been cancelled.",
+                )
+        
+        elif event_type == "invoice.payment_succeeded":
+            subscription_id = data.get("subscription")
+            amount_paid = data.get("amount_paid", 0)
+            
+            restaurant = await db.restaurants.find_one(
+                {"stripe_subscription_id": subscription_id},
+                {"_id": 0, "id": 1}
+            )
+            
+            if restaurant:
+                await db.restaurants.update_one(
+                    {"id": restaurant["id"]},
+                    {"$set": {
+                        "billing_status": "active",
+                        "last_payment_at": datetime.now(timezone.utc).isoformat(),
+                        "last_payment_amount": amount_paid,
+                    }}
+                )
+                logger.info(f"Payment succeeded for restaurant {restaurant['id']}: ${amount_paid/100}")
+        
+        elif event_type == "invoice.payment_failed":
+            subscription_id = data.get("subscription")
+            
+            restaurant = await db.restaurants.find_one(
+                {"stripe_subscription_id": subscription_id},
+                {"_id": 0, "id": 1}
+            )
+            
+            if restaurant:
+                await db.restaurants.update_one(
+                    {"id": restaurant["id"]},
+                    {"$set": {
+                        "billing_status": "past_due",
+                        "payment_failed_at": datetime.now(timezone.utc).isoformat(),
+                    }}
+                )
+                logger.warning(f"Payment failed for restaurant {restaurant['id']}")
+                
+                from websocket_notifications import notify_system
+                await notify_system(
+                    restaurant["id"],
+                    "Payment Failed",
+                    "Your payment could not be processed. Please update your payment method.",
+                )
+        
+        return {"status": "ok", "event": event_type}
+        
+    except Exception as e:
+        logger.error(f"Stripe webhook error: {e}")
+        # Return 200 to prevent Stripe from retrying
+        return {"status": "error", "message": str(e)}
+
+
+# ============================================================
+# STARTUP AND SHUTDOWN EVENTS
+# ============================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background scheduler on app startup."""
+    try:
+        from scheduler_service import start_scheduler
+        start_scheduler(db)
+        logger.info("Background scheduler started")
+    except Exception as e:
+        logger.warning(f"Could not start scheduler: {e}")
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    """Clean up on shutdown."""
+    try:
+        from scheduler_service import stop_scheduler
+        stop_scheduler()
+    except:
+        pass
     client.close()

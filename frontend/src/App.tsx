@@ -16,6 +16,8 @@ import OrdersPage from "./pages/dashboard/OrdersPage";
 import SettingsPage from "./pages/dashboard/SettingsPage";
 import BillingPage from "./pages/dashboard/BillingPage";
 import IntegrationsPage from "./pages/dashboard/IntegrationsPage";
+import ServicesPage from "./pages/dashboard/ServicesPage";
+import AppointmentsPage from "./pages/dashboard/AppointmentsPage";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
@@ -170,7 +172,9 @@ const AppRoutes = () => (
       <Route index element={<DashboardHome />} />
       <Route path="calls" element={<CallsPage />} />
       <Route path="menu" element={<MenuPage />} />
+      <Route path="services" element={<ServicesPage />} />
       <Route path="orders" element={<OrdersPage />} />
+      <Route path="appointments" element={<AppointmentsPage />} />
       <Route path="settings" element={<SettingsPage />} />
       <Route path="billing" element={<BillingPage />} />
       <Route path="integrations" element={<IntegrationsPage />} />

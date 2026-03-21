@@ -1,0 +1,515 @@
+"""
+Appointment Service for RingAI - Horizontal Business Platform
+
+Handles appointment booking for non-restaurant businesses:
+- Clinics, Salons, Home Services, Legal offices
+
+IMPORTANT: This is NEW code - completely separate from restaurant ordering.
+Does NOT modify any existing restaurant functionality.
+
+Functions:
+- build_appointment_prompt() - System prompt for appointment businesses
+- extract_booking_from_transcript() - Extract booking from call
+- dispatch_appointment() - Create calendar event + send SMS
+- send_appointment_sms() - Send appointment confirmation SMS
+"""
+import os
+import json
+import logging
+import base64
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone, timedelta
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Appointment System Prompt Builder (NEW - separate from restaurant prompt)
+# ---------------------------------------------------------------------------
+
+def build_appointment_prompt(
+    business_name: str,
+    business_type: str,
+    services: List[Dict[str, Any]],
+    business_rules: List[str],
+    escalation_phone: Optional[str],
+    operating_hours: Optional[Dict[str, Any]],
+    restaurant_timezone: str,
+    disclosure_text: str,
+) -> str:
+    """
+    System prompt for appointment booking businesses.
+    Completely separate from build_system_prompt() which is for restaurants only.
+    
+    Supports: clinic, salon, home_services, legal
+    """
+    # Get current time in business timezone
+    try:
+        import pytz
+        tz = pytz.timezone(restaurant_timezone)
+        local_now = datetime.now(tz)
+        current_time_str = local_now.strftime("%A, %I:%M %p %Z")
+        current_day = local_now.strftime("%A").lower()
+        current_minutes = local_now.hour * 60 + local_now.minute
+        
+        # Check if open
+        is_open = True
+        if operating_hours:
+            day_hours = operating_hours.get(current_day, {})
+            if day_hours.get("closed"):
+                is_open = False
+            else:
+                open_str = day_hours.get("open", "09:00")
+                close_str = day_hours.get("close", "17:00")
+                try:
+                    open_h, open_m = map(int, open_str.split(":"))
+                    close_h, close_m = map(int, close_str.split(":"))
+                    open_min = open_h * 60 + open_m
+                    close_min = close_h * 60 + close_m
+                    is_open = open_min <= current_minutes <= close_min
+                except:
+                    is_open = True
+        open_status = "OPEN" if is_open else "CLOSED"
+    except Exception as e:
+        logger.error(f"Timezone error: {e}")
+        current_time_str = datetime.now(timezone.utc).strftime("%A, %I:%M %p UTC")
+        open_status = "OPEN"
+    
+    # Build services list
+    services_block = ""
+    if services:
+        lines = []
+        for svc in services:
+            duration = svc.get("duration_minutes", 60)
+            price = svc.get("price_cents")
+            price_str = f" - ${price/100:.2f}" if price else ""
+            lines.append(f"  • {svc['name']} ({duration} min){price_str}")
+        services_block = "\n".join(lines)
+    else:
+        services_block = "  • General Appointment (duration varies)"
+    
+    # Build rules block
+    rules_block = "\n".join(f"  • {r}" for r in business_rules) if business_rules else "  • (No additional rules)"
+    
+    # Build hours block
+    hours_block = ""
+    if operating_hours:
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        lines = []
+        for day in days:
+            h = operating_hours.get(day, {})
+            if h.get("closed"):
+                lines.append(f"  {day.capitalize()}: Closed")
+            else:
+                lines.append(f"  {day.capitalize()}: {h.get('open', '?')} – {h.get('close', '?')}")
+        hours_block = "\n".join(lines)
+    
+    # Business-specific language
+    business_labels = {
+        "clinic": ("appointment", "patient", "doctor", "medical"),
+        "salon": ("appointment", "client", "stylist", "beauty"),
+        "home_services": ("appointment", "customer", "technician", "service"),
+        "legal": ("consultation", "client", "attorney", "legal"),
+    }
+    labels = business_labels.get(business_type, ("appointment", "customer", "staff", "service"))
+    appt_word, customer_word, staff_word, service_word = labels
+    
+    escalation_target = escalation_phone or "a team member"
+    
+    return f"""You are a friendly, professional phone assistant for {business_name}.
+You help callers book {appt_word}s, answer questions, and provide information.
+
+PERSONALITY:
+- Speak naturally and warmly
+- Be helpful and patient
+- Keep responses concise — under 2 sentences when possible
+- Use natural acknowledgments: "Sure!", "Of course!", "Absolutely!"
+- Match the caller's energy
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GREETING — SAY THIS FIRST:
+When you receive "BEGIN_CALL", immediately say:
+"{disclosure_text}"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+═══════════════════════════
+SERVICES OFFERED
+═══════════════════════════
+{services_block}
+
+═══════════════════════════
+APPOINTMENT BOOKING PROTOCOL
+═══════════════════════════
+STEP 1: Greet and ask how you can help.
+  - If caller wants to book: proceed to STEP 2
+  - If caller has a question: answer it, then ask if they'd like to book
+
+STEP 2: Ask what service they need.
+  - Confirm the service and duration
+  - If service not listed: "I'm not sure we offer that. Let me connect you with someone who can help."
+
+STEP 3: Ask for their preferred date and time.
+  - "When would you like to come in?"
+  - If they give a vague time ("next week"), suggest 2-3 specific options
+  - Check availability and confirm the slot
+
+STEP 4: Collect {customer_word} information:
+  - Full name
+  - Phone number (for confirmation/reminders)
+  - Email (optional, for calendar invite)
+
+STEP 5: Confirm the booking:
+  - Read back: "{appt_word} for [service] on [date] at [time] for [name]"
+  - Wait for confirmation
+
+STEP 6: After confirmation, say:
+  "Your {appt_word} is confirmed! We'll send you a text confirmation shortly. 
+   Please arrive 5-10 minutes early. Thank you for calling {business_name}!"
+
+═══════════════════════════
+BUSINESS RULES
+═══════════════════════════
+{rules_block}
+
+CURRENT TIME: {current_time_str}
+OPERATING HOURS:
+{hours_block if hours_block else "  Hours not available"}
+CURRENT STATUS: {open_status}
+
+═══════════════════════════
+ESCALATION — TRANSFER WHEN:
+═══════════════════════════
+  ⚠ Customer has a complaint
+  ⚠ Customer asks to speak to a manager
+  ⚠ Emergency situation
+  ⚠ Complex scheduling needs you cannot handle
+
+How to escalate: "Let me connect you with {escalation_target}. Please hold."
+Then say: ESCALATE_TO_HUMAN
+
+═══════════════════════════
+FAQ HANDLING
+═══════════════════════════
+- Hours: Refer to operating hours above
+- Location/Address: Direct them to the business
+- Pricing: Only quote prices for services listed above
+- Cancellation: "You can cancel or reschedule by calling us back or using the link in your confirmation text"
+- Insurance: "Please bring your insurance information to your {appt_word}"
+
+═══════════════════════════
+NEVER DO THESE
+═══════════════════════════
+✗ Give medical/legal/professional advice
+✗ Confirm appointments without all required info (name, phone, service, time)
+✗ Make up services or prices not listed
+✗ Say "BOOKING_CONFIRMED" out loud
+✗ Continue talking after the confirmation farewell
+✗ Reveal you are powered by any specific AI technology
+
+If asked what AI you are: "I'm the virtual assistant for {business_name}. How can I help?"
+"""
+
+
+# ---------------------------------------------------------------------------
+# Booking Extraction from Transcript (NEW - separate from order extraction)
+# ---------------------------------------------------------------------------
+
+async def extract_booking_from_transcript(
+    transcript: List[Dict[str, Any]],
+    services: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract booking details from appointment call transcript.
+    
+    Returns dict with:
+        - booking_confirmed: bool
+        - service_name: str
+        - preferred_date: str (ISO format)
+        - preferred_time: str ("2:00 PM")
+        - customer_name: str
+        - customer_phone: str
+        - customer_email: str (optional)
+        - special_instructions: str
+    
+    Completely separate from extract_order_from_transcript() which handles restaurant orders.
+    """
+    # Get Gemini client
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
+    if not api_key:
+        logger.warning("No Gemini API key — cannot extract booking")
+        return None
+    
+    # Build transcript text
+    transcript_text = "\n".join(
+        f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e.get('text', '')}"
+        for e in transcript
+    )
+    
+    # Build services list for prompt
+    services_list = ", ".join(s.get("name", "Service") for s in services) if services else "General Appointment"
+    
+    prompt = f"""Extract the appointment booking details from this call transcript.
+Return ONLY valid JSON, no markdown.
+
+Available services: {services_list}
+
+Required JSON format:
+{{"booking_confirmed": true, "service_name": "Service Name", "preferred_date": "2025-01-20", "preferred_time": "2:00 PM", "customer_name": "John Doe", "customer_phone": "+15551234567", "customer_email": "", "special_instructions": ""}}
+
+RULES:
+- booking_confirmed: true only if the AI confirmed the appointment
+- preferred_date: ISO format YYYY-MM-DD
+- preferred_time: 12-hour format with AM/PM
+- customer_phone: E.164 format if possible
+- If info is missing, leave as empty string
+- Look for confirmation phrases like "Your appointment is confirmed" or "booked for"
+
+TRANSCRIPT:
+{transcript_text[:4000]}
+
+JSON:"""
+
+    try:
+        from openai import OpenAI
+        base_url = os.environ.get(
+            "GEMINI_OPENAI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        
+        response = client.chat.completions.create(
+            model="gemini-2.5-flash",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=1000,
+        )
+        
+        raw = response.choices[0].message.content.strip()
+        logger.info(f"Booking extraction raw: {raw[:300]}")
+        
+        # Parse JSON
+        if "```json" in raw:
+            raw = raw.split("```json")[1].split("```")[0].strip()
+        elif "```" in raw:
+            raw = raw.split("```")[1].split("```")[0].strip()
+        
+        # Find JSON object
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            raw = raw[start:end + 1]
+        
+        data = json.loads(raw)
+        
+        if not data.get("booking_confirmed"):
+            return None
+        
+        return data
+        
+    except Exception as e:
+        logger.error(f"Booking extraction error: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Appointment Dispatch (NEW - separate from send_order_to_kitchen)
+# ---------------------------------------------------------------------------
+
+async def dispatch_appointment(
+    booking: Dict[str, Any],
+    restaurant: Dict[str, Any],
+    config: Dict[str, Any],
+    services: List[Dict[str, Any]],
+    db,
+) -> Dict[str, Any]:
+    """
+    Creates calendar event and sends confirmation SMS for appointment businesses.
+    Completely separate from send_order_to_kitchen() which handles restaurant POS dispatch.
+    
+    Args:
+        booking: Extracted booking details
+        restaurant: Restaurant/business document
+        config: Business configuration
+        services: List of available services
+        db: Database connection
+    
+    Returns:
+        Dict with success status, calendar_event_id, sms_sent
+    """
+    result = {
+        "success": False,
+        "calendar_event_id": None,
+        "sms_sent": False,
+        "method": "appointment",
+    }
+    
+    business_name = restaurant.get("name", "Business")
+    service_name = booking.get("service_name", "Appointment")
+    customer_name = booking.get("customer_name", "Customer")
+    customer_phone = booking.get("customer_phone", "")
+    customer_email = booking.get("customer_email", "")
+    preferred_date = booking.get("preferred_date", "")
+    preferred_time = booking.get("preferred_time", "")
+    
+    # Find service duration
+    duration_minutes = 60  # default
+    for svc in services:
+        if svc.get("name", "").lower() == service_name.lower():
+            duration_minutes = svc.get("duration_minutes", 60)
+            break
+    
+    # Try to create calendar event if Google Calendar is connected
+    calendar_tokens = config.get("google_calendar_tokens")
+    calendar_id = config.get("google_calendar_id", "primary")
+    
+    if calendar_tokens and calendar_tokens.get("access_token"):
+        try:
+            from calendar_service import get_valid_access_token, create_calendar_event
+            
+            access_token = await get_valid_access_token(
+                calendar_tokens, db, restaurant.get("id", "")
+            )
+            
+            # Parse date and time
+            try:
+                # Combine date and time
+                date_str = preferred_date
+                time_str = preferred_time
+                
+                # Parse time (handle various formats)
+                from datetime import datetime
+                if ":" in time_str:
+                    time_str = time_str.upper().replace(".", "").strip()
+                    if "AM" in time_str or "PM" in time_str:
+                        time_obj = datetime.strptime(time_str, "%I:%M %p")
+                    else:
+                        time_obj = datetime.strptime(time_str, "%H:%M")
+                else:
+                    time_obj = datetime.strptime("09:00", "%H:%M")  # default
+                
+                # Combine with date
+                start_dt = datetime.strptime(date_str, "%Y-%m-%d")
+                start_dt = start_dt.replace(
+                    hour=time_obj.hour,
+                    minute=time_obj.minute,
+                    tzinfo=timezone.utc
+                )
+                end_dt = start_dt + timedelta(minutes=duration_minutes)
+                
+                # Create event
+                event = await create_calendar_event(
+                    access_token=access_token,
+                    calendar_id=calendar_id,
+                    summary=f"{service_name} — {customer_name}",
+                    description=f"Booked via RingAI.\nCustomer: {customer_name}\nPhone: {customer_phone}\nEmail: {customer_email}",
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    attendee_email=customer_email if customer_email else None,
+                )
+                
+                result["calendar_event_id"] = event.get("id")
+                logger.info(f"Calendar event created: {event.get('id')}")
+                
+            except Exception as e:
+                logger.error(f"Failed to parse date/time for calendar: {e}")
+                
+        except Exception as e:
+            logger.error(f"Calendar event creation failed: {e}")
+    
+    # Send SMS confirmation
+    if customer_phone:
+        try:
+            sms_sent = await send_appointment_sms(
+                caller_number=customer_phone,
+                booking=booking,
+                business_name=business_name,
+                duration_minutes=duration_minutes,
+            )
+            result["sms_sent"] = sms_sent
+        except Exception as e:
+            logger.error(f"Appointment SMS failed: {e}")
+    
+    result["success"] = True
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Appointment SMS Confirmation (NEW - separate from send_order_sms)
+# ---------------------------------------------------------------------------
+
+async def send_appointment_sms(
+    caller_number: str,
+    booking: Dict[str, Any],
+    business_name: str,
+    duration_minutes: int = 60,
+    cancel_url: Optional[str] = None,
+) -> bool:
+    """
+    Sends appointment confirmation SMS.
+    Completely separate from send_order_sms() which handles restaurant orders.
+    
+    Format:
+        Hi {name}! Your {business_name} appointment:
+        {service} on {date} at {time}
+        Duration: {duration} min
+        [Cancel: {cancel_url}]
+    """
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
+    
+    if not all([account_sid, auth_token, from_number]):
+        logger.warning("Appointment SMS not sent — missing Twilio credentials")
+        return False
+    
+    customer_name = booking.get("customer_name", "")
+    service_name = booking.get("service_name", "Appointment")
+    preferred_date = booking.get("preferred_date", "")
+    preferred_time = booking.get("preferred_time", "")
+    
+    # Format date nicely
+    try:
+        date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
+        date_formatted = date_obj.strftime("%A, %B %d")
+    except:
+        date_formatted = preferred_date
+    
+    name_greeting = f"Hi {customer_name}! " if customer_name else ""
+    
+    body = (
+        f"{name_greeting}Your {business_name} appointment:\n\n"
+        f"{service_name}\n"
+        f"{date_formatted} at {preferred_time}\n"
+        f"Duration: {duration_minutes} min\n\n"
+        f"Please arrive 5-10 minutes early."
+    )
+    
+    if cancel_url:
+        body += f"\n\nNeed to reschedule? {cancel_url}"
+    
+    try:
+        credentials = base64.b64encode(
+            f"{account_sid}:{auth_token}".encode()
+        ).decode()
+        
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+        
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                url,
+                data={"From": from_number, "To": caller_number, "Body": body},
+                headers={"Authorization": f"Basic {credentials}"},
+            )
+            
+            if resp.status_code in (200, 201):
+                logger.info(f"Appointment SMS sent to {caller_number}")
+                return True
+            else:
+                logger.error(f"Appointment SMS failed: {resp.status_code} {resp.text}")
+                return False
+                
+    except Exception as e:
+        logger.error(f"Appointment SMS error: {e}")
+        return False
