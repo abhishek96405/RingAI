@@ -45,7 +45,7 @@ const SettingsPage = () => {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
       const [restRes, configRes] = await Promise.all([getRestaurant(restaurantId), getConfig(restaurantId)]);
       setRestaurant(restRes.data);
-      setConfig({ operating_hours: defaultHours, ...configRes.data, operating_hours: { ...defaultHours, ...(configRes.data?.operating_hours || {}) } });
+      setConfig({ ...configRes.data, operating_hours: { ...defaultHours, ...(configRes.data?.operating_hours || {}) } });
     } catch {
       toast.error("Failed to load settings");
     } finally {

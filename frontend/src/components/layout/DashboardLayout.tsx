@@ -78,7 +78,8 @@ const DashboardLayout = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const location = useLocation();
-  const { activeRestaurant } = useAppSession();
+  const { activeRestaurant, user } = useAppSession();
+  const isAdmin = user?.publicMetadata?.role === "admin" || user?.role === "admin";
 
   // WebSocket notifications with real-time updates
   const handleWebSocketNotification = useCallback((wsNotification: any) => {
@@ -144,7 +145,7 @@ const DashboardLayout = () => {
   const navItems = [
     ...baseNavItems,
     ...(isAppointmentBusiness ? appointmentNavItems : restaurantNavItems),
-    ...tailNavItems,
+    ...tailNavItems.filter(item => item.label !== "Integrations" || isAdmin),
   ];
 
   const isActive = (path: string) => location.pathname === path || (path !== "/dashboard" && location.pathname.startsWith(path));
