@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { getCall, getCalls } from "@/lib/api";
-import { AlertTriangle, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, Phone, Search, Star, User, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, Calendar, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Phone, Search, Star, User, XCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -35,11 +35,27 @@ const CallsPage = () => {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedCall, setSelectedCall] = useState<any>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Date filter state
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const fetchCalls = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getCalls(null, { page, limit: 15, status: statusFilter, search: search || undefined });
+      const params: Record<string, any> = { 
+        page, 
+        limit: 15, 
+        status: statusFilter !== "ALL" ? statusFilter : undefined, 
+        search: search || undefined 
+      };
+      
+      // Add date filters if set
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      
+      const res = await getCalls(null, params);
       setCalls(res.data.calls || []);
       setTotal(res.data.total || 0);
       setPages(res.data.pages || 1);
@@ -49,7 +65,7 @@ const CallsPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, search]);
+  }, [page, statusFilter, search, dateFrom, dateTo]);
 
   useEffect(() => {
     fetchCalls();
@@ -83,27 +99,164 @@ const CallsPage = () => {
     return `${m}:${String(s).padStart(2, "0")}`;
   };
 
+  // CSV Export functionality
+  const exportToCSV = async () => {
+    setExporting(true);
+    try {
+      // Fetch all calls with current filters (up to 1000)
+      const params: Record<string, any> = { 
+        page: 1, 
+        limit: 1000, 
+        status: statusFilter !== "ALL" ? statusFilter : undefined, 
+        search: search || undefined 
+      };
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      
+      const res = await getCalls(null, params);
+      const allCalls = res.data.calls || [];
+      
+      if (allCalls.length === 0) {
+        toast.error("No calls to export");
+        return;
+      }
+      
+      // Build CSV content
+      const headers = [
+        "Call ID",
+        "Date/Time",
+        "Caller Name",
+        "Caller Phone",
+        "Status",
+        "Duration (seconds)",
+        "Quality Score",
+        "Order Total",
+        "Contained by AI",
+        "Escalated",
+      ];
+      
+      const rows = allCalls.map((call: any) => [
+        call.id || "",
+        call.started_at || "",
+        call.caller_name || "Unknown",
+        call.caller_number || "",
+        call.status || "",
+        call.duration_seconds || 0,
+        call.quality_score || "",
+        call.order_total ? (call.order_total / 100).toFixed(2) : "0",
+        call.contained_by_ai ? "Yes" : "No",
+        call.escalated_to_human ? "Yes" : "No",
+      ]);
+      
+      const csvContent = [
+        headers.join(","),
+        ...rows.map(row => row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(",")),
+      ].join("\n");
+      
+      // Download file
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `call_history_${new Date().toISOString().split("T")[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      toast.success(`Exported ${allCalls.length} calls to CSV`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to export calls");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const clearDateFilters = () => {
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  };
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-display font-bold">Call History</h1>
-        <p className="text-sm text-muted-foreground">{total} total calls</p>
+    <div className="space-y-6" data-testid="calls-page">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-display font-bold">Call History</h1>
+          <p className="text-sm text-muted-foreground">{total} total calls</p>
+        </div>
+        <Button 
+          variant="outline" 
+          onClick={exportToCSV} 
+          disabled={exporting || total === 0}
+          data-testid="export-csv-btn"
+        >
+          <Download className="w-4 h-4 mr-2" />
+          {exporting ? "Exporting..." : "Export CSV"}
+        </Button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search by name or phone..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="pl-9 h-10 rounded-xl" />
+      {/* Filters Row */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input 
+              placeholder="Search by name or phone..." 
+              value={search} 
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }} 
+              className="pl-9 h-10 rounded-xl" 
+              data-testid="calls-search-input"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+            <SelectTrigger className="w-40 h-10 rounded-xl" data-testid="status-filter-select">
+              <SelectValue placeholder="Filter status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Status</SelectItem>
+              <SelectItem value="COMPLETED">Completed</SelectItem>
+              <SelectItem value="ESCALATED">Escalated</SelectItem>
+              <SelectItem value="FAILED">Failed</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-          <SelectTrigger className="w-40 h-10 rounded-xl"><SelectValue placeholder="Filter status" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">All Status</SelectItem>
-            <SelectItem value="COMPLETED">Completed</SelectItem>
-            <SelectItem value="ESCALATED">Escalated</SelectItem>
-            <SelectItem value="FAILED">Failed</SelectItem>
-          </SelectContent>
-        </Select>
+        
+        {/* Date Filters */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">From:</span>
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+              className="w-40 h-9 rounded-lg"
+              data-testid="date-from-input"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">To:</span>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+              className="w-40 h-9 rounded-lg"
+              data-testid="date-to-input"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={clearDateFilters}
+              className="text-xs"
+            >
+              Clear dates
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card className="premium-card overflow-hidden">
@@ -117,7 +270,15 @@ const CallsPage = () => {
             calls.map((call, i) => {
               const StatusIcon = statusIcons[call.status] || Phone;
               return (
-                <motion.div key={call.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }} onClick={() => openCallDetail(call.id)} className="flex items-center gap-4 p-4 hover:bg-muted/30 cursor-pointer transition-colors">
+                <motion.div 
+                  key={call.id} 
+                  initial={{ opacity: 0 }} 
+                  animate={{ opacity: 1 }} 
+                  transition={{ delay: i * 0.03 }} 
+                  onClick={() => openCallDetail(call.id)} 
+                  className="flex items-center gap-4 p-4 hover:bg-muted/30 cursor-pointer transition-colors"
+                  data-testid={`call-row-${call.id}`}
+                >
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${statusColors[call.status] || "bg-primary/10 text-primary"}`}>
                     <StatusIcon className="w-4 h-4" />
                   </div>

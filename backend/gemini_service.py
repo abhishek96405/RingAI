@@ -1404,3 +1404,45 @@ async def send_menu_sms(
     except Exception as e:
         logger.error(f"Menu SMS error: {e}")
         return False
+    
+
+# ---------------------------------------------------------------------------
+# System Prompt Router (routes to correct prompt builder by business type)
+# ---------------------------------------------------------------------------
+
+def get_system_prompt(
+    business_type: str,
+    **kwargs
+) -> str:
+    """
+    Routes to the correct prompt builder based on business type.
+
+    restaurant → build_system_prompt() [EXISTING — DO NOT MODIFY]
+    appointment → build_appointment_prompt() [NEW]
+    """
+    if business_type in ("restaurant",):
+        restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+        return build_system_prompt(**restaurant_kwargs)
+
+    elif business_type in ("clinic", "salon", "home_services", "legal"):
+        try:
+            from appointment_service import build_appointment_prompt
+            appointment_kwargs = {
+                "business_name": kwargs.get("restaurant_name", "Business"),
+                "business_type": business_type,
+                "services": kwargs.get("services", []),
+                "business_rules": kwargs.get("business_rules", []),
+                "escalation_phone": kwargs.get("escalation_phone"),
+                "operating_hours": kwargs.get("operating_hours"),
+                "restaurant_timezone": kwargs.get("restaurant_timezone", "UTC"),
+                "disclosure_text": kwargs.get("disclosure_text", "Hi! How can I help you today?"),
+            }
+            return build_appointment_prompt(**appointment_kwargs)
+        except ImportError as e:
+            logger.error(f"Could not import appointment_service: {e}")
+            restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+            return build_system_prompt(**restaurant_kwargs)
+
+    else:
+        restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+        return build_system_prompt(**restaurant_kwargs)

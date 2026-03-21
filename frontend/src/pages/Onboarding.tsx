@@ -32,14 +32,29 @@ import {
   ArrowLeft,
   ArrowRight,
   LogOut,
+  Briefcase,
+  Stethoscope,
+  Scissors,
+  Wrench,
+  Scale,
 } from "lucide-react";
 import { SignOutButton } from "@clerk/clerk-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 
+// Business type options for horizontal platform
+const businessTypeOptions = [
+  { value: "restaurant", label: "Restaurant / Food Service", icon: Utensils, description: "Restaurants, cafes, food trucks, catering" },
+  { value: "clinic", label: "Clinic / Healthcare", icon: Stethoscope, description: "Medical clinics, dental offices, therapy practices" },
+  { value: "salon", label: "Salon / Beauty", icon: Scissors, description: "Hair salons, spas, nail studios, barbershops" },
+  { value: "home_services", label: "Home Services", icon: Wrench, description: "Plumbing, HVAC, cleaning, repair services" },
+  { value: "legal", label: "Legal / Professional", icon: Scale, description: "Law offices, consulting, accounting" },
+];
+
 const steps = [
-  { icon: Building2, label: "Restaurant Info" },
-  { icon: Utensils, label: "Menu Setup" },
+  { icon: Briefcase, label: "Business Type" },
+  { icon: Building2, label: "Business Info" },
+  { icon: Utensils, label: "Menu / Services" },
   { icon: Settings, label: "AI Configuration" },
   { icon: CreditCard, label: "Connect & Launch" },
 ];
@@ -76,6 +91,16 @@ export default function Onboarding() {
   const [submitting, setSubmitting] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [activating, setActivating] = useState(false);
+
+  // Business type for horizontal platform support
+  const [businessType, setBusinessType] = useState<string>(() => {
+    // Try to get pre-selected business type from localStorage
+    const preSelected = localStorage.getItem('ringai_selected_business_type');
+    if (preSelected && ["restaurant", "clinic", "salon", "home_services", "legal"].includes(preSelected)) {
+      return preSelected;
+    }
+    return "restaurant";
+  });
 
   const [restaurantData, setRestaurantData] = useState<any>({
     name: "",
@@ -139,7 +164,7 @@ export default function Onboarding() {
     }));
 
     if (activeRestaurant.is_active) {
-      setCurrentStep(3);
+      setCurrentStep(4);
     }
   }, [activeRestaurant]);
 
@@ -151,7 +176,7 @@ export default function Onboarding() {
 
   const createRestaurant = async () => {
     if (!restaurantData.name.trim()) {
-      toast.error("Restaurant name is required");
+      toast.error(`${getBusinessLabel()} name is required`);
       return;
     }
 
@@ -164,6 +189,13 @@ export default function Onboarding() {
       persistRestaurantId(createdRestaurant.id);
       setActiveRestaurant(createdRestaurant);
 
+      // Also update config with business_type
+      try {
+        await updateConfig(createdRestaurant.id, { business_type: businessType });
+      } catch (e) {
+        console.warn("Could not set business_type in config", e);
+      }
+
       setAiConfig((prev: any) => ({
         ...prev,
         primary_language: createdRestaurant.primary_language || "en",
@@ -172,10 +204,10 @@ export default function Onboarding() {
           `Hi! I'm an AI assistant for ${createdRestaurant.name}. How can I help you today?`,
       }));
 
-      toast.success("Restaurant created!");
-      setCurrentStep(1);
+      toast.success(`${getBusinessLabel()} created!`);
+      setCurrentStep(2);
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to create restaurant");
+      toast.error(err?.response?.data?.detail || `Failed to create ${getBusinessLabel().toLowerCase()}`);
     } finally {
       setSubmitting(false);
     }
@@ -183,13 +215,13 @@ export default function Onboarding() {
 
   const parseMenu = async () => {
     if (!restaurantId) {
-      toast.error("Create your restaurant first");
-      setCurrentStep(0);
+      toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
+      setCurrentStep(1);
       return;
     }
 
     if (!menuText.trim()) {
-      toast.error("Please enter your menu text");
+      toast.error(`Please enter your ${isAppointmentBusiness ? "services" : "menu"} text`);
       return;
     }
 
@@ -216,23 +248,23 @@ export default function Onboarding() {
 
   const saveMenuAndProceed = async () => {
     if (!restaurantId) {
-      toast.error("Create your restaurant first");
-      setCurrentStep(0);
+      toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
+      setCurrentStep(1);
       return;
     }
 
     if (parsedItems.length === 0) {
-      toast.warning("Parse your menu first");
+      toast.warning(`Parse your ${isAppointmentBusiness ? "services" : "menu"} first`);
       return;
     }
 
     setSubmitting(true);
     try {
       await confirmMenu(restaurantId, parsedItems);
-      toast.success("Menu saved!");
-      setCurrentStep(2);
+      toast.success(`${isAppointmentBusiness ? "Services" : "Menu"} saved!`);
+      setCurrentStep(3);
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save menu");
+      toast.error(err?.response?.data?.detail || `Failed to save ${isAppointmentBusiness ? "services" : "menu"}`);
     } finally {
       setSubmitting(false);
     }
@@ -240,8 +272,8 @@ export default function Onboarding() {
 
   const saveConfigAndProceed = async () => {
     if (!restaurantId) {
-      toast.error("Create your restaurant first");
-      setCurrentStep(0);
+      toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
+      setCurrentStep(1);
       return;
     }
 
@@ -249,7 +281,7 @@ export default function Onboarding() {
     try {
       await updateConfig(restaurantId, aiConfig);
       toast.success("AI configuration saved!");
-      setCurrentStep(3);
+      setCurrentStep(4);
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to save config");
     } finally {
@@ -259,8 +291,8 @@ export default function Onboarding() {
 
   const goLive = async () => {
     if (!restaurantId) {
-      toast.error("Create your restaurant first");
-      setCurrentStep(0);
+      toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
+      setCurrentStep(1);
       return;
     }
 
@@ -297,21 +329,33 @@ export default function Onboarding() {
   const handleNext = async () => {
     if (submitting || parsing || activating) return;
 
+    // Step 0: Business Type Selection - just advance
     if (currentStep === 0) {
+      // Clear the localStorage after user confirms their selection
+      localStorage.removeItem('ringai_selected_business_type');
+      setCurrentStep(1);
+      return;
+    }
+
+    // Step 1: Business Info - create restaurant
+    if (currentStep === 1) {
       await createRestaurant();
       return;
     }
 
-    if (currentStep === 1) {
+    // Step 2: Menu/Services - save and proceed
+    if (currentStep === 2) {
       await saveMenuAndProceed();
       return;
     }
 
-    if (currentStep === 2) {
+    // Step 3: AI Config - save and proceed
+    if (currentStep === 3) {
       await saveConfigAndProceed();
       return;
     }
 
+    // Step 4: Launch
     await goLive();
   };
 
@@ -320,24 +364,83 @@ export default function Onboarding() {
     setCurrentStep((prev) => Math.max(0, prev - 1));
   };
 
+  // Check if this is an appointment-based business
+  const isAppointmentBusiness = ["clinic", "salon", "home_services", "legal"].includes(businessType);
+
+  // Get business-appropriate labels
+  const getBusinessLabel = () => {
+    switch (businessType) {
+      case "clinic": return "Clinic";
+      case "salon": return "Salon";
+      case "home_services": return "Business";
+      case "legal": return "Office";
+      default: return "Restaurant";
+    }
+  };
+
   const renderStep = () => {
     switch (currentStep) {
+      // Step 0: Business Type Selection (NEW)
       case 0:
+        return (
+          <div className="space-y-6">
+            <div className="text-center mb-6">
+              <h3 className="text-lg font-semibold text-white mb-2">What type of business are you?</h3>
+              <p className="text-sm text-gray-400">This helps us customize the AI assistant for your needs</p>
+            </div>
+            <div className="grid gap-3">
+              {businessTypeOptions.map((option) => {
+                const Icon = option.icon;
+                const isSelected = businessType === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    data-testid={`business-type-${option.value}`}
+                    onClick={() => setBusinessType(option.value)}
+                    className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all text-left ${
+                      isSelected
+                        ? "border-emerald-500 bg-emerald-500/10"
+                        : "border-gray-700 hover:border-gray-600 bg-gray-800/50"
+                    }`}
+                  >
+                    <div className={`p-3 rounded-lg ${isSelected ? "bg-emerald-500/20" : "bg-gray-700/50"}`}>
+                      <Icon className={`w-6 h-6 ${isSelected ? "text-emerald-400" : "text-gray-400"}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className={`font-medium ${isSelected ? "text-white" : "text-gray-200"}`}>
+                        {option.label}
+                      </div>
+                      <div className="text-sm text-gray-500">{option.description}</div>
+                    </div>
+                    {isSelected && (
+                      <Check className="w-5 h-5 text-emerald-400" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+
+      // Step 1: Business Info (was Step 0)
+      case 1:
         return (
           <div className="space-y-5">
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Restaurant Name *</Label>
+                <Label>{getBusinessLabel()} Name *</Label>
                 <Input
                   value={restaurantData.name}
                   onChange={(e) =>
                     setRestaurantData({ ...restaurantData, name: e.target.value })
                   }
                   className="h-11 rounded-xl"
+                  data-testid="business-name-input"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Cuisine Type</Label>
+                <Label>{businessType === "restaurant" ? "Cuisine Type" : "Specialty"}</Label>
                 <Input
                   value={restaurantData.cuisine_type}
                   onChange={(e) =>
@@ -347,6 +450,7 @@ export default function Onboarding() {
                     })
                   }
                   className="h-11 rounded-xl"
+                  placeholder={businessType === "restaurant" ? "Italian, Mexican, etc." : "e.g. General Practice, Hair Styling"}
                 />
               </div>
             </div>
@@ -523,16 +627,22 @@ export default function Onboarding() {
           </div>
         );
 
-      case 1:
+      // Step 2: Menu / Services Setup (was Step 1)
+      case 2:
         return (
           <div className="space-y-5">
             <div className="space-y-2">
-              <Label>Paste Menu Text</Label>
+              <Label>{isAppointmentBusiness ? "Services Offered" : "Paste Menu Text"}</Label>
               <Textarea
                 value={menuText}
                 onChange={(e) => setMenuText(e.target.value)}
                 className="rounded-xl min-h-[200px]"
-                placeholder={`APPETIZERS
+                placeholder={isAppointmentBusiness 
+                  ? `SERVICES
+Haircut - $35 - 30 min
+Color Treatment - $120 - 90 min
+Deep Conditioning - $45 - 45 min`
+                  : `APPETIZERS
 Bruschetta - $12.99
 Calamari - $14.99
 
@@ -579,7 +689,8 @@ Spaghetti Bolognese - $18.99`}
           </div>
         );
 
-      case 2:
+      // Step 3: AI Configuration (was Step 2)
+      case 3:
         return (
           <div className="space-y-5">
             <div className="space-y-2">
@@ -754,7 +865,8 @@ Spaghetti Bolognese - $18.99`}
           </div>
         );
 
-      case 3:
+      // Step 4: Connect & Launch (was Step 3)
+      case 4:
         return (
           <div className="space-y-5">
             <Card className="premium-card p-6 bg-success/5 border-success/20">
@@ -767,7 +879,7 @@ Spaghetti Bolognese - $18.99`}
                     You're almost ready!
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Activate your restaurant now. Then connect Twilio and billing
+                    Activate your {getBusinessLabel().toLowerCase()} now. Then connect Twilio and billing
                     from the dashboard.
                   </p>
                 </div>
@@ -775,8 +887,8 @@ Spaghetti Bolognese - $18.99`}
             </Card>
 
             <div className="space-y-2 text-sm text-muted-foreground">
-              <p>• Your restaurant profile is saved</p>
-              <p>• Your menu is stored</p>
+              <p>• Your {getBusinessLabel().toLowerCase()} profile is saved</p>
+              <p>• Your {isAppointmentBusiness ? "services are" : "menu is"} stored</p>
               <p>• Your AI voice configuration is ready</p>
               <p>
                 • Next step after launch: provision Twilio number and connect

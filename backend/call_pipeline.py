@@ -52,6 +52,13 @@ from gemini_service import (
     evaluate_call_quality,
 )
 
+# Import appointment service for non-restaurant businesses
+try:
+    from appointment_service import extract_booking_from_transcript, dispatch_appointment
+    _APPOINTMENT_SERVICE_AVAILABLE = True
+except ImportError:
+    _APPOINTMENT_SERVICE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,6 +139,7 @@ class CallSession:
         restaurant: Dict[str, Any],
         config: Dict[str, Any],
         menu_items: List[Dict[str, Any]],
+        services: Optional[List[Dict[str, Any]]] = None,
     ):
         self.call_sid       = call_sid
         self.restaurant_id  = restaurant_id
@@ -139,6 +147,7 @@ class CallSession:
         self.restaurant     = restaurant
         self.config         = config
         self.menu_index     = MenuIndex(menu_items)
+        self.services       = services or []  # For appointment businesses
         self.transcript: List[Dict] = []
         self.started_at     = datetime.now(timezone.utc).isoformat()
         self.order          = LiveOrder(
@@ -149,6 +158,10 @@ class CallSession:
         self._order_dispatched  = False
         self._escalated         = False
         self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
+        self._booking_dispatched = False  # For appointment businesses
+
+        # Business type for horizontal platform support
+        self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
 
         # Set by create_call_pipeline after task is created
         self._pipeline_task: Optional[Any] = None
@@ -293,7 +306,7 @@ class CallSession:
             order_confirmed=self.order.state in (OrderState.CONFIRMED, OrderState.COMPLETED),
             escalated=self._escalated,
         )
-        return {
+        record = {
             "call_sid":           self.call_sid,
             "restaurant_id":      self.restaurant_id,
             "caller_number":      self.caller_number,
@@ -307,7 +320,58 @@ class CallSession:
             "order_total":        self.order.total,
             "kitchen_order_id":   self.order.kitchen_order_id,
             "quality_eval":       quality,
+            "business_type":      self.business_type,  # Track business type
         }
+        
+        # Add booking info for appointment businesses
+        if self._booking_dispatched and self.business_type in ("clinic", "salon", "home_services", "legal"):
+            record["booking_dispatched"] = True
+        
+        return record
+
+    # ------------------------------------------------------------------
+    # Appointment dispatch for non-restaurant businesses
+    # ------------------------------------------------------------------
+
+    async def dispatch_booking(self, db=None) -> bool:
+        """
+        Extract and dispatch booking for appointment businesses.
+        Separate from dispatch_order which handles restaurant orders.
+        """
+        if self._booking_dispatched:
+            return True
+
+        if not _APPOINTMENT_SERVICE_AVAILABLE:
+            logger.warning(f"[{self.call_sid}] Appointment service not available")
+            return False
+
+        booking = await extract_booking_from_transcript(
+            self.transcript,
+            self.services,
+        )
+
+        if not booking:
+            logger.info(f"[{self.call_sid}] No confirmed booking found in transcript")
+            return False
+
+        logger.info(f"[{self.call_sid}] Booking extracted: {booking.get('service_name')} for {booking.get('customer_name')}")
+
+        result = await dispatch_appointment(
+            booking=booking,
+            restaurant=self.restaurant,
+            config=self.config,
+            services=self.services,
+            db=db,
+        )
+
+        self._booking_dispatched = True
+
+        if result.get("success"):
+            logger.info(f"[{self.call_sid}] Appointment dispatched: calendar={result.get('calendar_event_id')}, sms={result.get('sms_sent')}")
+        else:
+            logger.warning(f"[{self.call_sid}] Appointment dispatch partial: {result}")
+
+        return True
 
 
 # ---------------------------------------------------------------------------
