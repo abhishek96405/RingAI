@@ -16,6 +16,8 @@ import OrdersPage from "./pages/dashboard/OrdersPage";
 import SettingsPage from "./pages/dashboard/SettingsPage";
 import BillingPage from "./pages/dashboard/BillingPage";
 import IntegrationsPage from "./pages/dashboard/IntegrationsPage";
+import ServicesPage from "./pages/dashboard/ServicesPage";
+import AppointmentsPage from "./pages/dashboard/AppointmentsPage";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
@@ -174,6 +176,8 @@ const AppRoutes = () => (
       <Route path="settings" element={<SettingsPage />} />
       <Route path="billing" element={<BillingPage />} />
       <Route path="integrations" element={<IntegrationsPage />} />
+      <Route path="services" element={<ServicesPage />} />
+      <Route path="appointments" element={<AppointmentsPage />} />
     </Route>
     <Route path="*" element={<NotFound />} />
   </Routes>

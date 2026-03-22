@@ -92,10 +92,9 @@ export default function Onboarding() {
   const [parsing, setParsing] = useState(false);
   const [activating, setActivating] = useState(false);
 
-  // Business type for horizontal platform support
+  // Business type — read from localStorage if pre-selected from landing page
   const [businessType, setBusinessType] = useState<string>(() => {
-    // Try to get pre-selected business type from localStorage
-    const preSelected = localStorage.getItem('ringai_selected_business_type');
+    const preSelected = localStorage.getItem("ringai_selected_business_type");
     if (preSelected && ["restaurant", "clinic", "salon", "home_services", "legal"].includes(preSelected)) {
       return preSelected;
     }
@@ -136,12 +135,34 @@ export default function Onboarding() {
     operating_hours: defaultHours,
   });
 
+  // Derived helpers
+  const isAppointmentBusiness = ["clinic", "salon", "home_services", "legal"].includes(businessType);
+
+  const getBusinessLabel = () => {
+    switch (businessType) {
+      case "clinic": return "Clinic";
+      case "salon": return "Salon";
+      case "home_services": return "Business";
+      case "legal": return "Office";
+      default: return "Restaurant";
+    }
+  };
+
+  const getSpecialtyLabel = () => {
+    switch (businessType) {
+      case "clinic": return "Specialty (e.g. Family Medicine, Dental)";
+      case "salon": return "Specialty (e.g. Hair, Nails, Spa)";
+      case "home_services": return "Service Type (e.g. HVAC, Plumbing)";
+      case "legal": return "Practice Area (e.g. Family Law)";
+      default: return "Cuisine Type (e.g. Italian, Mexican)";
+    }
+  };
+
   useEffect(() => {
     if (!activeRestaurant?.id) return;
     if (lastHydratedRestaurantId.current === activeRestaurant.id) return;
 
     lastHydratedRestaurantId.current = activeRestaurant.id;
-
     setRestaurantId(activeRestaurant.id);
 
     setRestaurantData((prev: any) => ({
@@ -156,7 +177,7 @@ export default function Onboarding() {
       primary_language: activeRestaurant.primary_language || prev.primary_language || "en",
       disclosure_text:
         prev.disclosure_text ||
-        `Hi! I'm an AI assistant for ${activeRestaurant.name || "your restaurant"}. How can I help you today?`,
+        `Hi! I'm an AI assistant for ${activeRestaurant.name || "your business"}. How can I help you today?`,
       operating_hours: {
         ...defaultHours,
         ...(prev.operating_hours || {}),
@@ -189,7 +210,7 @@ export default function Onboarding() {
       persistRestaurantId(createdRestaurant.id);
       setActiveRestaurant(createdRestaurant);
 
-      // Also update config with business_type
+      // Save business_type to config immediately
       try {
         await updateConfig(createdRestaurant.id, { business_type: businessType });
       } catch (e) {
@@ -227,20 +248,15 @@ export default function Onboarding() {
 
     setParsing(true);
     try {
-      const res = await parseMenuApi({
-        menu_text: menuText,
-        restaurant_id: restaurantId,
-      });
-
+      const res = await parseMenuApi({ menu_text: menuText, restaurant_id: restaurantId });
       setParsedItems(res.data.items || []);
-
       if (res.data.items?.length > 0) {
-        toast.success(`Parsed ${res.data.items.length} menu items!`);
+        toast.success(`Parsed ${res.data.items.length} items!`);
       } else {
         toast.warning("No items could be parsed. Try a different format.");
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to parse menu");
+      toast.error(err?.response?.data?.detail || "Failed to parse");
     } finally {
       setParsing(false);
     }
@@ -252,7 +268,6 @@ export default function Onboarding() {
       setCurrentStep(1);
       return;
     }
-
     if (parsedItems.length === 0) {
       toast.warning(`Parse your ${isAppointmentBusiness ? "services" : "menu"} first`);
       return;
@@ -309,19 +324,12 @@ export default function Onboarding() {
     }
   };
 
-  const updateHours = (
-    dayKey: keyof typeof defaultHours,
-    field: string,
-    value: any
-  ) => {
+  const updateHours = (dayKey: keyof typeof defaultHours, field: string, value: any) => {
     setAiConfig((prev: any) => ({
       ...prev,
       operating_hours: {
         ...prev.operating_hours,
-        [dayKey]: {
-          ...prev.operating_hours[dayKey],
-          [field]: value,
-        },
+        [dayKey]: { ...prev.operating_hours[dayKey], [field]: value },
       },
     }));
   };
@@ -329,33 +337,14 @@ export default function Onboarding() {
   const handleNext = async () => {
     if (submitting || parsing || activating) return;
 
-    // Step 0: Business Type Selection - just advance
     if (currentStep === 0) {
-      // Clear the localStorage after user confirms their selection
-      localStorage.removeItem('ringai_selected_business_type');
+      localStorage.removeItem("ringai_selected_business_type");
       setCurrentStep(1);
       return;
     }
-
-    // Step 1: Business Info - create restaurant
-    if (currentStep === 1) {
-      await createRestaurant();
-      return;
-    }
-
-    // Step 2: Menu/Services - save and proceed
-    if (currentStep === 2) {
-      await saveMenuAndProceed();
-      return;
-    }
-
-    // Step 3: AI Config - save and proceed
-    if (currentStep === 3) {
-      await saveConfigAndProceed();
-      return;
-    }
-
-    // Step 4: Launch
+    if (currentStep === 1) { await createRestaurant(); return; }
+    if (currentStep === 2) { await saveMenuAndProceed(); return; }
+    if (currentStep === 3) { await saveConfigAndProceed(); return; }
     await goLive();
   };
 
@@ -364,29 +353,16 @@ export default function Onboarding() {
     setCurrentStep((prev) => Math.max(0, prev - 1));
   };
 
-  // Check if this is an appointment-based business
-  const isAppointmentBusiness = ["clinic", "salon", "home_services", "legal"].includes(businessType);
-
-  // Get business-appropriate labels
-  const getBusinessLabel = () => {
-    switch (businessType) {
-      case "clinic": return "Clinic";
-      case "salon": return "Salon";
-      case "home_services": return "Business";
-      case "legal": return "Office";
-      default: return "Restaurant";
-    }
-  };
-
   const renderStep = () => {
     switch (currentStep) {
-      // Step 0: Business Type Selection (NEW)
+
+      // ── STEP 0: Business Type ──
       case 0:
         return (
           <div className="space-y-6">
             <div className="text-center mb-6">
-              <h3 className="text-lg font-semibold text-white mb-2">What type of business are you?</h3>
-              <p className="text-sm text-gray-400">This helps us customize the AI assistant for your needs</p>
+              <h3 className="text-lg font-semibold mb-2">What type of business are you?</h3>
+              <p className="text-sm text-muted-foreground">This helps us customize the AI assistant for your needs</p>
             </div>
             <div className="grid gap-3">
               {businessTypeOptions.map((option) => {
@@ -396,26 +372,23 @@ export default function Onboarding() {
                   <button
                     key={option.value}
                     type="button"
-                    data-testid={`business-type-${option.value}`}
                     onClick={() => setBusinessType(option.value)}
                     className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all text-left ${
                       isSelected
-                        ? "border-emerald-500 bg-emerald-500/10"
-                        : "border-gray-700 hover:border-gray-600 bg-gray-800/50"
+                        ? "border-primary bg-primary/10"
+                        : "border-border hover:border-primary/40 bg-muted/30"
                     }`}
                   >
-                    <div className={`p-3 rounded-lg ${isSelected ? "bg-emerald-500/20" : "bg-gray-700/50"}`}>
-                      <Icon className={`w-6 h-6 ${isSelected ? "text-emerald-400" : "text-gray-400"}`} />
+                    <div className={`p-3 rounded-lg ${isSelected ? "bg-primary/20" : "bg-muted/50"}`}>
+                      <Icon className={`w-6 h-6 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                     </div>
                     <div className="flex-1">
-                      <div className={`font-medium ${isSelected ? "text-white" : "text-gray-200"}`}>
+                      <div className={`font-medium ${isSelected ? "text-foreground" : "text-foreground/80"}`}>
                         {option.label}
                       </div>
-                      <div className="text-sm text-gray-500">{option.description}</div>
+                      <div className="text-sm text-muted-foreground">{option.description}</div>
                     </div>
-                    {isSelected && (
-                      <Check className="w-5 h-5 text-emerald-400" />
-                    )}
+                    {isSelected && <Check className="w-5 h-5 text-primary" />}
                   </button>
                 );
               })}
@@ -423,7 +396,7 @@ export default function Onboarding() {
           </div>
         );
 
-      // Step 1: Business Info (was Step 0)
+      // ── STEP 1: Business Info ──
       case 1:
         return (
           <div className="space-y-5">
@@ -432,25 +405,18 @@ export default function Onboarding() {
                 <Label>{getBusinessLabel()} Name *</Label>
                 <Input
                   value={restaurantData.name}
-                  onChange={(e) =>
-                    setRestaurantData({ ...restaurantData, name: e.target.value })
-                  }
+                  onChange={(e) => setRestaurantData({ ...restaurantData, name: e.target.value })}
                   className="h-11 rounded-xl"
-                  data-testid="business-name-input"
+                  placeholder={`Your ${getBusinessLabel()} name`}
                 />
               </div>
               <div className="space-y-2">
                 <Label>{businessType === "restaurant" ? "Cuisine Type" : "Specialty"}</Label>
                 <Input
                   value={restaurantData.cuisine_type}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      cuisine_type: e.target.value,
-                    })
-                  }
+                  onChange={(e) => setRestaurantData({ ...restaurantData, cuisine_type: e.target.value })}
                   className="h-11 rounded-xl"
-                  placeholder={businessType === "restaurant" ? "Italian, Mexican, etc." : "e.g. General Practice, Hair Styling"}
+                  placeholder={getSpecialtyLabel()}
                 />
               </div>
             </div>
@@ -458,86 +424,35 @@ export default function Onboarding() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Owner Name</Label>
-                <Input
-                  value={restaurantData.owner_name}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      owner_name: e.target.value,
-                    })
-                  }
-                  className="h-11 rounded-xl"
-                />
+                <Input value={restaurantData.owner_name} onChange={(e) => setRestaurantData({ ...restaurantData, owner_name: e.target.value })} className="h-11 rounded-xl" />
               </div>
               <div className="space-y-2">
                 <Label>Owner Email</Label>
-                <Input
-                  type="email"
-                  value={restaurantData.owner_email}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      owner_email: e.target.value,
-                    })
-                  }
-                  className="h-11 rounded-xl"
-                />
+                <Input type="email" value={restaurantData.owner_email} onChange={(e) => setRestaurantData({ ...restaurantData, owner_email: e.target.value })} className="h-11 rounded-xl" />
               </div>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Business Phone</Label>
-                <Input
-                  value={restaurantData.business_phone}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      business_phone: e.target.value,
-                    })
-                  }
-                  className="h-11 rounded-xl"
-                />
+                <Input value={restaurantData.business_phone} onChange={(e) => setRestaurantData({ ...restaurantData, business_phone: e.target.value })} className="h-11 rounded-xl" />
               </div>
               <div className="space-y-2">
                 <Label>Billing Email</Label>
-                <Input
-                  type="email"
-                  value={restaurantData.billing_email}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      billing_email: e.target.value,
-                    })
-                  }
-                  className="h-11 rounded-xl"
-                />
+                <Input type="email" value={restaurantData.billing_email} onChange={(e) => setRestaurantData({ ...restaurantData, billing_email: e.target.value })} className="h-11 rounded-xl" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label>Address</Label>
-              <Input
-                value={restaurantData.address}
-                onChange={(e) =>
-                  setRestaurantData({ ...restaurantData, address: e.target.value })
-                }
-                className="h-11 rounded-xl"
-              />
+              <Input value={restaurantData.address} onChange={(e) => setRestaurantData({ ...restaurantData, address: e.target.value })} className="h-11 rounded-xl" />
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Timezone</Label>
-                <Select
-                  value={restaurantData.timezone}
-                  onValueChange={(v) =>
-                    setRestaurantData({ ...restaurantData, timezone: v })
-                  }
-                >
-                  <SelectTrigger className="h-11 rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select value={restaurantData.timezone} onValueChange={(v) => setRestaurantData({ ...restaurantData, timezone: v })}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="America/New_York">Eastern</SelectItem>
                     <SelectItem value="America/Chicago">Central</SelectItem>
@@ -546,18 +461,10 @@ export default function Onboarding() {
                   </SelectContent>
                 </Select>
               </div>
-
               <div className="space-y-2">
                 <Label>Primary Language</Label>
-                <Select
-                  value={restaurantData.primary_language}
-                  onValueChange={(v) =>
-                    setRestaurantData({ ...restaurantData, primary_language: v })
-                  }
-                >
-                  <SelectTrigger className="h-11 rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select value={restaurantData.primary_language} onValueChange={(v) => setRestaurantData({ ...restaurantData, primary_language: v })}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="en">English</SelectItem>
                     <SelectItem value="es">Spanish</SelectItem>
@@ -566,68 +473,33 @@ export default function Onboarding() {
               </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Average Prep Time (minutes)</Label>
-                <Input
-                  type="number"
-                  value={restaurantData.avg_prep_time_minutes}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      avg_prep_time_minutes: Number(e.target.value || 0),
-                    })
-                  }
-                  className="h-11 rounded-xl"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Reservation Party Limit</Label>
-                <Input
-                  type="number"
-                  value={restaurantData.reservation_party_limit}
-                  onChange={(e) =>
-                    setRestaurantData({
-                      ...restaurantData,
-                      reservation_party_limit: Number(e.target.value || 0),
-                    })
-                  }
-                  className="h-11 rounded-xl"
-                />
-              </div>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              {[
-                ["pickup_enabled", "Pickup Enabled"],
-                ["delivery_enabled", "Delivery Enabled"],
-                ["dine_in_enabled", "Dine-in Enabled"],
-                ["reservations_enabled", "Reservations Enabled"],
-              ].map(([key, label]) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/30"
-                >
-                  <span className="text-sm">{label}</span>
-                  <input
-                    type="checkbox"
-                    className="accent-primary"
-                    checked={restaurantData[key]}
-                    onChange={(e) =>
-                      setRestaurantData({
-                        ...restaurantData,
-                        [key]: e.target.checked,
-                      })
-                    }
-                  />
+            {/* Restaurant-only fields */}
+            {!isAppointmentBusiness && (
+              <>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Average Prep Time (minutes)</Label>
+                    <Input type="number" value={restaurantData.avg_prep_time_minutes} onChange={(e) => setRestaurantData({ ...restaurantData, avg_prep_time_minutes: Number(e.target.value || 0) })} className="h-11 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Reservation Party Limit</Label>
+                    <Input type="number" value={restaurantData.reservation_party_limit} onChange={(e) => setRestaurantData({ ...restaurantData, reservation_party_limit: Number(e.target.value || 0) })} className="h-11 rounded-xl" />
+                  </div>
                 </div>
-              ))}
-            </div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {[["pickup_enabled", "Pickup Enabled"], ["delivery_enabled", "Delivery Enabled"], ["dine_in_enabled", "Dine-in Enabled"], ["reservations_enabled", "Reservations Enabled"]].map(([key, label]) => (
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                      <span className="text-sm">{label}</span>
+                      <input type="checkbox" className="accent-primary" checked={restaurantData[key]} onChange={(e) => setRestaurantData({ ...restaurantData, [key]: e.target.checked })} />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         );
 
-      // Step 2: Menu / Services Setup (was Step 1)
+      // ── STEP 2: Menu / Services ──
       case 2:
         return (
           <div className="space-y-5">
@@ -637,50 +509,28 @@ export default function Onboarding() {
                 value={menuText}
                 onChange={(e) => setMenuText(e.target.value)}
                 className="rounded-xl min-h-[200px]"
-                placeholder={isAppointmentBusiness 
-                  ? `SERVICES
-Haircut - $35 - 30 min
-Color Treatment - $120 - 90 min
-Deep Conditioning - $45 - 45 min`
-                  : `APPETIZERS
-Bruschetta - $12.99
-Calamari - $14.99
-
-PASTA
-Spaghetti Bolognese - $18.99`}
+                placeholder={
+                  isAppointmentBusiness
+                    ? `SERVICES\nHaircut - $35 - 30 min\nColor Treatment - $120 - 90 min\nDeep Conditioning - $45 - 45 min`
+                    : `APPETIZERS\nBruschetta - $12.99\nCalamari - $14.99\n\nPASTA\nSpaghetti Bolognese - $18.99`
+                }
               />
             </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="rounded-xl"
-              onClick={parseMenu}
-              disabled={parsing || submitting}
-            >
-              {parsing ? "Parsing with AI..." : "Parse Menu"}
+            <Button type="button" variant="outline" className="rounded-xl" onClick={parseMenu} disabled={parsing || submitting}>
+              {parsing ? "Parsing with AI..." : `Parse ${isAppointmentBusiness ? "Services" : "Menu"}`}
             </Button>
 
             {parsedItems.length > 0 && (
               <Card className="p-0 overflow-hidden border-border">
-                <div className="p-3 bg-muted/30 text-sm font-medium">
-                  {parsedItems.length} items parsed
-                </div>
+                <div className="p-3 bg-muted/30 text-sm font-medium">{parsedItems.length} items parsed</div>
                 <div className="divide-y divide-border max-h-72 overflow-y-auto">
                   {parsedItems.map((item: any, i: number) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between px-4 py-3 text-sm"
-                    >
+                    <div key={i} className="flex items-center justify-between px-4 py-3 text-sm">
                       <div>
                         <p className="font-medium">{item.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {item.category}
-                        </p>
+                        <p className="text-xs text-muted-foreground">{item.category}</p>
                       </div>
-                      <span>
-                        {item.price ? `$${(item.price / 100).toFixed(2)}` : "--"}
-                      </span>
+                      <span>{item.price ? `$${(item.price / 100).toFixed(2)}` : "--"}</span>
                     </div>
                   ))}
                 </div>
@@ -689,24 +539,17 @@ Spaghetti Bolognese - $18.99`}
           </div>
         );
 
-      // Step 3: AI Configuration (was Step 2)
+      // ── STEP 3: AI Configuration ──
       case 3:
         return (
           <div className="space-y-5">
             <div className="space-y-2">
               <Label>AI Persona</Label>
-              <Select
-                value={aiConfig.persona}
-                onValueChange={(v) => setAiConfig({ ...aiConfig, persona: v })}
-              >
-                <SelectTrigger className="h-11 rounded-xl">
-                  <SelectValue />
-                </SelectTrigger>
+              <Select value={aiConfig.persona} onValueChange={(v) => setAiConfig({ ...aiConfig, persona: v })}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="friendly">Friendly & Warm</SelectItem>
-                  <SelectItem value="professional">
-                    Professional & Formal
-                  </SelectItem>
+                  <SelectItem value="professional">Professional & Formal</SelectItem>
                   <SelectItem value="casual">Casual & Relaxed</SelectItem>
                 </SelectContent>
               </Select>
@@ -714,53 +557,28 @@ Spaghetti Bolognese - $18.99`}
 
             <div className="space-y-2">
               <Label>Greeting Message</Label>
-              <Textarea
-                value={aiConfig.disclosure_text}
-                onChange={(e) =>
-                  setAiConfig({ ...aiConfig, disclosure_text: e.target.value })
-                }
-                className="rounded-xl min-h-[80px]"
-              />
+              <Textarea value={aiConfig.disclosure_text} onChange={(e) => setAiConfig({ ...aiConfig, disclosure_text: e.target.value })} className="rounded-xl min-h-[80px]" />
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Primary Language</Label>
-                <Select
-                  value={aiConfig.primary_language}
-                  onValueChange={(v) =>
-                    setAiConfig({ ...aiConfig, primary_language: v })
-                  }
-                >
-                  <SelectTrigger className="h-11 rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select value={aiConfig.primary_language} onValueChange={(v) => setAiConfig({ ...aiConfig, primary_language: v })}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="en">English</SelectItem>
                     <SelectItem value="es">Spanish</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-
               <div className="space-y-2">
                 <Label>After-hours Behavior</Label>
-                <Select
-                  value={aiConfig.after_hours_mode}
-                  onValueChange={(v) =>
-                    setAiConfig({ ...aiConfig, after_hours_mode: v })
-                  }
-                >
-                  <SelectTrigger className="h-11 rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select value={aiConfig.after_hours_mode} onValueChange={(v) => setAiConfig({ ...aiConfig, after_hours_mode: v })}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="voicemail">Take voicemail</SelectItem>
-                    <SelectItem value="close_message">
-                      Play closed message
-                    </SelectItem>
-                    <SelectItem value="forward">
-                      Forward to escalation number
-                    </SelectItem>
+                    <SelectItem value="close_message">Play closed message</SelectItem>
+                    <SelectItem value="forward">Forward to escalation number</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -768,47 +586,20 @@ Spaghetti Bolognese - $18.99`}
 
             <div className="space-y-2">
               <Label>Escalation Phone Number</Label>
-              <Input
-                value={aiConfig.escalation_phone_number}
-                onChange={(e) =>
-                  setAiConfig({
-                    ...aiConfig,
-                    escalation_phone_number: e.target.value,
-                  })
-                }
-                className="h-11 rounded-xl"
-              />
+              <Input value={aiConfig.escalation_phone_number} onChange={(e) => setAiConfig({ ...aiConfig, escalation_phone_number: e.target.value })} className="h-11 rounded-xl" />
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-                <span className="text-sm">Enable Upselling</span>
-                <input
-                  type="checkbox"
-                  className="accent-primary"
-                  checked={aiConfig.upsell_enabled}
-                  onChange={(e) =>
-                    setAiConfig({
-                      ...aiConfig,
-                      upsell_enabled: e.target.checked,
-                    })
-                  }
-                />
-              </div>
-
+              {/* Upselling — restaurant only */}
+              {!isAppointmentBusiness && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                  <span className="text-sm">Enable Upselling</span>
+                  <input type="checkbox" className="accent-primary" checked={aiConfig.upsell_enabled} onChange={(e) => setAiConfig({ ...aiConfig, upsell_enabled: e.target.checked })} />
+                </div>
+              )}
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                 <span className="text-sm">Voicemail Enabled</span>
-                <input
-                  type="checkbox"
-                  className="accent-primary"
-                  checked={aiConfig.voicemail_enabled}
-                  onChange={(e) =>
-                    setAiConfig({
-                      ...aiConfig,
-                      voicemail_enabled: e.target.checked,
-                    })
-                  }
-                />
+                <input type="checkbox" className="accent-primary" checked={aiConfig.voicemail_enabled} onChange={(e) => setAiConfig({ ...aiConfig, voicemail_enabled: e.target.checked })} />
               </div>
             </div>
 
@@ -818,45 +609,15 @@ Spaghetti Bolognese - $18.99`}
                 {days.map(([key, label]) => {
                   const day = aiConfig.operating_hours[key];
                   return (
-                    <div
-                      key={key}
-                      className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-muted/20"
-                    >
-                      <div className="col-span-3">
-                        <p className="text-sm font-medium">{label}</p>
-                      </div>
+                    <div key={key} className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-muted/20">
+                      <div className="col-span-3"><p className="text-sm font-medium">{label}</p></div>
                       <div className="col-span-2 flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          className="accent-primary"
-                          checked={day.closed}
-                          onChange={(e) =>
-                            updateHours(key, "closed", e.target.checked)
-                          }
-                        />
-                        <span className="text-xs text-muted-foreground">
-                          Closed
-                        </span>
+                        <input type="checkbox" className="accent-primary" checked={day.closed} onChange={(e) => updateHours(key, "closed", e.target.checked)} />
+                        <span className="text-xs text-muted-foreground">Closed</span>
                       </div>
-                      <div className="col-span-3">
-                        <Input
-                          type="time"
-                          value={day.open}
-                          disabled={day.closed}
-                          onChange={(e) => updateHours(key, "open", e.target.value)}
-                        />
-                      </div>
-                      <div className="col-span-1 text-center text-xs text-muted-foreground">
-                        to
-                      </div>
-                      <div className="col-span-3">
-                        <Input
-                          type="time"
-                          value={day.close}
-                          disabled={day.closed}
-                          onChange={(e) => updateHours(key, "close", e.target.value)}
-                        />
-                      </div>
+                      <div className="col-span-3"><Input type="time" value={day.open} disabled={day.closed} onChange={(e) => updateHours(key, "open", e.target.value)} /></div>
+                      <div className="col-span-1 text-center text-xs text-muted-foreground">to</div>
+                      <div className="col-span-3"><Input type="time" value={day.close} disabled={day.closed} onChange={(e) => updateHours(key, "close", e.target.value)} /></div>
                     </div>
                   );
                 })}
@@ -865,7 +626,7 @@ Spaghetti Bolognese - $18.99`}
           </div>
         );
 
-      // Step 4: Connect & Launch (was Step 3)
+      // ── STEP 4: Connect & Launch ──
       case 4:
         return (
           <div className="space-y-5">
@@ -875,12 +636,9 @@ Spaghetti Bolognese - $18.99`}
                   <Check className="w-5 h-5 text-success" />
                 </div>
                 <div>
-                  <h3 className="font-display font-semibold text-sm">
-                    You're almost ready!
-                  </h3>
+                  <h3 className="font-display font-semibold text-sm">You're almost ready!</h3>
                   <p className="text-xs text-muted-foreground">
-                    Activate your {getBusinessLabel().toLowerCase()} now. Then connect Twilio and billing
-                    from the dashboard.
+                    Activate your {getBusinessLabel().toLowerCase()} now. Then connect Twilio and billing from the dashboard.
                   </p>
                 </div>
               </div>
@@ -890,10 +648,7 @@ Spaghetti Bolognese - $18.99`}
               <p>• Your {getBusinessLabel().toLowerCase()} profile is saved</p>
               <p>• Your {isAppointmentBusiness ? "services are" : "menu is"} stored</p>
               <p>• Your AI voice configuration is ready</p>
-              <p>
-                • Next step after launch: provision Twilio number and connect
-                billing
-              </p>
+              <p>• Next step after launch: provision Twilio number and connect billing</p>
             </div>
           </div>
         );
@@ -941,52 +696,30 @@ Spaghetti Bolognese - $18.99`}
                       : "bg-muted text-muted-foreground"
                   }`}
                 >
-                  {i < currentStep ? (
-                    <Check className="w-5 h-5" />
-                  ) : (
-                    <step.icon className="w-5 h-5" />
-                  )}
+                  {i < currentStep ? <Check className="w-5 h-5" /> : <step.icon className="w-5 h-5" />}
                 </div>
-                <span
-                  className={`text-xs font-medium hidden sm:block ${
-                    i <= currentStep ? "text-foreground" : "text-muted-foreground"
-                  }`}
-                >
+                <span className={`text-xs font-medium hidden sm:block ${i <= currentStep ? "text-foreground" : "text-muted-foreground"}`}>
                   {step.label}
                 </span>
               </div>
               {i < steps.length - 1 && (
-                <div
-                  className={`flex-1 h-px mx-3 ${
-                    i < currentStep ? "bg-primary" : "bg-border"
-                  }`}
-                />
+                <div className={`flex-1 h-px mx-3 ${i < currentStep ? "bg-primary" : "bg-border"}`} />
               )}
             </div>
           ))}
         </div>
-
-        <Progress
-          value={((currentStep + 1) / steps.length) * 100}
-          className="h-1"
-        />
+        <Progress value={((currentStep + 1) / steps.length) * 100} className="h-1" />
       </div>
 
       <div className="container-tight flex-1 pb-8">
         <div className="premium-card p-8">
-          <h2 className="font-display font-bold text-xl mb-1">
-            {steps[currentStep].label}
-          </h2>
-
+          <h2 className="font-display font-bold text-xl mb-1">{steps[currentStep].label}</h2>
           <p className="text-sm text-muted-foreground mb-6">
-            {currentStep === 0 &&
-              "Tell us about your restaurant so we can personalize your AI."}
-            {currentStep === 1 &&
-              "Paste your menu so the AI knows what to offer callers."}
-            {currentStep === 2 &&
-              "Customize how your AI sounds and behaves."}
-            {currentStep === 3 &&
-              "Launch your workspace and finish live integrations in the dashboard."}
+            {currentStep === 0 && "Select your business type to customize your AI experience."}
+            {currentStep === 1 && `Tell us about your ${getBusinessLabel().toLowerCase()} so we can personalize your AI.`}
+            {currentStep === 2 && `${isAppointmentBusiness ? "List your services so the AI knows what to book." : "Paste your menu so the AI knows what to offer callers."}`}
+            {currentStep === 3 && "Customize how your AI sounds and behaves."}
+            {currentStep === 4 && "Launch your workspace and finish live integrations in the dashboard."}
           </p>
 
           <AnimatePresence mode="wait">
@@ -1020,15 +753,9 @@ Spaghetti Bolognese - $18.99`}
               className="bg-gradient-primary text-primary-foreground rounded-xl px-8 shadow-glow hover:opacity-90"
             >
               {currentStep === steps.length - 1
-                ? activating
-                  ? "Activating..."
-                  : "Launch RingAI 🚀"
-                : submitting
-                ? "Saving..."
-                : "Continue"}
-              {currentStep < steps.length - 1 && (
-                <ArrowRight className="ml-2 w-4 h-4" />
-              )}
+                ? activating ? "Activating..." : "Launch RingAI 🚀"
+                : submitting ? "Saving..." : "Continue"}
+              {currentStep < steps.length - 1 && <ArrowRight className="ml-2 w-4 h-4" />}
             </Button>
           </div>
         </div>
