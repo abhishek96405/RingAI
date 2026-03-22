@@ -2390,7 +2390,7 @@ async def twilio_media_stream(websocket: WebSocket):
                     await notify_new_call(
                         restaurant_id=restaurant_id,
                         call_sid=call_sid,
-                        caller_number=caller_number,
+                        caller_number=active_call.get("caller_number", ""),
                         status=status,
                         order_total=order_total,
                     )
