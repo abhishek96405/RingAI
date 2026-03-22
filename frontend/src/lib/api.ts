@@ -24,7 +24,7 @@ api.interceptors.request.use(async (config) => {
   if (authTokenGetter) {
     const token = await authTokenGetter();
     if (token) {
-      config.headers = config.headers || {};
+      config.headers = (config.headers || {}) as import('axios').AxiosRequestHeaders;
       config.headers.Authorization = `Bearer ${token}`;
     }
   }
@@ -185,4 +185,43 @@ export const assignTwilioNumber = (restaurantId: string | null | undefined, phon
     phone_number: phoneNumber,
   });
 
+export const getServices = (restaurantId?: string | null) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/services`);
+
+export const createService = (restaurantId: string | null | undefined, data: unknown) =>
+  api.post(`/restaurants/${requireRestaurantId(restaurantId)}/services`, data);
+
+export const updateService = (serviceId: string, data: unknown) =>
+  api.put(`/services/${serviceId}`, data);
+
+export const deleteService = (serviceId: string) =>
+  api.delete(`/services/${serviceId}`);
+
+export const getAppointments = (restaurantId?: string | null, params?: Record<string, unknown>) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/appointments`, { params });
+
+export const getAppointment = (appointmentId: string) =>
+  api.get(`/appointments/${appointmentId}`);
+
+export const cancelAppointment = (appointmentId: string) =>
+  api.patch(`/appointments/${appointmentId}/cancel`);
+
+export const bookAppointment = (restaurantId: string | null | undefined, data: unknown) =>
+  api.post(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/book`, data);
+
+export const getCalendarStatus = (restaurantId?: string | null) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/status`);
+
+export const connectGoogleCalendar = (restaurantId?: string | null) =>
+  api.get(`/calendar/google/connect`, {
+    params: { restaurant_id: requireRestaurantId(restaurantId) },
+  });
+
+export const disconnectGoogleCalendar = (restaurantId?: string | null) =>
+  api.delete(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/disconnect`);
+
+export const getCalendarAvailability = (restaurantId: string | null | undefined, date: string, serviceId?: string) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/availability`, {
+    params: { date, service_id: serviceId },
+  });
 export default api;
