@@ -35,7 +35,7 @@ const CTASection = () => {
           transition={{ delay: 0.35, duration: 0.5 }}
           className="text-lg text-primary-foreground/70 max-w-lg mx-auto mb-7"
         >
-          Join 2,000+ restaurants already using RingAI to boost revenue and delight customers.
+          Join 500+ businesses already using RingAI to boost revenue and delight customers.
         </motion.p>
         <motion.div
           initial={{ opacity: 0, y: 15 }}
@@ -45,7 +45,7 @@ const CTASection = () => {
           className="flex flex-col sm:flex-row gap-3 justify-center"
         >
           <Button asChild size="lg" className="bg-primary-foreground text-foreground rounded-xl px-8 h-13 text-base font-semibold hover:bg-primary-foreground/90">
-            <Link to="/signup">
+            <Link to="/signup" data-testid="cta-start-trial-btn">
               Start Free Trial
               <ArrowRight className="ml-2 w-4 h-4" />
             </Link>

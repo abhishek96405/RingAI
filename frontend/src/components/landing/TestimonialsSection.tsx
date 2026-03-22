@@ -1,30 +1,33 @@
 import { motion } from "framer-motion";
-import { Star, Quote, Phone, Mic } from "lucide-react";
+import { Star, Quote, Phone, Mic, Stethoscope, Scissors, Utensils } from "lucide-react";
 
 const testimonials = [
   {
     name: "Maria Chen",
-    role: "Owner, Golden Dragon",
+    role: "Owner, Golden Dragon Restaurant",
     quote: "RingAI cut our missed calls by 90%. We're capturing orders we used to lose every single night.",
     stars: 5,
     initials: "MC",
     accentColor: "from-primary to-purple-500",
+    icon: Utensils,
   },
   {
-    name: "James Rodriguez",
-    role: "GM, Taco Fuego",
-    quote: "Our staff used to dread phone rushes. Now the AI handles it seamlessly — customers love it.",
+    name: "Dr. James Wilson",
+    role: "Director, Sunrise Medical Clinic",
+    quote: "Our front desk was overwhelmed with appointment calls. Now patients book 24/7 and our staff can focus on care.",
     stars: 5,
-    initials: "JR",
+    initials: "JW",
     accentColor: "from-pink-500 to-rose-500",
+    icon: Stethoscope,
   },
   {
     name: "Sarah Kim",
-    role: "Owner, Seoul Kitchen",
-    quote: "Setup took 10 minutes. Within a week, our phone order revenue jumped 35%. Incredible ROI.",
+    role: "Owner, Luxe Hair Studio",
+    quote: "Setup took 10 minutes. Within a week, our booking rate jumped 35%. Clients love the instant confirmations.",
     stars: 5,
     initials: "SK",
     accentColor: "from-amber-500 to-orange-500",
+    icon: Scissors,
   },
 ];
 
@@ -45,9 +48,9 @@ const AnimatedWaveformVisual = () => {
   }));
 
   const transcript = [
-    { role: "ai", text: "Hi! Thanks for calling Golden Dragon. How can I help?", time: "0:00" },
-    { role: "caller", text: "I'd like to order delivery please.", time: "0:04" },
-    { role: "ai", text: "Of course! What would you like to order today?", time: "0:07" },
+    { role: "ai", text: "Hi! Thanks for calling Luxe Hair Studio. How can I help?", time: "0:00" },
+    { role: "caller", text: "I'd like to book a haircut for Saturday.", time: "0:04" },
+    { role: "ai", text: "Of course! I have 10am, 2pm, or 4pm available. Which works best?", time: "0:07" },
   ];
 
   return (
@@ -186,14 +189,14 @@ const TestimonialsSection = () => {
             >
               <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-accent text-accent-foreground text-xs font-semibold tracking-wide uppercase mb-3">
                 <Star className="w-3.5 h-3.5" />
-                Loved by Restaurants
+                Loved by Businesses
               </span>
               <h2 className="font-display font-extrabold text-3xl md:text-4xl text-foreground mb-3">
                 Real Results from{" "}
-                <span className="text-gradient">Real Restaurants</span>
+                <span className="text-gradient">Real Businesses</span>
               </h2>
               <p className="text-muted-foreground text-base max-w-lg">
-                Join restaurant owners who trust RingAI to handle calls and boost revenue.
+                Join business owners who trust RingAI to handle calls and boost revenue.
               </p>
             </motion.div>
 
@@ -224,18 +227,21 @@ const TestimonialsSection = () => {
                   </motion.div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex gap-1 mb-2">
-                      {Array.from({ length: t.stars }).map((_, si) => (
-                        <motion.div
-                          key={si}
-                          initial={{ opacity: 0, scale: 0 }}
-                          whileInView={{ opacity: 1, scale: 1 }}
-                          viewport={{ once: true }}
-                          transition={{ delay: i * 0.12 + si * 0.05, type: "spring" }}
-                        >
-                          <Star className="w-3.5 h-3.5 fill-warning text-warning" />
-                        </motion.div>
-                      ))}
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="flex gap-1">
+                        {Array.from({ length: t.stars }).map((_, si) => (
+                          <motion.div
+                            key={si}
+                            initial={{ opacity: 0, scale: 0 }}
+                            whileInView={{ opacity: 1, scale: 1 }}
+                            viewport={{ once: true }}
+                            transition={{ delay: i * 0.12 + si * 0.05, type: "spring" }}
+                          >
+                            <Star className="w-3.5 h-3.5 fill-warning text-warning" />
+                          </motion.div>
+                        ))}
+                      </div>
+                      <t.icon className="w-4 h-4 text-muted-foreground" />
                     </div>
                     <p className="text-foreground/90 text-sm leading-relaxed mb-3">"{t.quote}"</p>
                     <div>
@@ -256,8 +262,8 @@ const TestimonialsSection = () => {
               className="mt-8 grid grid-cols-4 gap-4"
             >
               {[
-                { value: "2,000+", label: "Restaurants" },
-                { value: "1.2M+", label: "Calls Handled" },
+                { value: "5,000+", label: "Businesses" },
+                { value: "2.5M+", label: "Calls Handled" },
                 { value: "99.8%", label: "Uptime" },
                 { value: "4.9/5", label: "Rating" },
               ].map((stat, i) => (

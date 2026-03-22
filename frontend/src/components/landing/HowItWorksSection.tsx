@@ -2,10 +2,10 @@ import { motion } from "framer-motion";
 import { UserPlus, Settings, PhoneCall, BarChart3 } from "lucide-react";
 
 const steps = [
-  { icon: UserPlus, step: "01", title: "Sign Up & Onboard", description: "Create your account and tell us about your restaurant in minutes." },
-  { icon: Settings, step: "02", title: "Configure Your AI", description: "Upload your menu, set hours, and customize your AI's personality and voice." },
+  { icon: UserPlus, step: "01", title: "Sign Up & Choose Business", description: "Create your account and select your business type — restaurant, clinic, salon, or more." },
+  { icon: Settings, step: "02", title: "Configure Your AI", description: "Add your services, set hours, and customize your AI's personality and voice." },
   { icon: PhoneCall, step: "03", title: "Connect Your Phone", description: "Forward your calls or get a new number. We handle the rest." },
-  { icon: BarChart3, step: "04", title: "Monitor & Grow", description: "Watch calls, orders, and revenue flow in real-time from your dashboard." },
+  { icon: BarChart3, step: "04", title: "Monitor & Grow", description: "Watch calls, bookings, and revenue flow in real-time from your dashboard." },
 ];
 
 const HowItWorksSection = () => {

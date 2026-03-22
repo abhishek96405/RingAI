@@ -1,7 +1,16 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Play, Star, Zap, PhoneCall, TrendingUp, DollarSign } from "lucide-react";
+import { ArrowRight, Play, Star, Zap, PhoneCall, TrendingUp, DollarSign, Calendar, Stethoscope, Scissors, Wrench, Scale, Utensils } from "lucide-react";
 import { motion } from "framer-motion";
+
+const businessTypes = [
+  { icon: Utensils, label: "Restaurants", value: "restaurant" },
+  { icon: Stethoscope, label: "Clinics", value: "clinic" },
+  { icon: Scissors, label: "Salons", value: "salon" },
+  { icon: Wrench, label: "Home Services", value: "home_services" },
+  { icon: Scale, label: "Legal", value: "legal" },
+];
 
 const AnimatedDashboard = () => {
   const bars = [65, 45, 80, 55, 90, 70, 85];
@@ -25,7 +34,7 @@ const AnimatedDashboard = () => {
           <div className="grid grid-cols-3 gap-3">
             {[
               { icon: PhoneCall, label: "Calls Today", value: "127", color: "text-primary" },
-              { icon: TrendingUp, label: "Conversion", value: "89%", color: "text-success" },
+              { icon: Calendar, label: "Bookings", value: "34", color: "text-success" },
               { icon: DollarSign, label: "Revenue", value: "$4.2k", color: "text-warning" },
             ].map((kpi, i) => (
               <motion.div
@@ -70,9 +79,9 @@ const AnimatedDashboard = () => {
           {/* Animated activity feed */}
           <div className="space-y-2">
             {[
-              { text: "New order — $47.50", time: "Just now", dot: "bg-success" },
-              { text: "Reservation booked — 4 guests", time: "2m ago", dot: "bg-primary" },
-              { text: "Call answered — 1:23 duration", time: "5m ago", dot: "bg-info" },
+              { text: "Appointment booked — Haircut 2pm", time: "Just now", dot: "bg-success" },
+              { text: "New patient inquiry handled", time: "2m ago", dot: "bg-primary" },
+              { text: "Service call scheduled — HVAC", time: "5m ago", dot: "bg-info" },
             ].map((item, i) => (
               <motion.div
                 key={i}
@@ -105,6 +114,15 @@ const AnimatedDashboard = () => {
 };
 
 const HeroSection = () => {
+  const navigate = useNavigate();
+  const [selectedBusinessType, setSelectedBusinessType] = useState<string | null>(null);
+
+  const handleBusinessTypeSelect = (businessValue: string) => {
+    setSelectedBusinessType(businessValue);
+    // Navigate to signup with business_type as query parameter
+    navigate(`/signup?business_type=${businessValue}`);
+  };
+
   return (
     <section className="relative min-h-[90vh] flex items-center overflow-hidden pt-20">
       {/* Background */}
@@ -135,22 +153,42 @@ const HeroSection = () => {
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent border border-primary/10 mb-5"
             >
               <Zap className="w-4 h-4 text-accent-foreground" />
-              <span className="text-sm font-medium text-accent-foreground">AI-Powered Phone Ordering</span>
+              <span className="text-sm font-medium text-accent-foreground">AI-Powered Phone Reception</span>
             </motion.div>
 
             <h1 className="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl leading-[1.1] tracking-tight mb-5">
-              Your Restaurant's
+              Your Business's
               <br />
               <span className="text-gradient">AI Receptionist</span>
             </h1>
 
-            <p className="text-lg text-muted-foreground leading-relaxed mb-7 max-w-md">
-              Never miss a call again. RingAI answers phones, takes orders, handles reservations, and boosts revenue — 24/7, in any language.
+            <p className="text-lg text-muted-foreground leading-relaxed mb-6 max-w-md">
+              Never miss a call again. RingAI answers phones, books appointments, takes orders, and handles inquiries — 24/7, in any language.
             </p>
+
+            {/* Business Type Selection */}
+            <div className="mb-7">
+              <p className="text-sm font-semibold text-foreground mb-3">Choose Your Business Type to Get Started:</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                {businessTypes.map((type, i) => (
+                  <motion.button
+                    key={type.value}
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.4 + i * 0.1 }}
+                    onClick={() => handleBusinessTypeSelect(type.value)}
+                    className="flex flex-col items-center gap-2 px-3 py-3 rounded-xl bg-card hover:bg-accent border border-border hover:border-primary/30 transition-all group"
+                  >
+                    <type.icon className="w-6 h-6 text-primary group-hover:scale-110 transition-transform" />
+                    <span className="text-xs font-medium text-center">{type.label}</span>
+                  </motion.button>
+                ))}
+              </div>
+            </div>
 
             <div className="flex flex-col sm:flex-row gap-3 mb-8">
               <Button asChild size="lg" className="bg-gradient-primary text-primary-foreground rounded-xl px-8 h-13 text-base font-semibold shadow-glow hover:opacity-90 transition-opacity">
-                <Link to="/signup">
+                <Link to="/signup" data-testid="hero-get-started-btn">
                   Start Free Trial
                   <ArrowRight className="ml-2 w-4 h-4" />
                 </Link>
@@ -174,7 +212,7 @@ const HeroSection = () => {
                     />
                   ))}
                 </div>
-                <span className="ml-2 font-medium">2,000+ restaurants</span>
+                <span className="ml-2 font-medium">5,000+ businesses</span>
               </div>
               <div className="flex items-center gap-1">
                 {[1, 2, 3, 4, 5].map(i => (

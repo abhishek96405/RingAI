@@ -1,7 +1,8 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { SignUp } from "@clerk/clerk-react";
-import { Phone } from "lucide-react";
+import { Phone, Briefcase, Stethoscope, Scissors, Wrench, Scale, Utensils } from "lucide-react";
 import { motion } from "framer-motion";
+import { useEffect } from "react";
 
 const clerkAppearance = {
   elements: {
@@ -37,7 +38,32 @@ const clerkAppearance = {
   },
 };
 
+const businessTypeConfig: Record<string, { label: string; icon: any; description: string }> = {
+  restaurant: { label: "Restaurant / Food Service", icon: Utensils, description: "AI calling for restaurants, cafes, and food services" },
+  clinic: { label: "Clinic / Healthcare", icon: Stethoscope, description: "AI assistant for medical clinics and healthcare" },
+  salon: { label: "Salon / Beauty", icon: Scissors, description: "AI receptionist for salons and beauty services" },
+  home_services: { label: "Home Services", icon: Wrench, description: "AI calling for home service businesses" },
+  legal: { label: "Legal / Professional", icon: Scale, description: "AI assistant for legal and professional offices" },
+};
+
 const Signup = () => {
+  const location = useLocation();
+  const queryParams = new URLSearchParams(location.search);
+  const businessTypeParam = queryParams.get('business_type');
+
+  // Store business_type in localStorage so Onboarding can pick it up after Clerk auth
+  useEffect(() => {
+    if (businessTypeParam && businessTypeConfig[businessTypeParam]) {
+      localStorage.setItem('ringai_selected_business_type', businessTypeParam);
+    }
+  }, [businessTypeParam]);
+
+  const selectedBusinessConfig = businessTypeParam && businessTypeConfig[businessTypeParam] 
+    ? businessTypeConfig[businessTypeParam]
+    : null;
+
+  const BusinessIcon = selectedBusinessConfig?.icon || Briefcase;
+
   return (
     <div className="min-h-screen flex bg-background">
       <div className="flex-1 flex items-start lg:items-center justify-center px-6 py-8 md:px-8 md:py-10 overflow-y-auto">
@@ -69,9 +95,33 @@ const Signup = () => {
             <h1 className="font-display font-extrabold text-2xl mb-2">
               Create your account
             </h1>
-            <p className="text-sm text-muted-foreground mb-8">
+            <p className="text-sm text-muted-foreground mb-4">
               Start your RingAI setup and launch your AI receptionist.
             </p>
+
+            {/* Business Type Badge */}
+            {selectedBusinessConfig && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.4, delay: 0.2 }}
+                className="mb-6 p-4 rounded-xl bg-primary/5 border border-primary/20"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <BusinessIcon className="w-6 h-6 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {selectedBusinessConfig.label}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedBusinessConfig.description}
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </motion.div>
 
           <motion.div
@@ -130,7 +180,7 @@ const Signup = () => {
             transition={{ delay: 0.5, duration: 0.6 }}
             className="font-display font-bold text-2xl text-primary-foreground mb-3"
           >
-            Join Restaurants Using AI
+            Join Thousands of Businesses Using AI
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 15 }}
@@ -138,7 +188,7 @@ const Signup = () => {
             transition={{ delay: 0.65, duration: 0.6 }}
             className="text-primary-foreground/60 text-sm"
           >
-            Set up your premium voice ordering assistant and monitor the entire
+            Set up your premium AI receptionist and monitor the entire
             operation from one dashboard.
           </motion.p>
         </motion.div>

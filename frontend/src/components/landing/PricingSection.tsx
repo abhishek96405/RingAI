@@ -6,19 +6,19 @@ import { motion } from "framer-motion";
 const plans = [
   {
     name: "Starter",
-    price: "$99",
+    price: "$49",
     period: "/month",
-    description: "Perfect for small restaurants getting started with AI.",
-    features: ["Up to 200 calls/month", "1 phone number", "Basic menu support", "Email support", "Standard analytics"],
+    description: "Perfect for small businesses getting started with AI.",
+    features: ["Up to 100 calls/month", "1 phone number", "Basic booking support", "Email support", "Standard analytics"],
     cta: "Start Free Trial",
     popular: false,
   },
   {
     name: "Professional",
-    price: "$249",
+    price: "$149",
     period: "/month",
-    description: "For growing restaurants that need the full power of AI.",
-    features: ["Up to 1,000 calls/month", "3 phone numbers", "Full menu + upselling", "POS integration", "Priority support", "Advanced analytics", "Multilingual support"],
+    description: "For growing businesses that need the full power of AI.",
+    features: ["Up to 500 calls/month", "3 phone numbers", "Full service catalog", "Google Calendar sync", "SMS reminders", "Priority support", "Multilingual support"],
     cta: "Start Free Trial",
     popular: true,
   },
@@ -26,7 +26,7 @@ const plans = [
     name: "Enterprise",
     price: "Custom",
     period: "",
-    description: "For restaurant chains and high-volume operations.",
+    description: "For chains and high-volume operations.",
     features: ["Unlimited calls", "Unlimited numbers", "Custom AI training", "Multi-location support", "Dedicated account manager", "Custom integrations", "SLA guarantee", "White-label option"],
     cta: "Contact Sales",
     popular: false,
@@ -110,7 +110,7 @@ const PricingSection = () => {
                 }`}
                 variant={plan.popular ? "default" : "outline"}
               >
-                <Link to="/signup">
+                <Link to="/signup" data-testid={`pricing-${plan.name.toLowerCase()}-btn`}>
                   {plan.cta}
                   <ArrowRight className="ml-2 w-4 h-4" />
                 </Link>
