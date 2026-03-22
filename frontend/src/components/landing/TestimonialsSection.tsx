@@ -262,7 +262,7 @@ const TestimonialsSection = () => {
               className="mt-8 grid grid-cols-4 gap-4"
             >
               {[
-                { value: "5,000+", label: "Businesses" },
+                { value: "5000+", label: "Businesses" },
                 { value: "2.5M+", label: "Calls Handled" },
                 { value: "99.8%", label: "Uptime" },
                 { value: "4.9/5", label: "Rating" },

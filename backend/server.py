@@ -1617,21 +1617,45 @@ async def confirm_menu(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     await ensure_restaurant_access(restaurant_id, user)
-    await db.menu_items.delete_many({"restaurant_id": restaurant_id})
-    saved = []
-    for item_data in items:
-        item = MenuItem(
-            restaurant_id=restaurant_id,
-            name=item_data.get("name", ""),
-            description=item_data.get("description"),
-            category=item_data.get("category", "Uncategorized"),
-            price=item_data.get("price", 0),
-            modifiers=[],
-            allergens=item_data.get("allergens", []),
-        )
-        await db.menu_items.insert_one(item.model_dump())
-        saved.append(item.model_dump())
-    return {"saved": len(saved), "items": saved}
+    
+    # Check business type
+    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    business_type = config.get("business_type", "restaurant") if config else "restaurant"
+    
+    if business_type in ("clinic", "salon", "home_services", "legal"):
+        # Save to services collection instead of menu_items
+        await db.services.delete_many({"restaurant_id": restaurant_id})
+        saved = []
+        for item_data in items:
+            service = ServiceItem(
+                restaurant_id=restaurant_id,
+                name=item_data.get("name", ""),
+                description=item_data.get("description"),
+                duration_minutes=item_data.get("duration_minutes", 60),
+                buffer_minutes=15,
+                price_cents=item_data.get("price", 0),
+                available=True,
+            )
+            await db.services.insert_one(service.model_dump())
+            saved.append(service.model_dump())
+        return {"saved": len(saved), "items": saved}
+    else:
+        # Original restaurant logic — menu_items
+        await db.menu_items.delete_many({"restaurant_id": restaurant_id})
+        saved = []
+        for item_data in items:
+            item = MenuItem(
+                restaurant_id=restaurant_id,
+                name=item_data.get("name", ""),
+                description=item_data.get("description"),
+                category=item_data.get("category", "Uncategorized"),
+                price=item_data.get("price", 0),
+                modifiers=[],
+                allergens=item_data.get("allergens", []),
+            )
+            await db.menu_items.insert_one(item.model_dump())
+            saved.append(item.model_dump())
+        return {"saved": len(saved), "items": saved}
 
 
 @api_router.post("/onboarding/activate")
