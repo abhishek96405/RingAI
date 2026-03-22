@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,7 @@ const IntegrationsPage = () => {
   const [status, setStatus] = useState<any>(null);
   const [twilioStatus, setTwilioStatusState] = useState<any>(null);
   const [areaCode, setAreaCode] = useState("");
+  const [existingNumber, setExistingNumber] = useState("");
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -60,6 +61,22 @@ const IntegrationsPage = () => {
     }
   };
 
+  const assignExistingNumber = async () => {
+    if (!existingNumber.trim()) {
+      toast.error("Please enter a phone number");
+      return;
+    }
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      await assignTwilioNumber(restaurantId, existingNumber.trim());
+      await fetchData();
+      toast.success("Twilio number assigned successfully");
+      setExistingNumber("");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to assign Twilio number");
+    }
+  };
+
   if (loading) return <Card className="premium-card h-48 animate-pulse" />;
 
   return (
@@ -81,7 +98,12 @@ const IntegrationsPage = () => {
         <h3 className="font-display font-bold text-lg">Twilio Number</h3>
         <div className="space-y-2"><Label>Current Number</Label><Input value={twilioStatus?.phone_number || status?.twilio?.phone_number || ""} readOnly placeholder="No number assigned yet" /></div>
         <div className="space-y-2"><Label>Preferred Area Code</Label><Input value={areaCode} onChange={(e) => setAreaCode(e.target.value)} placeholder="815" /></div>
-        <div className="flex gap-2 flex-wrap"><Button className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90" onClick={provisionNumber}>Provision Twilio Number</Button><Button variant="outline" onClick={connectSquare}>Connect Square</Button></div>
+        <div className="space-y-2"><Label>Or Assign Existing Number</Label><Input value={existingNumber} onChange={(e) => setExistingNumber(e.target.value)} placeholder="+19803515351" /></div>
+        <div className="flex gap-2 flex-wrap">
+          <Button className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90" onClick={provisionNumber}>Provision New Number</Button>
+          <Button variant="outline" onClick={assignExistingNumber}>Assign Existing Number</Button>
+          <Button variant="outline" onClick={connectSquare}>Connect Square</Button>
+        </div>
       </Card>
 
       <Card className="premium-card p-6">
