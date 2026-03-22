@@ -1679,12 +1679,25 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
             twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
             if twilio_sid and twilio_token:
                 twilio_client = TwilioClient(twilio_sid, twilio_token)
-                numbers = twilio_client.incoming_phone_numbers.list(limit=1)
-                if numbers:
-                    update_fields["phone_number"] = numbers[0].phone_number
-                    update_fields["twilio_number_sid"] = numbers[0].sid
+                voice_url = f"{get_backend_public_url()}/api/twilio/incoming"
+                candidates = twilio_client.available_phone_numbers("US").local.list(
+                    sms_enabled=True,
+                    voice_enabled=True,
+                    limit=1,
+                )
+                if candidates:
+                    purchased = twilio_client.incoming_phone_numbers.create(
+                        phone_number=candidates[0].phone_number,
+                        voice_url=voice_url,
+                        voice_method="POST",
+                    )
+                    update_fields["phone_number"] = purchased.phone_number
+                    update_fields["twilio_number_sid"] = purchased.sid
+                    logger.info(f"Auto-provisioned Twilio number {purchased.phone_number} for restaurant {data.restaurant_id}")
+                else:
+                    logger.warning("No available Twilio numbers found during onboarding")
         except Exception as e:
-            logger.warning(f"Could not auto-assign Twilio number: {e}")
+            logger.warning(f"Could not auto-provision Twilio number: {e}")
 
     result = await db.restaurants.update_one({"id": data.restaurant_id}, {"$set": update_fields})
     if result.matched_count == 0:
