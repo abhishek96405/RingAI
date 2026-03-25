@@ -1772,6 +1772,7 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
             delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True)),
             delivery_minimum=config.get("delivery_minimum", 1500),
             restaurant_timezone=restaurant.get("timezone", "UTC"),
+            restaurant_address=restaurant.get("address"),
         )
 
     transcript = []
@@ -2268,6 +2269,7 @@ async def twilio_incoming_call(request: Request):
         escalation_phone=config.get("escalation_phone_number") if config else None,
         operating_hours=config.get("operating_hours") if config else None,
         restaurant_timezone=restaurant.get("timezone", "UTC"),
+        restaurant_address=restaurant.get("address"),
         services=services,
     )
 
@@ -2712,6 +2714,7 @@ async def run_test_scenario(
         delivery_minimum=config.get("delivery_minimum", 1500),
         operating_hours=config.get("operating_hours"),
         restaurant_timezone=restaurant.get("timezone", "UTC"),
+        restaurant_address=restaurant.get("address"),
         services=services,  # For appointment businesses
     )
 

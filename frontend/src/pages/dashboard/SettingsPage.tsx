@@ -322,6 +322,19 @@ const SettingsPage = () => {
                   <Switch checked={config?.upsell_enabled || false} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
                 </div>
               )}
+              {!isAppointmentBusiness && config?.delivery_enabled && (
+                <div className="space-y-2">
+                  <Label>Delivery Minimum ($)</Label>
+                  <Input
+                    type="number"
+                    value={((config?.delivery_minimum || 1500) / 100).toFixed(2)}
+                    onChange={(e) => setConfig({ ...config, delivery_minimum: Math.round(parseFloat(e.target.value || "0") * 100) })}
+                    step="0.01"
+                    min="0"
+                    className="h-11 rounded-xl"
+                  />
+                </div>
+              )}
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                 <div><p className="text-sm font-medium">Voicemail Enabled</p><p className="text-xs text-muted-foreground">Allow voicemail after hours</p></div>
                 <Switch checked={config?.voicemail_enabled || false} onCheckedChange={(v) => setConfig({ ...config, voicemail_enabled: v })} />

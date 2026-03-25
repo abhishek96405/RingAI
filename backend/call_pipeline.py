@@ -197,13 +197,13 @@ class CallSession:
     # Order confirmed — dispatch then hang up
     # ------------------------------------------------------------------
 
-    async def _handle_order_confirmed(self):
-        self._hangup_scheduled = True  # set immediately to block on_client_disconnected
-        await self.dispatch_order_if_ready()
-        # Fire on_call_complete immediately
+    async def _handle_appointment_confirmed(self):
+        """Handle appointment businesses — dispatch booking then hang up."""
+        self._hangup_scheduled = True
+        await self.dispatch_booking()
         if self._on_call_complete:
             try:
-                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_order_confirmed")
+                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_appointment_confirmed")
                 await self._on_call_complete(
                     call_sid=self.call_sid,
                     restaurant_id=self.restaurant_id,
@@ -212,9 +212,8 @@ class CallSession:
                 )
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        # Reset flag so _schedule_hangup can proceed
         self._hangup_scheduled = False
-        await self._schedule_hangup(reason="order_confirmed")
+        await self._schedule_hangup(reason="appointment_confirmed")
 
     # ------------------------------------------------------------------
     # Schedule hangup — calls on_call_complete FIRST, then terminates
@@ -429,7 +428,7 @@ async def create_call_pipeline(
             http_options={"api_version": "v1alpha"},
             vad=GeminiVADParams(
                 start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
-                end_sensitivity=EndSensitivity.END_SENSITIVITY_LOW,
+                end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
             ),
             proactivity={"proactive_audio": True},
         )
@@ -451,17 +450,58 @@ async def create_call_pipeline(
                     if full_text:
                         logger.info(f"[{call_sid}] AI: {full_text}")
                         session.add_transcript_entry("ai", full_text)
-                        # Fire menu SMS if AI sends menu trigger phrase
-                        if "i'll text you" in full_text.lower() and "menu" in full_text.lower():
+
+                        text_lower = full_text.lower()
+
+                        # ── Menu SMS trigger ──
+                        if "i'll text you" in text_lower and "menu" in text_lower:
                             from gemini_service import send_menu_sms
                             asyncio.create_task(send_menu_sms(
-                           
                                 caller_number=session.caller_number,
                                 restaurant_name=session.restaurant.get("name", "the restaurant"),
                                 restaurant_id=session.restaurant_id,
                                 base_url="https://ringai-v2.onrender.com",
                             ))
                             logger.info(f"[{call_sid}] Menu SMS triggered")
+
+                        # ── ORDER_CONFIRMED signal (restaurant) ──
+                        order_confirmed_phrases = [
+                            "your order is confirmed",
+                            "order is confirmed",
+                            "i'll send you a text confirmation",
+                            "sending you a text confirmation",
+                            "ready in about",
+                            "thank you for calling",
+                        ]
+                        if (
+                            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                            and any(p in text_lower for p in order_confirmed_phrases)
+                        ):
+                            business_type = session.business_type
+                            if business_type == "restaurant":
+                                logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
+                                session.order.transition(OrderState.CONFIRMED, "signal")
+                                asyncio.create_task(session._handle_order_confirmed())
+
+                        # ── APPOINTMENT_CONFIRMED signal (appointment businesses) ──
+                        appointment_confirmed_phrases = [
+                            "your appointment is confirmed",
+                            "appointment is confirmed",
+                            "appointment has been confirmed",
+                            "i'll send you a text confirmation",
+                            "we'll see you",
+                            "we look forward to seeing you",
+                        ]
+                        if (
+                            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                            and any(p in text_lower for p in appointment_confirmed_phrases)
+                        ):
+                            business_type = session.config.get("business_type", "restaurant")
+                            if business_type in ("clinic", "salon", "home_services", "legal"):
+                                logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
+                                session.order.transition(OrderState.CONFIRMED, "signal")
+                                asyncio.create_task(session._handle_appointment_confirmed())
+
                 return await original_turn_complete(message, *args, **kwargs)
 
             gemini_live._handle_msg_turn_complete = patched_turn_complete

@@ -191,17 +191,18 @@ class MenuIndex:
         return None
 
     def as_prompt_text(self) -> str:
-        """Compact menu text for embedding in system prompt."""
+        """Ultra-compact menu for system prompt — minimizes token count."""
         lines = []
         categories: Dict[str, List] = {}
         for item in self.items.values():
             categories.setdefault(item.get("category", "Other"), []).append(item)
         for cat, cat_items in sorted(categories.items()):
-            lines.append(f"\n[{cat.upper()}]")
-            for item in cat_items:
-                price = f"${item['price'] / 100:.2f}"
-                allergens = f" ⚠ {', '.join(item['allergens'])}" if item.get("allergens") else ""
-                lines.append(f"  • {item['name']} {price}{allergens}")
+            items_str = " | ".join(
+                f"{item['name']} ${item['price']/100:.2f}"
+                + (f"[!{','.join(item['allergens'])}]" if item.get("allergens") else "")
+                for item in cat_items
+            )
+            lines.append(f"{cat.upper()}: {items_str}")
         return "\n".join(lines)
 
     def category_names(self) -> List[str]:
@@ -737,6 +738,7 @@ def build_system_prompt(
     escalation_phone: Optional[str] = None,
     operating_hours: Optional[Dict] = None,
     restaurant_timezone: str = "UTC",
+    restaurant_address: Optional[str] = None,
 ) -> str:
     menu_index = MenuIndex(menu_items)
     menu_examples = generate_menu_examples(menu_index)
@@ -984,6 +986,7 @@ BUSINESS RULES
 ═══════════════════════════
 {rules_block}
 {delivery_section}
+{f"ADDRESS: {restaurant_address}" if restaurant_address else ""}
 CURRENT TIME: {current_time_str}
 OPERATING HOURS:
 {hours_block if hours_block else "  Hours not available"}
@@ -1000,18 +1003,28 @@ This is a backend trigger — say it clearly once, then stop speaking.
 ═══════════════════════════
 EDGE CASES
 ═══════════════════════════
-- Silence >4 seconds: "Are you still there? Take your time."
-- "My usual": "I don't have your order history. What would you like today?"
+- Silence >3 seconds: "Sorry about that — I'm here! What can I get for you?"
+- Silence >4 seconds mid-order: "Take your time — I'm still here."
+- "My usual": "I don't have your order history — what would you like today?"
 - Customer frustrated: slow down, never rush, escalate if it worsens.
 - Discount request: "I can't apply discounts on this call — ask our team at pickup."
 - Outside hours: tell them hours and next opening time, wish them well.
 - Customer says "Hello" or "Are you there" mid-order: do NOT restart. Continue where you left off.
-- After readback silence >5 seconds: ask ONCE "Just to confirm — does that sound right?" then wait. Do not repeat.
+- After readback silence >5 seconds: ask ONCE "Just to confirm — does that sound right?" then wait.
 - After readback, if customer says "yes", "yeah", "yep", "sounds good", "correct", "that's right", or any affirmative — IMMEDIATELY go to STEP 5.
 - If customer says "Do you have..." and pauses — wait silently. They are mid-thought.
 - If customer says "I also want..." or "And..." and pauses — wait. Give them 3-4 seconds.
 - If pause extends beyond 5 seconds — gently ask: "Take your time — what were you thinking of adding?"
 - NEVER suggest an item before the customer finishes their sentence.
+- Wrong number / misdial: "This is [restaurant_name] — were you trying to reach us? We'd love to help with an order!"
+- Customer asks about parking/wifi/seating: "I handle orders and reservations — for other questions, I can connect you with the team."
+- Customer is clearly a child: keep it friendly, take the order normally, no changes needed.
+- Customer speaks in another language: respond in the same language if possible, otherwise: "I'll do my best to help — can you say that in English?"
+- Customer gives very long order all at once: let them finish completely, then confirm all items together.
+- Customer changes mind mid-order: "Of course! I've removed the [item]. Anything else?"
+- Customer asks "are you a robot?": "I'm the virtual assistant for {restaurant_name} — I'm here to help with your order!"
+- Customer asks to repeat something: repeat it clearly and concisely.
+- Background noise / unclear audio: "Sorry, I didn't catch that — could you say that again?"
 
 ═══════════════════════════
 NEVER DO THESE

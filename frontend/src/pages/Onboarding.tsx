@@ -200,6 +200,10 @@ export default function Onboarding() {
       toast.error(`${getBusinessLabel()} name is required`);
       return;
     }
+    if (!restaurantData.address?.trim()) {
+      toast.error("Business address is required");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -444,8 +448,13 @@ export default function Onboarding() {
             </div>
 
             <div className="space-y-2">
-              <Label>Address</Label>
-              <Input value={restaurantData.address} onChange={(e) => setRestaurantData({ ...restaurantData, address: e.target.value })} className="h-11 rounded-xl" />
+              <Label>Address <span className="text-destructive">*</span></Label>
+              <Input 
+                value={restaurantData.address} 
+                onChange={(e) => setRestaurantData({ ...restaurantData, address: e.target.value })} 
+                className="h-11 rounded-xl" 
+                placeholder="123 Main St, Chicago, IL 60601"
+              />
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
