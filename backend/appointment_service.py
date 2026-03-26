@@ -302,47 +302,26 @@ JSON:"""
             model="gemini-2.5-flash",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=400,
+            max_tokens=2000,
         )
-        
         raw = response.choices[0].message.content.strip()
-        logger.info(f"Booking extraction raw: {raw[:300]}")
-        
-        # Parse JSON
-        if "```json" in raw:
-            raw = raw.split("```json")[1].split("```")[0].strip()
-        elif "```" in raw:
-            raw = raw.split("```")[1].split("```")[0].strip()
-        
-        # Find JSON object
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start >= 0 and end > start:
-            raw = raw[start:end + 1]
-        elif start >= 0:
-            # JSON was truncated — attempt repair
-            raw = raw[start:]
-            # Remove incomplete last field
-            last_comma = raw.rfind(",")
-            last_quote = raw.rfind('"')
-            if last_comma > 0 and last_quote > last_comma:
-                raw = raw[:last_comma] + "}"
-            elif last_comma > 0:
-                raw = raw[:last_comma] + "}"
-            else:
-                raw = raw + '"}'
-            logger.warning(f"Repaired truncated JSON: {raw[:200]}")
+        logger.info(f"Booking extraction raw: {raw[:500]}")
+
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as je:
-            logger.error(f"JSON repair failed: {je} — raw: {raw[:200]}")
+            from gemini_service import _repair_json
+            data = json.loads(_repair_json(raw))
+        except Exception:
+            logger.error(f"Could not parse booking extraction JSON: {raw[:200]}")
             return None
-        
+
         if not data.get("booking_confirmed"):
             return None
-        
+
+        if not data.get("service_name") or not data.get("customer_name"):
+            logger.warning(f"Booking extraction incomplete: {data}")
+            return None
+
         return data
-        
     except Exception as e:
         logger.error(f"Booking extraction error: {e}")
         return None
