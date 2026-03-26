@@ -395,7 +395,7 @@ async def dispatch_appointment(
                 time_str = preferred_time
                 
                 # Parse time (handle various formats)
-                from datetime import datetime
+                from datetime import datetime, timezone, timedelta
                 if ":" in time_str:
                     time_str = time_str.upper().replace(".", "").strip()
                     if "AM" in time_str or "PM" in time_str:
