@@ -747,7 +747,7 @@ def build_system_prompt(
         import pytz
         tz = pytz.timezone(restaurant_timezone)
         local_now = datetime.now(tz)
-        current_time_str = local_now.strftime("%A, %I:%M %p %Z")
+        current_time_str = local_now.strftime("%A, %B %d %Y, %I:%M %p %Z")
         current_day = local_now.strftime("%A").lower()
         current_minutes = local_now.hour * 60 + local_now.minute
         is_open = True
@@ -790,7 +790,7 @@ def build_system_prompt(
         open_status = "OPEN" if is_open else "CLOSED"
     except Exception as e:
         logger.error(f"Timezone error for '{restaurant_timezone}': {e}", exc_info=True)
-        current_time_str = datetime.now(timezone.utc).strftime("%A, %I:%M %p UTC")
+        current_time_str = datetime.now(timezone.utc).strftime("%A, %B %d %Y, %I:%M %p UTC")
         open_status = "OPEN"
         logger.warning("Defaulting to OPEN status due to timezone error")
 

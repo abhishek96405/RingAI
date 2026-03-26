@@ -348,6 +348,8 @@ class CallSession:
             self.transcript,
             self.services,
         )
+        if booking:
+            booking["customer_phone"] = self.caller_number
 
         if not booking:
             logger.info(f"[{self.call_sid}] No confirmed booking found in transcript")
