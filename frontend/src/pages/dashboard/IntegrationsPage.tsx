@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube } from "lucide-react";
+import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 
 const IntegrationsPage = () => {
@@ -17,18 +17,21 @@ const IntegrationsPage = () => {
   const [areaCode, setAreaCode] = useState("");
   const [existingNumber, setExistingNumber] = useState("");
   const [loading, setLoading] = useState(true);
+  const [calendarConnected, setCalendarConnected] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const [testModeRes, statusRes, twilioRes] = await Promise.all([
+      const [testModeRes, statusRes, twilioRes, calendarRes] = await Promise.all([
         getTestModeStatus(),
         getStatus(),
         getTwilioStatus(restaurantId),
+        getCalendarStatus(restaurantId).catch(() => ({ data: { connected: false } })),
       ]);
       setTestMode(testModeRes.data);
       setStatus(statusRes.data);
       setTwilioStatusState(twilioRes.data);
+      setCalendarConnected(calendarRes.data?.connected || false);
     } catch {
       toast.error("Failed to load integrations");
     } finally {
@@ -77,6 +80,30 @@ const IntegrationsPage = () => {
     }
   };
 
+  const connectCalendar = async () => {
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      const res = await connectGoogleCalendar(restaurantId);
+      const url = res?.data?.authorization_url;
+      if (!url) return toast.error("Google Calendar connect URL not available");
+      window.location.href = url;
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Google Calendar not configured — check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render");
+    }
+  };
+
+  const disconnectCalendar = async () => {
+    if (!confirm("Disconnect Google Calendar?")) return;
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      await disconnectGoogleCalendar(restaurantId);
+      setCalendarConnected(false);
+      toast.success("Google Calendar disconnected");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to disconnect");
+    }
+  };
+
   if (loading) return <Card className="premium-card h-48 animate-pulse" />;
 
   return (
@@ -104,6 +131,32 @@ const IntegrationsPage = () => {
           <Button variant="outline" onClick={assignExistingNumber}>Assign Existing Number</Button>
           <Button variant="outline" onClick={connectSquare}>Connect Square</Button>
         </div>
+      </Card>
+
+      <Card className="premium-card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-5 h-5 text-primary" />
+            <h3 className="font-display font-bold text-lg">Google Calendar</h3>
+          </div>
+          {calendarConnected && (
+            <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1">
+              <CheckCircle2 className="w-3 h-3" /> Connected
+            </Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Sync appointments directly to your Google Calendar. New bookings will appear automatically.
+        </p>
+        {calendarConnected ? (
+          <Button variant="outline" className="text-destructive" onClick={disconnectCalendar}>
+            Disconnect Google Calendar
+          </Button>
+        ) : (
+          <Button className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90" onClick={connectCalendar}>
+            Connect Google Calendar
+          </Button>
+        )}
       </Card>
 
       <Card className="premium-card p-6">
