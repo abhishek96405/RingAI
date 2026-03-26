@@ -162,6 +162,8 @@ class CallSession:
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
+        
+        self.db = None  # Set by create_call_pipeline
 
         # Set by create_call_pipeline after task is created
         self._pipeline_task: Optional[Any] = None
@@ -200,7 +202,7 @@ class CallSession:
     async def _handle_appointment_confirmed(self):
         """Handle appointment businesses — dispatch booking then hang up."""
         self._hangup_scheduled = True
-        await self.dispatch_booking()
+        await self.dispatch_booking(db=self.db)
         if self._on_call_complete:
             try:
                 logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_appointment_confirmed")
@@ -551,6 +553,12 @@ async def create_call_pipeline(
             session._pipeline_task = task
             if on_call_complete:
                 session._on_call_complete = on_call_complete
+            # Pass db reference for appointment booking persistence
+            try:
+                from server import db as app_db
+                session.db = app_db
+            except Exception:
+                pass
 
         from pipecat.processors.aggregators.llm_response import LLMMessagesAppendFrame
 

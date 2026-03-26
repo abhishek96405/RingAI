@@ -445,6 +445,33 @@ async def dispatch_appointment(
         except Exception as e:
             logger.error(f"Appointment SMS failed: {e}")
     
+    # Save appointment to database
+    if db is not None:
+        try:
+            import uuid
+            from datetime import datetime, timezone
+            appointment_doc = {
+                "id": str(uuid.uuid4()),
+                "restaurant_id": restaurant.get("id", ""),
+                "customer_name": customer_name,
+                "customer_phone": customer_phone,
+                "customer_email": customer_email,
+                "service_name": service_name,
+                "scheduled_date": preferred_date,
+                "scheduled_time": preferred_time,
+                "duration_minutes": duration_minutes,
+                "status": "confirmed",
+                "calendar_event_id": result.get("calendar_event_id"),
+                "special_instructions": booking.get("special_instructions", ""),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": None,
+            }
+            await db.appointments.insert_one(appointment_doc)
+            logger.info(f"Appointment saved to database: {appointment_doc['id']}")
+            result["appointment_id"] = appointment_doc["id"]
+        except Exception as e:
+            logger.error(f"Failed to save appointment to database: {e}")
+
     result["success"] = True
     return result
 
