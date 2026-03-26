@@ -269,9 +269,11 @@ async def extract_booking_from_transcript(
     # Build services list for prompt
     services_list = ", ".join(s.get("name", "Service") for s in services) if services else "General Appointment"
     
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     prompt = f"""Extract the appointment booking details from this call transcript.
+Today's date is {today}. Use this to resolve relative dates like "tomorrow", "next Monday", etc.
 Return ONLY valid JSON, no markdown.
-
 Available services: {services_list}
 
 Required JSON format:
