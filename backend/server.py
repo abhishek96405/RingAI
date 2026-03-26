@@ -182,6 +182,51 @@ def get_frontend_url() -> str:
     return os.environ.get("FRONTEND_URL", "http://localhost:8080").rstrip("/")
 
 
+async def auto_detect_timezone(address: str) -> Optional[str]:
+    """Auto-detect timezone from address using Google Maps Geocoding + Timezone API."""
+    maps_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not maps_key or not address:
+        return None
+    try:
+        import httpx
+        import time
+
+        # Step 1: Geocode address to lat/lng
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            geo_res = await client.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={"address": address, "key": maps_key}
+            )
+            geo_data = geo_res.json()
+
+        if not geo_data.get("results"):
+            logger.warning(f"Geocoding failed for address: {address}")
+            return None
+
+        location = geo_data["results"][0]["geometry"]["location"]
+        lat, lng = location["lat"], location["lng"]
+
+        # Step 2: Get timezone from coordinates
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            tz_res = await client.get(
+                "https://maps.googleapis.com/maps/api/timezone/json",
+                params={
+                    "location": f"{lat},{lng}",
+                    "timestamp": int(time.time()),
+                    "key": maps_key,
+                }
+            )
+            tz_data = tz_res.json()
+
+        tz = tz_data.get("timeZoneId")
+        if tz:
+            logger.info(f"Auto-detected timezone: {tz} for address: {address}")
+        return tz
+    except Exception as e:
+        logger.warning(f"Could not auto-detect timezone for '{address}': {e}")
+        return None
+
+
 # ============================================================
 # PYDANTIC MODELS
 # ============================================================
@@ -690,7 +735,15 @@ async def select_restaurant(data: RestaurantSelection, user: Dict[str, Any] = De
 
 @api_router.post("/restaurants", response_model=Restaurant)
 async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depends(get_current_user)):
-    restaurant = Restaurant(**data.model_dump())
+    restaurant_data = data.model_dump()
+
+    # Auto-detect timezone from address if not explicitly set
+    if restaurant_data.get("address") and restaurant_data.get("timezone") == "America/Chicago":
+        detected_tz = await auto_detect_timezone(restaurant_data["address"])
+        if detected_tz:
+            restaurant_data["timezone"] = detected_tz
+
+    restaurant = Restaurant(**restaurant_data)
     doc = restaurant.model_dump()
     await db.restaurants.insert_one(doc)
     membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner")
@@ -715,6 +768,14 @@ async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Di
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Auto-detect timezone if address changed
+    if "address" in update_data and update_data["address"]:
+        detected_tz = await auto_detect_timezone(update_data["address"])
+        if detected_tz:
+            update_data["timezone"] = detected_tz
+            logger.info(f"Updated timezone to {detected_tz} for restaurant {restaurant_id}")
+
     result = await db.restaurants.update_one({"id": restaurant_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")

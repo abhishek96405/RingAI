@@ -460,16 +460,10 @@ export default function Onboarding() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Timezone</Label>
-                <Select value={restaurantData.timezone} onValueChange={(v) => setRestaurantData({ ...restaurantData, timezone: v })}>
-                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="America/New_York">Eastern</SelectItem>
-                    <SelectItem value="America/Chicago">Central</SelectItem>
-                    <SelectItem value="America/Denver">Mountain</SelectItem>
-                    <SelectItem value="America/Los_Angeles">Pacific</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                <div className="h-11 rounded-xl bg-muted/30 border border-border/50 flex items-center px-3 text-sm text-muted-foreground">
+                  Auto-detected from address
+                </div>
+              </div>-
               <div className="space-y-2">
                 <Label>Primary Language</Label>
                 <Select value={restaurantData.primary_language} onValueChange={(v) => setRestaurantData({ ...restaurantData, primary_language: v })}>
