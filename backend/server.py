@@ -2284,6 +2284,7 @@ async def twilio_incoming_call(request: Request):
             "restaurant": restaurant,
             "config": config or {},
             "menu_items": menu_items,
+            "services": services,
         }},
         upsert=True,
     )
@@ -2333,6 +2334,7 @@ async def twilio_media_stream(websocket: WebSocket):
         menu_items = active_call.get("menu_items", [])
 
         # ── Create isolated call session for order tracking ──
+        services = active_call.get("services", [])
         session = CallSession(
             call_sid=call_sid,
             restaurant_id=restaurant_id,
@@ -2340,6 +2342,7 @@ async def twilio_media_stream(websocket: WebSocket):
             restaurant=restaurant,
             config=config or {},
             menu_items=menu_items,
+            services=services,
         )
 
         async def on_call_complete(call_sid, restaurant_id, transcript, session=None):
