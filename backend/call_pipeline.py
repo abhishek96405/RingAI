@@ -401,7 +401,7 @@ async def create_call_pipeline(
     try:
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
         model   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview")
-        voice   = os.environ.get("GEMINI_VOICE", "Aoede")
+        voice   = os.environ.get("GEMINI_VOICE", "Leda")
 
         logger.info(f"[{call_sid}] Starting pipeline | model={model} voice={voice}")
 
