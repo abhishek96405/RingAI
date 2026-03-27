@@ -406,12 +406,20 @@ async def dispatch_appointment(
                     time_obj = datetime.strptime("09:00", "%H:%M")  # default
                 
                 # Combine with date
+                import pytz
+                # Use business timezone if available, fallback to UTC
+                tz_str = restaurant.get("timezone", "UTC")
+                try:
+                    tz = pytz.timezone(tz_str)
+                except Exception:
+                    tz = pytz.utc
+
                 start_dt = datetime.strptime(date_str, "%Y-%m-%d")
                 start_dt = start_dt.replace(
                     hour=time_obj.hour,
                     minute=time_obj.minute,
-                    tzinfo=timezone.utc
                 )
+                start_dt = tz.localize(start_dt)
                 end_dt = start_dt + timedelta(minutes=duration_minutes)
                 
                 # Create event
