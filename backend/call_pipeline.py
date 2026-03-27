@@ -446,70 +446,77 @@ async def create_call_pipeline(
         if session:
             _ai_buffer: List[str] = []
 
+            async def _process_ai_buffer():
+                """Flush AI buffer and run signal detection. Safe to call multiple times."""
+                if not _ai_buffer:
+                    return
+                full_text = "".join(_ai_buffer).strip()
+                _ai_buffer.clear()
+                if not full_text:
+                    return
+                logger.info(f"[{call_sid}] AI: {full_text}")
+                session.add_transcript_entry("ai", full_text)
+                text_lower = full_text.lower()
+                # ── Menu SMS trigger ──
+                if "i'll text you" in text_lower and "menu" in text_lower:
+                    from gemini_service import send_menu_sms
+                    asyncio.create_task(send_menu_sms(
+                        caller_number=session.caller_number,
+                        restaurant_name=session.restaurant.get("name", "the restaurant"),
+                        restaurant_id=session.restaurant_id,
+                        base_url="https://ringai-v2.onrender.com",
+                    ))
+                    logger.info(f"[{call_sid}] Menu SMS triggered")
+                # ── ORDER_CONFIRMED signal (restaurant) ──
+                order_confirmed_phrases = [
+                    "your order is confirmed",
+                    "order is confirmed",
+                    "i'll send you a text confirmation",
+                    "sending you a text confirmation",
+                    "ready in about",
+                    "thank you for calling",
+                ]
+                if (
+                    session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                    and any(p in text_lower for p in order_confirmed_phrases)
+                ):
+                    business_type = session.business_type
+                    if business_type == "restaurant":
+                        logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
+                        session.order.transition(OrderState.CONFIRMED, "signal")
+                        asyncio.create_task(session._handle_order_confirmed())
+                # ── APPOINTMENT_CONFIRMED signal (appointment businesses) ──
+                appointment_confirmed_phrases = [
+                    "your appointment is confirmed",
+                    "appointment is confirmed",
+                    "appointment has been confirmed",
+                    "i'll send you a text confirmation",
+                    "we'll see you",
+                    "we look forward to seeing you",
+                ]
+                if (
+                    session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                    and any(p in text_lower for p in appointment_confirmed_phrases)
+                ):
+                    business_type = session.config.get("business_type", "restaurant")
+                    if business_type in ("clinic", "salon", "home_services", "legal"):
+                        logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
+                        session.order.transition(OrderState.CONFIRMED, "signal")
+                        asyncio.create_task(session._handle_appointment_confirmed())
+
             original_turn_complete = gemini_live._handle_msg_turn_complete
-
             async def patched_turn_complete(message, *args, **kwargs):
-                if _ai_buffer:
-                    full_text = "".join(_ai_buffer).strip()
-                    _ai_buffer.clear()
-                    if full_text:
-                        logger.info(f"[{call_sid}] AI: {full_text}")
-                        session.add_transcript_entry("ai", full_text)
-
-                        text_lower = full_text.lower()
-
-                        # ── Menu SMS trigger ──
-                        if "i'll text you" in text_lower and "menu" in text_lower:
-                            from gemini_service import send_menu_sms
-                            asyncio.create_task(send_menu_sms(
-                                caller_number=session.caller_number,
-                                restaurant_name=session.restaurant.get("name", "the restaurant"),
-                                restaurant_id=session.restaurant_id,
-                                base_url="https://ringai-v2.onrender.com",
-                            ))
-                            logger.info(f"[{call_sid}] Menu SMS triggered")
-
-                        # ── ORDER_CONFIRMED signal (restaurant) ──
-                        order_confirmed_phrases = [
-                            "your order is confirmed",
-                            "order is confirmed",
-                            "i'll send you a text confirmation",
-                            "sending you a text confirmation",
-                            "ready in about",
-                            "thank you for calling",
-                        ]
-                        if (
-                            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                            and any(p in text_lower for p in order_confirmed_phrases)
-                        ):
-                            business_type = session.business_type
-                            if business_type == "restaurant":
-                                logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
-                                session.order.transition(OrderState.CONFIRMED, "signal")
-                                asyncio.create_task(session._handle_order_confirmed())
-
-                        # ── APPOINTMENT_CONFIRMED signal (appointment businesses) ──
-                        appointment_confirmed_phrases = [
-                            "your appointment is confirmed",
-                            "appointment is confirmed",
-                            "appointment has been confirmed",
-                            "i'll send you a text confirmation",
-                            "we'll see you",
-                            "we look forward to seeing you",
-                        ]
-                        if (
-                            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                            and any(p in text_lower for p in appointment_confirmed_phrases)
-                        ):
-                            business_type = session.config.get("business_type", "restaurant")
-                            if business_type in ("clinic", "salon", "home_services", "legal"):
-                                logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
-                                session.order.transition(OrderState.CONFIRMED, "signal")
-                                asyncio.create_task(session._handle_appointment_confirmed())
-
+                await _process_ai_buffer()
                 return await original_turn_complete(message, *args, **kwargs)
-
             gemini_live._handle_msg_turn_complete = patched_turn_complete
+
+            original_handle_output = gemini_live._handle_msg_output_transcription
+            async def patched_handle_output(message, *args, **kwargs):
+                result = await original_handle_output(message, *args, **kwargs)
+                # Gemini 3.1: turn_complete requires usage_metadata — flush here too
+                await _process_ai_buffer()
+                return result
+            gemini_live._handle_msg_output_transcription = patched_handle_output
 
             original_push_output = gemini_live._push_output_transcription_text_frames
 
@@ -596,16 +603,6 @@ async def create_call_pipeline(
             await task.queue_frame(LLMMessagesAppendFrame(
                 messages=[{"role": "user", "content": "BEGIN_CALL"}],
                 run_llm=True,
-            ))
-            # Warmup: while greeting plays, prime KV cache with a silent
-            # synthetic exchange so first real customer turn hits warm context
-            await asyncio.sleep(4.0)
-            await task.queue_frame(LLMMessagesAppendFrame(
-                messages=[
-                    {"role": "user", "content": "[WARMUP]"},
-                    {"role": "assistant", "content": "[ready]"},
-                ],
-                run_llm=False,
             ))
 
         # ------------------------------------------------------------------

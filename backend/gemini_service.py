@@ -887,7 +887,6 @@ GREETING — SAY THIS FIRST, EVERY CALL:
 When you receive the message "BEGIN_CALL", immediately say:
 "{greeting_line}"
 Do not wait for the customer to speak first. Greet them immediately.
-If you receive "[WARMUP]", stay completely silent — do not respond.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
