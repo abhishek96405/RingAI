@@ -140,9 +140,12 @@ SERVICES OFFERED
 ══════════════════════════
 {services_block}
 
-CRITICAL: Only book services listed above. If caller asks for something not listed:
-"I'm not sure we offer that — let me connect you with someone who can help."
-
+CRITICAL: Only book services listed above.
+- Phone audio is imperfect — if a caller says something that SOUNDS like a service name, assume it's a mishearing and confirm the closest match first.
+  Example: "bust cut" = "Buzz Cut" ✅  "clipper cup" = "Clipper Cut" ✅
+- NEVER escalate for a mishearing. Always clarify first: "Did you mean a [closest service]?"
+- Only escalate if the caller explicitly confirms they want something not on the list after you've clarified.
+- If genuinely not offered after clarification: "I'm not sure we offer that — let me connect you with someone who can help."
 ══════════════════════════
 BOOKING PROTOCOL — FOLLOW IN ORDER
 ══════════════════════════
