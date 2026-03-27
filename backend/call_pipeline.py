@@ -510,14 +510,6 @@ async def create_call_pipeline(
                 return await original_turn_complete(message, *args, **kwargs)
             gemini_live._handle_msg_turn_complete = patched_turn_complete
 
-            original_handle_output = gemini_live._handle_msg_output_transcription
-            async def patched_handle_output(message, *args, **kwargs):
-                result = await original_handle_output(message, *args, **kwargs)
-                # Gemini 3.1: turn_complete requires usage_metadata — flush here too
-                await _process_ai_buffer()
-                return result
-            gemini_live._handle_msg_output_transcription = patched_handle_output
-
             original_push_output = gemini_live._push_output_transcription_text_frames
 
             async def patched_push_output(*args, **kwargs):
@@ -526,6 +518,14 @@ async def create_call_pipeline(
                 return await original_push_output(*args, **kwargs)
 
             gemini_live._push_output_transcription_text_frames = patched_push_output
+
+            original_handle_output = gemini_live._handle_msg_output_transcription
+            async def patched_handle_output(message, *args, **kwargs):
+                result = await original_handle_output(message, *args, **kwargs)
+                # Gemini 3.1: turn_complete requires usage_metadata — flush here too
+                await _process_ai_buffer()
+                return result
+            gemini_live._handle_msg_output_transcription = patched_handle_output
 
             original_push_user = gemini_live._push_user_transcription
 
