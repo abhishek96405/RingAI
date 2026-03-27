@@ -535,6 +535,40 @@ async def create_call_pipeline(
         # ------------------------------------------------------------------
         # Build pipeline
         # ------------------------------------------------------------------
+        from pipecat.processors.user_idle_processor import UserIdleProcessor
+        from pipecat.processors.aggregators.llm_response import LLMMessagesAppendFrame
+
+        async def handle_user_idle(processor, retry_count) -> bool:
+            if retry_count == 1:
+                await task.queue_frame(LLMMessagesAppendFrame(
+                    messages=[{"role": "user", "content": "SYSTEM: Customer silent 4 seconds. Say one brief sentence to check in."}],
+                    run_llm=True,
+                ))
+                return True
+            elif retry_count == 2:
+                await task.queue_frame(LLMMessagesAppendFrame(
+                    messages=[{"role": "user", "content": "SYSTEM: Customer still silent. Ask if they are still there — one sentence."}],
+                    run_llm=True,
+                ))
+                return True
+            else:
+                logger.info(f"[{call_sid}] Customer idle too long — ending call")
+                asyncio.create_task(session._schedule_hangup(reason="customer_idle"))
+                return False
+
+        idle_processor = UserIdleProcessor(
+            callback=handle_user_idle,
+            timeout=4.0,
+        )
+
+        from pipecat.processors.user_idle_processor import UserIdleProcessor
+        from pipecat.processors.aggregators.llm_response import LLMMessagesAppendFrame
+
+        idle_processor = UserIdleProcessor(
+            callback=None,  # will be set after task is created
+            timeout=4.0,
+        )
+
         pipeline = Pipeline([
             transport.input(),
             idle_processor,
@@ -564,7 +598,6 @@ async def create_call_pipeline(
                 pass
 
         from pipecat.processors.aggregators.llm_response import LLMMessagesAppendFrame
-        from pipecat.processors.user_idle_processor import UserIdleProcessor
 
         async def handle_user_idle(processor, retry_count) -> bool:
             if retry_count == 1:
@@ -572,23 +605,19 @@ async def create_call_pipeline(
                     messages=[{"role": "user", "content": "SYSTEM: Customer silent 4 seconds. Say one brief sentence to check in."}],
                     run_llm=True,
                 ))
-                return True  # continue monitoring
+                return True
             elif retry_count == 2:
                 await task.queue_frame(LLMMessagesAppendFrame(
                     messages=[{"role": "user", "content": "SYSTEM: Customer still silent. Ask if they are still there — one sentence."}],
                     run_llm=True,
                 ))
-                return True  # continue monitoring
+                return True
             else:
-                # 3rd retry — hang up
                 logger.info(f"[{call_sid}] Customer idle too long — ending call")
                 asyncio.create_task(session._schedule_hangup(reason="customer_idle"))
-                return False  # stop monitoring
+                return False
 
-        idle_processor = UserIdleProcessor(
-            callback=handle_user_idle,
-            timeout=4.0,
-        )
+        idle_processor._callback = handle_user_idle
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
