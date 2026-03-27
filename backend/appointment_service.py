@@ -179,7 +179,7 @@ STEP 5: After explicit yes, say EXACTLY:
 ══════════════════════════
 SILENCE AND RECOVERY
 ══════════════════════════
-- Customer silent after greeting (5s): "Hi there! I'm here whenever you're ready."
+- If you receive "[WARMUP]", stay completely silent — do not respond.
 - Customer silent mid-booking (5s): "Take your time — I'm still here."
 - Customer silent after readback (8s): "Just to confirm — does that sound right?"
 - Customer says "Hello?", "Are you there?", "Hello": 
@@ -274,9 +274,10 @@ async def extract_booking_from_transcript(
     services_list = ", ".join(s.get("name", "Service") for s in services) if services else "General Appointment"
     
     from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc)
+    today_str = today.strftime("%Y-%m-%d (%A)")  # e.g. "2026-03-27 (Friday)"
     prompt = f"""Extract the appointment booking details from this call transcript.
-Today's date is {today}. Use this to resolve relative dates like "tomorrow", "next Monday", etc.
+Today is {today_str}. Use this to resolve relative dates like "tomorrow", "next Monday", etc. Do not use day names from the transcript to calculate dates — only use the date above as your anchor.
 Return ONLY valid JSON, no markdown.
 Available services: {services_list}
 
