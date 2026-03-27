@@ -428,15 +428,13 @@ async def create_call_pipeline(
             voice=voice,
             transcribe_user_audio=True,
             transcribe_model_output=True,
-            thinking_config={"thinking_budget": 0},
+            thinking_config={"thinking_level": "minimal"},
             http_options={"api_version": "v1alpha"},
             vad=GeminiVADParams(
                 start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
                 end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
                 silence_duration_ms=500,
                 prefix_padding_ms=0,
-            ),
-            proactivity={"proactive_audio": True},
         )
 
         # ------------------------------------------------------------------
