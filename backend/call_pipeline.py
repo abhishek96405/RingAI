@@ -528,8 +528,18 @@ async def create_call_pipeline(
                     text = str(args[0]).strip()
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
                     session.add_transcript_entry("customer", text)
+                    # Reset idle timer — Gemini native audio never emits
+                    # UserStartedSpeakingFrame, so we reset manually here
+                    idle_processor._retry_count = 0
+                    idle_processor._interrupted = True
+                    idle_processor._idle_event.set()
+                    # Un-interrupt after 1s so idle timer resumes if customer goes silent
+                    async def _resume_idle():
+                        await asyncio.sleep(1.0)
+                        idle_processor._interrupted = False
+                        idle_processor._idle_event.set()
+                    asyncio.create_task(_resume_idle())
                 return await original_push_user(*args, **kwargs)
-
             gemini_live._push_user_transcription = patched_push_user
 
         # ------------------------------------------------------------------
