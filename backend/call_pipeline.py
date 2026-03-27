@@ -551,7 +551,7 @@ async def create_call_pipeline(
         async def _idle_placeholder(processor, retry_count) -> bool:
             return False
 
-        idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=4.0)
+        idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=8.0)
 
         pipeline = Pipeline([
             transport.input(),
