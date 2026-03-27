@@ -435,6 +435,7 @@ async def create_call_pipeline(
                 end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
                 silence_duration_ms=500,
                 prefix_padding_ms=0,
+        ),
         )
 
         # ------------------------------------------------------------------
