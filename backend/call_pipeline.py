@@ -39,8 +39,7 @@ try:
     from pipecat.serializers.twilio import TwilioFrameSerializer
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
     from pipecat.frames.frames import (
-        TextFrame, EndFrame, TTSTextFrame,
-        LLMFullResponseEndFrame, TranscriptionFrame, Frame,
+        TextFrame, EndFrame, TranscriptionFrame, Frame,
     )
     from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
     _PIPECAT_AVAILABLE = True
@@ -99,16 +98,9 @@ class AITranscriptProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, TTSTextFrame):
-            if frame.text:
-                self._buffer.append(frame.text)
-
-        elif isinstance(frame, LLMFullResponseEndFrame):
-            if self._buffer:
-                full_text = "".join(self._buffer).strip()
-                self._buffer.clear()
-                if full_text:
-                    await self._process_ai_text(full_text)
+        if isinstance(frame, TranscriptionFrame) and frame.user_id == "assistant":
+            if frame.text and frame.text.strip():
+                await self._process_ai_text(frame.text.strip())
 
         await self.push_frame(frame, direction)
 
@@ -534,6 +526,7 @@ async def create_call_pipeline(
             model=f"models/{model}",
             system_instruction=system_prompt,
             voice_id=voice,
+            transcribe_model_audio=True,
             http_options={"api_version": "v1alpha"},
             params=InputParams(
                 thinking=ThinkingConfig(thinking_level="MINIMAL"),
@@ -617,10 +610,7 @@ async def create_call_pipeline(
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             await asyncio.sleep(0.5)
-            await task.queue_frame(LLMMessagesAppendFrame(
-                messages=[{"role": "user", "content": "BEGIN_CALL"}],
-                run_llm=True,
-            ))
+            await task.queue_frame(TextFrame(text="BEGIN_CALL"))
 
         # ------------------------------------------------------------------
         # Disconnect handler
