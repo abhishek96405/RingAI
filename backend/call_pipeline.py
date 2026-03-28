@@ -128,8 +128,6 @@ class RingAIGeminiLive(GeminiLiveLLMService):
                 await self._on_ai_transcript(full_text)
 
     async def _handle_interruption(self):
-        # Clear buffer on interruption to prevent partial/duplicate text
-        self._ai_text_buffer.clear()
         self._last_captured_from_model_turn = False
         await super()._handle_interruption()
 
