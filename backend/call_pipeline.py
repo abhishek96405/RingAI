@@ -590,6 +590,28 @@ async def create_call_pipeline(
                     session.order.transition(OrderState.CONFIRMED, "signal")
                     asyncio.create_task(session._handle_appointment_confirmed())
 
+            # ── CALL_END signal — explicit end requested by AI ──
+            call_end_phrases = [
+                "call_end",
+                "goodbye!",
+                "have a great day!",
+                "have a good day!",
+                "thanks for calling",
+                "thank you for calling",
+            ]
+            if (
+                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                and any(p in text_lower for p in call_end_phrases)
+            ):
+                logger.info(f"[{call_sid}] Farewell detected — starting 30s goodbye timer")
+                if not hasattr(session, '_farewell_timer') or session._farewell_timer is None:
+                    async def _farewell_hangup():
+                        await asyncio.sleep(30)
+                        if not session._hangup_scheduled:
+                            logger.info(f"[{call_sid}] 30s post-farewell silence — ending call")
+                            asyncio.create_task(session._schedule_hangup(reason="farewell_timeout"))
+                    session._farewell_timer = asyncio.create_task(_farewell_hangup())
+
         gemini_live = RingAIGeminiLive(
             on_ai_transcript=on_ai_transcript,
             api_key=api_key,
@@ -705,35 +727,6 @@ async def create_call_pipeline(
                         logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
                         session.order.transition(OrderState.CONFIRMED, "signal")
                         asyncio.create_task(session._handle_appointment_confirmed())
-
-                # ── Farewell detection — start 30s goodbye timer ──
-                farewell_phrases = [
-                    "anything else i can help",
-                    "anything else you need",
-                    "is there anything else",
-                    "have a great day",
-                    "have a good day",
-                    "goodbye",
-                    "take care",
-                    "glad i could help",
-                    "happy to help",
-                ]
-                if (
-                    session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                    and any(p in text_lower for p in farewell_phrases)
-                ):
-                    if not hasattr(session, '_farewell_timer') or session._farewell_timer is None:
-                        async def _farewell_hangup():
-                            await asyncio.sleep(30)
-                            if not session._hangup_scheduled:
-                                logger.info(f"[{call_sid}] 30s post-farewell silence — ending call")
-                                await task.queue_frame(InputTextRawFrame(
-                                    text="SYSTEM: Customer has not responded for 30 seconds after farewell. Say a brief goodbye and end the call."
-                                ))
-                                await asyncio.sleep(3)
-                                asyncio.create_task(session._schedule_hangup(reason="farewell_timeout"))
-                        session._farewell_timer = asyncio.create_task(_farewell_hangup())
-                        logger.info(f"[{call_sid}] Farewell detected — 30s goodbye timer started")
 
         task = PipelineTask(
             pipeline,
