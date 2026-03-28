@@ -586,13 +586,23 @@ async def create_call_pipeline(
         ])
 
         if session:
+            _greeting_sent = False
+
             @user_aggregator.event_handler("on_user_turn_stopped")
             async def on_user_turn_stopped(aggregator, strategy, message: UserTurnStoppedMessage):
+                nonlocal _greeting_sent
                 text = message.content.strip() if message.content else ""
                 if text:
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
                     session.add_transcript_entry("customer", text)
                     await idle_processor._stop()
+                    if not _greeting_sent:
+                        _greeting_sent = True
+                        from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
+                        await task.queue_frame(LLMMessagesAppendFrame(
+                            messages=[{"role": "user", "content": "BEGIN_CALL"}],
+                            run_llm=True,
+                        ))
 
             @assistant_aggregator.event_handler("on_assistant_turn_stopped")
             async def on_assistant_turn_stopped(aggregator, message: AssistantTurnStoppedMessage):
@@ -691,11 +701,7 @@ async def create_call_pipeline(
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            from pipecat.processors.aggregators.llm_context import LLMContext
-            from pipecat.frames.frames import LLMContextFrame
-            ctx = LLMContext()
-            ctx.add_message({"role": "user", "content": "BEGIN_CALL"})
-            await task.queue_frame(LLMContextFrame(context=ctx))
+            pass  # Greeting fires after customer says hello first
 
         # ------------------------------------------------------------------
         # Disconnect handler
@@ -772,7 +778,7 @@ async def create_call_pipeline(
 def generate_twiml_stream_response(websocket_url: str, call_sid: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="Polly.Joanna">Please hold while we connect you.</Say>
+    <Say voice="Polly.Joanna">Please say hello to get started.</Say>
     <Connect>
         <Stream url="{websocket_url}">
             <Parameter name="callSid" value="{call_sid}" />
