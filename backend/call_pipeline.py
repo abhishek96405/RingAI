@@ -591,24 +591,18 @@ async def create_call_pipeline(
             assistant_aggregator,
         ])
 
-        if session:
-            _greeting_sent = False
 
+        _greeting_sent = False
+        if session:
             @user_aggregator.event_handler("on_user_turn_stopped")
             async def on_user_turn_stopped(aggregator, strategy, message: UserTurnStoppedMessage):
-                nonlocal _greeting_sent
+                # ✅ PROACTIVE GREETING FIX: No longer sends BEGIN_CALL here
+                # BEGIN_CALL is now sent immediately on client connection
                 text = message.content.strip() if message.content else ""
                 if text:
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
                     session.add_transcript_entry("customer", text)
                     await idle_processor._stop()
-                    if not _greeting_sent:
-                        _greeting_sent = True
-                        from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
-                        await task.queue_frame(LLMMessagesAppendFrame(
-                            messages=[{"role": "user", "content": "BEGIN_CALL"}],
-                            run_llm=True,
-                        ))
 
             @assistant_aggregator.event_handler("on_assistant_turn_stopped")
             async def on_assistant_turn_stopped(aggregator, message: AssistantTurnStoppedMessage):
@@ -707,7 +701,17 @@ async def create_call_pipeline(
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            pass  # Greeting fires after customer says hello first
+            # ✅ PROACTIVE GREETING FIX: Send BEGIN_CALL immediately when client connects
+            # This triggers the AI to greet first without waiting for customer
+            nonlocal _greeting_sent
+            if not _greeting_sent:
+                _greeting_sent = True
+                logger.info(f"[{call_sid}] Client connected - triggering proactive greeting")
+                from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
+                await task.queue_frame(LLMMessagesAppendFrame(
+                    messages=[{"role": "user", "content": "BEGIN_CALL"}],
+                    run_llm=True,
+                ))
 
         # ------------------------------------------------------------------
         # Disconnect handler
@@ -784,7 +788,6 @@ async def create_call_pipeline(
 def generate_twiml_stream_response(websocket_url: str, call_sid: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="Polly.Joanna">Please say hello to get started.</Say>
     <Connect>
         <Stream url="{websocket_url}">
             <Parameter name="callSid" value="{call_sid}" />
