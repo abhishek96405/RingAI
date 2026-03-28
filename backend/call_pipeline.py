@@ -68,6 +68,34 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class RingAIGeminiLive(GeminiLiveLLMService):
+    """Subclass capturing AI transcript via _handle_msg_output_transcription."""
+
+    def __init__(self, on_ai_transcript=None, **kwargs):
+        super().__init__(**kwargs)
+        self._on_ai_transcript = on_ai_transcript
+        self._ai_text_buffer: List[str] = []
+
+    async def _handle_msg_output_transcription(self, message):
+        if (
+            message.server_content
+            and message.server_content.output_transcription
+            and message.server_content.output_transcription.text
+        ):
+            self._ai_text_buffer.append(
+                message.server_content.output_transcription.text
+            )
+        await super()._handle_msg_output_transcription(message)
+
+    async def _handle_msg_turn_complete(self, message):
+        if self._ai_text_buffer and self._on_ai_transcript:
+            full_text = "".join(self._ai_text_buffer).strip()
+            self._ai_text_buffer.clear()
+            if full_text:
+                await self._on_ai_transcript(full_text)
+        await super()._handle_msg_turn_complete(message)
+
+
 # ---------------------------------------------------------------------------
 # Availability check
 # ---------------------------------------------------------------------------
@@ -428,12 +456,67 @@ async def create_call_pipeline(
         from pipecat.services.google.gemini_live.llm import GeminiVADParams, EndSensitivity, StartSensitivity, InputParams
         from google.genai.types import ThinkingConfig
 
-        gemini_live = GeminiLiveLLMService(
+        async def on_ai_transcript(full_text: str):
+            if not session:
+                return
+            logger.info(f"[{call_sid}] AI: {full_text}")
+            session.add_transcript_entry("ai", full_text)
+            text_lower = full_text.lower()
+
+            # ── Menu SMS trigger ──
+            if "i'll text you" in text_lower and "menu" in text_lower:
+                from gemini_service import send_menu_sms
+                asyncio.create_task(send_menu_sms(
+                    caller_number=session.caller_number,
+                    restaurant_name=session.restaurant.get("name", "the restaurant"),
+                    restaurant_id=session.restaurant_id,
+                    base_url="https://ringai-v2.onrender.com",
+                ))
+                logger.info(f"[{call_sid}] Menu SMS triggered")
+
+            # ── ORDER_CONFIRMED signal (restaurant) ──
+            order_confirmed_phrases = [
+                "your order is confirmed",
+                "order is confirmed",
+                "i'll send you a text confirmation",
+                "sending you a text confirmation",
+                "ready in about",
+                "thank you for calling",
+            ]
+            if (
+                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                and any(p in text_lower for p in order_confirmed_phrases)
+            ):
+                if session.business_type == "restaurant":
+                    logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
+                    session.order.transition(OrderState.CONFIRMED, "signal")
+                    asyncio.create_task(session._handle_order_confirmed())
+
+            # ── APPOINTMENT_CONFIRMED signal ──
+            appointment_confirmed_phrases = [
+                "your appointment is confirmed",
+                "appointment is confirmed",
+                "appointment has been confirmed",
+                "i'll send you a text confirmation",
+                "we'll see you",
+                "we look forward to seeing you",
+            ]
+            if (
+                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                and any(p in text_lower for p in appointment_confirmed_phrases)
+            ):
+                business_type = session.config.get("business_type", "restaurant")
+                if business_type in ("clinic", "salon", "home_services", "legal"):
+                    logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
+                    session.order.transition(OrderState.CONFIRMED, "signal")
+                    asyncio.create_task(session._handle_appointment_confirmed())
+
+        gemini_live = RingAIGeminiLive(
+            on_ai_transcript=on_ai_transcript,
             api_key=api_key,
             model=f"models/{model}",
             system_instruction=system_prompt,
             voice_id=voice,
-            transcribe_model_audio=True,
             http_options={"api_version": "v1alpha"},
             params=InputParams(
                 thinking=ThinkingConfig(thinking_level="MINIMAL"),
