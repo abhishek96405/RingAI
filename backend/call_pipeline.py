@@ -38,7 +38,7 @@ try:
     )
     from pipecat.serializers.twilio import TwilioFrameSerializer
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
-     from pipecat.frames.frames import TextFrame, EndFrame, TTSTextFrame, LLMFullResponseEndFrame, TranscriptionFrame
+    from pipecat.frames.frames import TextFrame, EndFrame, TTSTextFrame, LLMFullResponseEndFrame, TranscriptionFrame
     from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
     from pipecat.frames.frames import Frame
     _PIPECAT_AVAILABLE = True
