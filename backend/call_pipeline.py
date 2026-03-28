@@ -38,7 +38,11 @@ try:
     )
     from pipecat.serializers.twilio import TwilioFrameSerializer
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
-    from pipecat.frames.frames import TextFrame, EndFrame
+    from pipecat.frames.frames import (
+        TextFrame, EndFrame, TTSTextFrame,
+        LLMFullResponseEndFrame, TranscriptionFrame, Frame,
+    )
+    from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
     _PIPECAT_AVAILABLE = True
 except ImportError as e:
     logging.getLogger(__name__).warning(f"Pipecat not available: {e}")
@@ -60,6 +64,109 @@ except ImportError:
     _APPOINTMENT_SERVICE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+class CustomerTranscriptProcessor(FrameProcessor):
+    """Captures customer TranscriptionFrame (UPSTREAM) placed before gemini_live."""
+
+    def __init__(self, call_sid: str, session, idle_processor=None, **kwargs):
+        super().__init__(**kwargs)
+        self._call_sid = call_sid
+        self._session = session
+        self._idle_processor = idle_processor
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame) and direction == FrameDirection.UPSTREAM:
+            text = frame.text.strip() if frame.text else ""
+            if text:
+                logger.info(f"[{self._call_sid}] CUSTOMER: {text}")
+                self._session.add_transcript_entry("customer", text)
+                if self._idle_processor:
+                    await self._idle_processor._stop()
+        await self.push_frame(frame, direction)
+
+
+class AITranscriptProcessor(FrameProcessor):
+    """Captures AI TTSTextFrame (DOWNSTREAM) placed after gemini_live."""
+
+    def __init__(self, call_sid: str, session, **kwargs):
+        super().__init__(**kwargs)
+        self._call_sid = call_sid
+        self._session = session
+        self._buffer: List[str] = []
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TTSTextFrame):
+            if frame.text:
+                self._buffer.append(frame.text)
+
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            if self._buffer:
+                full_text = "".join(self._buffer).strip()
+                self._buffer.clear()
+                if full_text:
+                    await self._process_ai_text(full_text)
+
+        await self.push_frame(frame, direction)
+
+    async def _process_ai_text(self, full_text: str):
+        from gemini_service import send_menu_sms
+        call_sid = self._call_sid
+        session = self._session
+
+        logger.info(f"[{call_sid}] AI: {full_text}")
+        session.add_transcript_entry("ai", full_text)
+        text_lower = full_text.lower()
+
+        # ── Menu SMS trigger ──
+        if "i'll text you" in text_lower and "menu" in text_lower:
+            asyncio.create_task(send_menu_sms(
+                caller_number=session.caller_number,
+                restaurant_name=session.restaurant.get("name", "the restaurant"),
+                restaurant_id=session.restaurant_id,
+                base_url="https://ringai-v2.onrender.com",
+            ))
+            logger.info(f"[{call_sid}] Menu SMS triggered")
+
+        # ── ORDER_CONFIRMED signal (restaurant) ──
+        order_confirmed_phrases = [
+            "your order is confirmed",
+            "order is confirmed",
+            "i'll send you a text confirmation",
+            "sending you a text confirmation",
+            "ready in about",
+            "thank you for calling",
+        ]
+        if (
+            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+            and any(p in text_lower for p in order_confirmed_phrases)
+        ):
+            if session.business_type == "restaurant":
+                logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
+                session.order.transition(OrderState.CONFIRMED, "signal")
+                asyncio.create_task(session._handle_order_confirmed())
+
+        # ── APPOINTMENT_CONFIRMED signal ──
+        appointment_confirmed_phrases = [
+            "your appointment is confirmed",
+            "appointment is confirmed",
+            "appointment has been confirmed",
+            "i'll send you a text confirmation",
+            "we'll see you",
+            "we look forward to seeing you",
+        ]
+        if (
+            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+            and any(p in text_lower for p in appointment_confirmed_phrases)
+        ):
+            business_type = session.config.get("business_type", "restaurant")
+            if business_type in ("clinic", "salon", "home_services", "legal"):
+                logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
+                session.order.transition(OrderState.CONFIRMED, "signal")
+                asyncio.create_task(session._handle_appointment_confirmed())
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +507,8 @@ async def create_call_pipeline(
 
     try:
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
-        model   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview")
-        voice   = os.environ.get("GEMINI_VOICE", "Aoede")
+        model   = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
+        voice   = os.environ.get("GEMINI_VOICE", "Leda")
 
         logger.info(f"[{call_sid}] Starting pipeline | model={model} voice={voice}")
 
@@ -419,146 +526,56 @@ async def create_call_pipeline(
             ),
         )
 
-        from pipecat.services.google.gemini_live.llm import GeminiVADParams, EndSensitivity, StartSensitivity
+        from pipecat.services.google.gemini_live.llm import GeminiVADParams, EndSensitivity, StartSensitivity, InputParams
+        from google.genai.types import ThinkingConfig
 
         gemini_live = GeminiLiveLLMService(
             api_key=api_key,
             model=f"models/{model}",
             system_instruction=system_prompt,
-            voice=voice,
-            transcribe_user_audio=True,
-            transcribe_model_output=True,
-            thinking_config={"thinking_budget": 0},
+            voice_id=voice,
             http_options={"api_version": "v1alpha"},
-            vad=GeminiVADParams(
-                start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
-                end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
-                silence_duration_ms=500,
-                prefix_padding_ms=0,
+            params=InputParams(
+                thinking=ThinkingConfig(thinking_level="MINIMAL"),
+                vad=GeminiVADParams(
+                    start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
+                    silence_duration_ms=500,
+                    prefix_padding_ms=0,
+                ),
             ),
-            proactivity={"proactive_audio": True},
         )
 
-        # ------------------------------------------------------------------
-        # Patch Gemini's internal handlers to capture transcript
-        # pipecat 0.0.104: GeminiLiveLLMService processes audio natively
-        # and does not emit transcript frames into the pipeline
-        # ------------------------------------------------------------------
-        if session:
-            _ai_buffer: List[str] = []
-
-            original_turn_complete = gemini_live._handle_msg_turn_complete
-
-            async def patched_turn_complete(message, *args, **kwargs):
-                if _ai_buffer:
-                    full_text = "".join(_ai_buffer).strip()
-                    _ai_buffer.clear()
-                    if full_text:
-                        logger.info(f"[{call_sid}] AI: {full_text}")
-                        session.add_transcript_entry("ai", full_text)
-
-                        text_lower = full_text.lower()
-
-                        # ── Menu SMS trigger ──
-                        if "i'll text you" in text_lower and "menu" in text_lower:
-                            from gemini_service import send_menu_sms
-                            asyncio.create_task(send_menu_sms(
-                                caller_number=session.caller_number,
-                                restaurant_name=session.restaurant.get("name", "the restaurant"),
-                                restaurant_id=session.restaurant_id,
-                                base_url="https://ringai-v2.onrender.com",
-                            ))
-                            logger.info(f"[{call_sid}] Menu SMS triggered")
-
-                        # ── ORDER_CONFIRMED signal (restaurant) ──
-                        order_confirmed_phrases = [
-                            "your order is confirmed",
-                            "order is confirmed",
-                            "i'll send you a text confirmation",
-                            "sending you a text confirmation",
-                            "ready in about",
-                            "thank you for calling",
-                        ]
-                        if (
-                            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                            and any(p in text_lower for p in order_confirmed_phrases)
-                        ):
-                            business_type = session.business_type
-                            if business_type == "restaurant":
-                                logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
-                                session.order.transition(OrderState.CONFIRMED, "signal")
-                                asyncio.create_task(session._handle_order_confirmed())
-
-                        # ── APPOINTMENT_CONFIRMED signal (appointment businesses) ──
-                        appointment_confirmed_phrases = [
-                            "your appointment is confirmed",
-                            "appointment is confirmed",
-                            "appointment has been confirmed",
-                            "i'll send you a text confirmation",
-                            "we'll see you",
-                            "we look forward to seeing you",
-                        ]
-                        if (
-                            session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                            and any(p in text_lower for p in appointment_confirmed_phrases)
-                        ):
-                            business_type = session.config.get("business_type", "restaurant")
-                            if business_type in ("clinic", "salon", "home_services", "legal"):
-                                logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
-                                session.order.transition(OrderState.CONFIRMED, "signal")
-                                asyncio.create_task(session._handle_appointment_confirmed())
-
-                return await original_turn_complete(message, *args, **kwargs)
-
-            gemini_live._handle_msg_turn_complete = patched_turn_complete
-
-            original_push_output = gemini_live._push_output_transcription_text_frames
-
-            async def patched_push_output(*args, **kwargs):
-                if args and args[0]:
-                    _ai_buffer.append(str(args[0]))
-                return await original_push_output(*args, **kwargs)
-
-            gemini_live._push_output_transcription_text_frames = patched_push_output
-
-            original_push_user = gemini_live._push_user_transcription
-
-            async def patched_push_user(*args, **kwargs):
-                if args and args[0] and str(args[0]).strip():
-                    text = str(args[0]).strip()
-                    logger.info(f"[{call_sid}] CUSTOMER: {text}")
-                    session.add_transcript_entry("customer", text)
-                    # Reset idle timer — Gemini native audio never emits
-                    # UserStartedSpeakingFrame, so we reset manually here
-                    idle_processor._retry_count = 0
-                    idle_processor._interrupted = True
-                    idle_processor._idle_event.set()
-                    # Un-interrupt after 1s so idle timer resumes if customer goes silent
-                    async def _resume_idle():
-                        await asyncio.sleep(1.0)
-                        idle_processor._interrupted = False
-                        idle_processor._idle_event.set()
-                    asyncio.create_task(_resume_idle())
-                return await original_push_user(*args, **kwargs)
-            gemini_live._push_user_transcription = patched_push_user
-
-        # ------------------------------------------------------------------
+       # ------------------------------------------------------------------
         # Build pipeline
         # ------------------------------------------------------------------
         from pipecat.processors.user_idle_processor import UserIdleProcessor
-        from pipecat.processors.aggregators.llm_response import LLMMessagesAppendFrame
 
         async def _idle_placeholder(processor, retry_count) -> bool:
             return False
-
         idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=8.0)
 
-        pipeline = Pipeline([
-            transport.input(),
-            idle_processor,
-            gemini_live,
-            transport.output(),
-        ])
+        customer_proc = CustomerTranscriptProcessor(
+            call_sid=call_sid,
+            session=session,
+            idle_processor=idle_processor,
+        ) if session else None
+
+        ai_proc = AITranscriptProcessor(
+            call_sid=call_sid,
+            session=session,
+        ) if session else None
+
+        processors = [transport.input(), idle_processor]
+        if customer_proc:
+            processors.append(customer_proc)
+        processors.append(gemini_live)
+        if ai_proc:
+            processors.append(ai_proc)
+        processors.append(transport.output())
+
+        pipeline = Pipeline(processors)
+
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
@@ -581,15 +598,13 @@ async def create_call_pipeline(
 
         async def handle_user_idle(processor, retry_count) -> bool:
             if retry_count == 1:
-                await task.queue_frame(LLMMessagesAppendFrame(
-                    messages=[{"role": "user", "content": "SYSTEM: Customer silent 4 seconds. Say one brief sentence to check in."}],
-                    run_llm=True,
+                await task.queue_frame(TextFrame(
+                    text="SYSTEM: Customer silent. Say one brief sentence to check if they are still there."
                 ))
                 return True
             elif retry_count == 2:
-                await task.queue_frame(LLMMessagesAppendFrame(
-                    messages=[{"role": "user", "content": "SYSTEM: Customer still silent. Ask if they are still there – one sentence."}],
-                    run_llm=True,
+                await task.queue_frame(TextFrame(
+                    text="SYSTEM: Customer still silent. Ask if they are still there — one sentence."
                 ))
                 return True
             else:
