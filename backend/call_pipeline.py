@@ -80,6 +80,8 @@ class AITranscriptProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        logger.debug(f"[{self._call_sid}] AITranscriptProcessor frame: {type(frame).__name__} dir={direction}")
+
         if self._capture_ai and isinstance(frame, TTSTextFrame):
             if frame.text:
                 self._buffer.append(frame.text)
