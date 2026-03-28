@@ -466,8 +466,8 @@ async def create_call_pipeline(
             idle_processor,
             user_aggregator,
             gemini_live,
-            assistant_aggregator,
             transport.output(),
+            assistant_aggregator,
         ])
 
         if session:
