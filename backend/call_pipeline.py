@@ -69,14 +69,33 @@ logger = logging.getLogger(__name__)
 
 
 class RingAIGeminiLive(GeminiLiveLLMService):
-    """Subclass capturing AI transcript via _handle_msg_output_transcription."""
+    """Subclass capturing AI transcript for Gemini 3.1 Flash Live.
+
+    In Gemini 3.1, output_transcription arrives in the SAME message as
+    model_turn. Pipecat's elif chain means _handle_msg_output_transcription
+    never fires when model_turn is present. We capture it in _handle_msg_model_turn
+    instead, and flush at turn_complete.
+    """
 
     def __init__(self, on_ai_transcript=None, **kwargs):
         super().__init__(**kwargs)
         self._on_ai_transcript = on_ai_transcript
         self._ai_text_buffer: List[str] = []
 
+    async def _handle_msg_model_turn(self, message):
+        # Capture output_transcription from same message as model_turn (Gemini 3.1)
+        if (
+            message.server_content
+            and message.server_content.output_transcription
+            and message.server_content.output_transcription.text
+        ):
+            self._ai_text_buffer.append(
+                message.server_content.output_transcription.text
+            )
+        await super()._handle_msg_model_turn(message)
+
     async def _handle_msg_output_transcription(self, message):
+        # Fires when output_transcription arrives as a separate message (fallback)
         if (
             message.server_content
             and message.server_content.output_transcription
@@ -88,12 +107,15 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         await super()._handle_msg_output_transcription(message)
 
     async def _handle_msg_turn_complete(self, message):
+        await self._flush_ai_buffer()
+        await super()._handle_msg_turn_complete(message)
+
+    async def _flush_ai_buffer(self):
         if self._ai_text_buffer and self._on_ai_transcript:
             full_text = "".join(self._ai_text_buffer).strip()
             self._ai_text_buffer.clear()
             if full_text:
                 await self._on_ai_transcript(full_text)
-        await super()._handle_msg_turn_complete(message)
 
 
 # ---------------------------------------------------------------------------
