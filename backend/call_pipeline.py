@@ -38,7 +38,7 @@ try:
     )
     from pipecat.serializers.twilio import TwilioFrameSerializer
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
-    from pipecat.frames.frames import TextFrame, EndFrame, InputTextRawFrame
+    from pipecat.frames.frames import TextFrame, EndFrame, InputTextRawFrame, LLMContextFrame
     from pipecat.processors.aggregators.llm_response_universal import (
         LLMContextAggregatorPair,
         UserTurnStoppedMessage,
@@ -691,8 +691,11 @@ async def create_call_pipeline(
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            from pipecat.frames.frames import InputTextRawFrame
-            await task.queue_frame(InputTextRawFrame(text="BEGIN_CALL"))
+            from pipecat.processors.aggregators.llm_context import LLMContext
+            from pipecat.frames.frames import LLMContextFrame
+            ctx = LLMContext()
+            ctx.add_message({"role": "user", "content": "BEGIN_CALL"})
+            await task.queue_frame(LLMContextFrame(context=ctx))
 
         # ------------------------------------------------------------------
         # Disconnect handler
