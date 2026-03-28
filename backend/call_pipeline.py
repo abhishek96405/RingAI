@@ -81,9 +81,12 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         super().__init__(**kwargs)
         self._on_ai_transcript = on_ai_transcript
         self._ai_text_buffer: List[str] = []
+        self._last_captured_from_model_turn = False
 
     async def _handle_msg_model_turn(self, message):
-        # Capture output_transcription from same message as model_turn (Gemini 3.1)
+        # In Gemini 3.1, output_transcription arrives in the same message as model_turn.
+        # We capture it here and set a flag to prevent double-capture in
+        # _handle_msg_output_transcription if it also fires separately.
         if (
             message.server_content
             and message.server_content.output_transcription
@@ -92,10 +95,17 @@ class RingAIGeminiLive(GeminiLiveLLMService):
             self._ai_text_buffer.append(
                 message.server_content.output_transcription.text
             )
+            self._last_captured_from_model_turn = True
+        else:
+            self._last_captured_from_model_turn = False
         await super()._handle_msg_model_turn(message)
 
     async def _handle_msg_output_transcription(self, message):
-        # Fires when output_transcription arrives as a separate message (fallback)
+        # Only capture if model_turn didn't already capture this text
+        if self._last_captured_from_model_turn:
+            self._last_captured_from_model_turn = False
+            await super()._handle_msg_output_transcription(message)
+            return
         if (
             message.server_content
             and message.server_content.output_transcription
