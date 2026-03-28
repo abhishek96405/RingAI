@@ -295,20 +295,63 @@ class CallSession:
         if self._hangup_scheduled:
             return
         self._hangup_scheduled = True
-
         logger.info(
             f"[{self.call_sid}] Hangup scheduled in {HANGUP_DELAY_SECS}s — reason: {reason}"
         )
-
         await asyncio.sleep(HANGUP_DELAY_SECS)
-        await hang_up_twilio_call(self.call_sid)
 
+        # For escalation — transfer to human if phone number is configured
+        if reason == "escalation":
+            escalation_phone = self.config.get("escalation_phone_number") if self.config else None
+            if escalation_phone:
+                transferred = await self._transfer_call(escalation_phone)
+                if transferred:
+                    return  # Don't hang up — Twilio handles it after transfer
+
+        await hang_up_twilio_call(self.call_sid)
         if self._pipeline_task is not None:
             try:
                 await self._pipeline_task.cancel()
                 logger.info(f"[{self.call_sid}] Pipeline task cancelled")
             except Exception as e:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
+
+    async def _transfer_call(self, to_number: str) -> bool:
+        """Transfer the call to a human agent via Twilio REST API."""
+        account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+        auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+        if not account_sid or not auth_token:
+            logger.warning(f"[{self.call_sid}] Cannot transfer — missing Twilio credentials")
+            return False
+        try:
+            credentials = base64.b64encode(
+                f"{account_sid}:{auth_token}".encode()
+            ).decode()
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{self.call_sid}.json"
+            twiml = f'<Response><Dial>{to_number}</Dial></Response>'
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.post(
+                    url,
+                    data={"Twiml": twiml},
+                    headers={
+                        "Authorization": f"Basic {credentials}",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                )
+                if resp.status_code in (200, 204):
+                    logger.info(f"[{self.call_sid}] ✅ Call transferred to {to_number}")
+                    if self._pipeline_task is not None:
+                        try:
+                            await self._pipeline_task.cancel()
+                        except Exception:
+                            pass
+                    return True
+                else:
+                    logger.error(f"[{self.call_sid}] Transfer failed: {resp.status_code} {resp.text}")
+                    return False
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] Transfer error: {e}")
+            return False
     # ------------------------------------------------------------------
     # Order dispatch with retry
     # ------------------------------------------------------------------
@@ -572,7 +615,7 @@ async def create_call_pipeline(
 
         async def _idle_placeholder(processor, retry_count) -> bool:
             return False
-        idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=8.0)
+        idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=30.0)
 
         # Official Pipecat transcript aggregators for Gemini Live
         context = LLMContext()
@@ -601,6 +644,10 @@ async def create_call_pipeline(
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
                     session.add_transcript_entry("customer", text)
                     await idle_processor._stop()
+                    # Cancel farewell timer if customer speaks again
+                    if hasattr(session, '_farewell_timer') and session._farewell_timer:
+                        session._farewell_timer.cancel()
+                        session._farewell_timer = None
 
             @assistant_aggregator.event_handler("on_assistant_turn_stopped")
             async def on_assistant_turn_stopped(aggregator, message: AssistantTurnStoppedMessage):
@@ -658,6 +705,35 @@ async def create_call_pipeline(
                         logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
                         session.order.transition(OrderState.CONFIRMED, "signal")
                         asyncio.create_task(session._handle_appointment_confirmed())
+
+                # ── Farewell detection — start 30s goodbye timer ──
+                farewell_phrases = [
+                    "anything else i can help",
+                    "anything else you need",
+                    "is there anything else",
+                    "have a great day",
+                    "have a good day",
+                    "goodbye",
+                    "take care",
+                    "glad i could help",
+                    "happy to help",
+                ]
+                if (
+                    session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                    and any(p in text_lower for p in farewell_phrases)
+                ):
+                    if not hasattr(session, '_farewell_timer') or session._farewell_timer is None:
+                        async def _farewell_hangup():
+                            await asyncio.sleep(30)
+                            if not session._hangup_scheduled:
+                                logger.info(f"[{call_sid}] 30s post-farewell silence — ending call")
+                                await task.queue_frame(InputTextRawFrame(
+                                    text="SYSTEM: Customer has not responded for 30 seconds after farewell. Say a brief goodbye and end the call."
+                                ))
+                                await asyncio.sleep(3)
+                                asyncio.create_task(session._schedule_hangup(reason="farewell_timeout"))
+                        session._farewell_timer = asyncio.create_task(_farewell_hangup())
+                        logger.info(f"[{call_sid}] Farewell detected — 30s goodbye timer started")
 
         task = PipelineTask(
             pipeline,
