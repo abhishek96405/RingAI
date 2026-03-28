@@ -788,13 +788,12 @@ async def create_call_pipeline(
 def generate_twiml_stream_response(websocket_url: str, call_sid: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Start>
+    <Say voice="Polly.Joanna">Please say HELLO to get started!</Say>
+    <Connect>
         <Stream url="{websocket_url}">
             <Parameter name="callSid" value="{call_sid}" />
         </Stream>
-    </Start>
-    <Say voice="Polly.Joanna">Please say hello to get started.</Say>
-    <Pause length="60"/>
+    </Connect>
 </Response>"""
 
 
