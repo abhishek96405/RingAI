@@ -691,7 +691,7 @@ async def create_call_pipeline(
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0)
             await task.queue_frame(TextFrame(text="BEGIN_CALL"))
 
         # ------------------------------------------------------------------
