@@ -67,29 +67,31 @@ logger = logging.getLogger(__name__)
 class AITranscriptProcessor(FrameProcessor):
     """Captures AI output and customer transcript. Replaces monkey-patching for Gemini 3.1."""
 
-    def __init__(self, call_sid: str, session, idle_processor=None, **kwargs):
+    def __init__(self, call_sid: str, session, idle_processor=None,
+                 capture_customer=True, capture_ai=True, **kwargs):
         super().__init__(**kwargs)
         self._call_sid = call_sid
         self._session = session
         self._idle_processor = idle_processor
+        self._capture_customer = capture_customer
+        self._capture_ai = capture_ai
         self._buffer: List[str] = []
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, TTSTextFrame):
+        if self._capture_ai and isinstance(frame, TTSTextFrame):
             if frame.text:
                 self._buffer.append(frame.text)
 
-        elif isinstance(frame, LLMFullResponseEndFrame):
+        elif self._capture_ai and isinstance(frame, LLMFullResponseEndFrame):
             if self._buffer:
                 full_text = "".join(self._buffer).strip()
                 self._buffer.clear()
                 if full_text:
                     await self._process_ai_text(full_text)
 
-        elif isinstance(frame, TranscriptionFrame):
-            # Customer transcript — stop idle processor permanently
+        elif self._capture_customer and isinstance(frame, TranscriptionFrame):
             text = frame.text.strip() if frame.text else ""
             if text:
                 logger.info(f"[{self._call_sid}] CUSTOMER: {text}")
@@ -544,15 +546,26 @@ async def create_call_pipeline(
 
         # AITranscriptProcessor captures AI output via TTSTextFrame/LLMFullResponseEndFrame
         # This replaces the old monkey-patch approach which broke in Gemini 3.1
+        customer_transcript_proc = AITranscriptProcessor(
+            call_sid=call_sid,
+            session=session,
+            idle_processor=idle_processor,
+            capture_customer=True,
+            capture_ai=False,
+        ) if session else None
+
         ai_transcript_proc = AITranscriptProcessor(
             call_sid=call_sid,
             session=session,
             idle_processor=idle_processor,
+            capture_customer=False,
+            capture_ai=True,
         ) if session else None
 
         pipeline = Pipeline([
             transport.input(),
             idle_processor,
+            *([customer_transcript_proc] if customer_transcript_proc else []),
             gemini_live,
             *([ai_transcript_proc] if ai_transcript_proc else []),
             transport.output(),
