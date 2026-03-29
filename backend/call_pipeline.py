@@ -119,15 +119,22 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         self._last_captured_from_model_turn = False
         # Guards VAD interruption during critical function call window
         self._fn_in_progress = False
+        # Guards VAD interruption during opening greeting window
+        self._greeting_in_progress = False
 
     async def _handle_interruption(self):
         """
-        Suppress VAD-triggered interruptions while a function call is executing.
-        Without this, any customer speech (even "yeah") cancels the in-flight call.
+        Suppress VAD-triggered interruptions while:
+        - A function call is executing (_fn_in_progress)
+        - The opening greeting is still being spoken (_greeting_in_progress)
+        Without this, customer speech like "hello" or "yeah" kills in-flight work.
         """
         if self._fn_in_progress:
             logger.debug("VAD interruption suppressed — function call in progress")
-            return  # Drop the interruption entirely — do NOT call super()
+            return
+        if self._greeting_in_progress:
+            logger.debug("VAD interruption suppressed — greeting in progress")
+            return
         await super()._handle_interruption()
 
     async def _handle_msg_model_turn(self, message):
@@ -895,6 +902,14 @@ async def create_call_pipeline(
                     await result_callback({"error": "date is required"})
                     return
 
+                # Explicit entry log at DEBUG level from Pipecat's own call path
+                # If this line appears, the function was genuinely invoked by Gemini.
+                # If the AI gives availability info WITHOUT this line, it hallucinated.
+                logger.info(
+                    f"[{call_sid}] ✅ check_availability INVOKED by Gemini "
+                    f"(tool_call_id={tool_call_id})"
+                )
+
                 # ── Mute VAD interruptions for the duration of this call ──
                 llm._fn_in_progress = True
                 try:
@@ -1178,20 +1193,29 @@ async def create_call_pipeline(
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            # Delay BEGIN_CALL by 800ms so the media stream stabilises before
-            # the AI starts generating audio. This prevents the customer's
-            # opening "Hello" from interrupting a half-generated greeting,
-            # which would force a costly regeneration cycle.
             nonlocal _greeting_sent
             if not _greeting_sent:
                 _greeting_sent = True
                 logger.info(f"[{call_sid}] Client connected - greeting in 800ms")
                 await asyncio.sleep(0.8)
+
+                # Lock interruptions for the greeting window
+                gemini_live._greeting_in_progress = True
+
                 from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
                 await task.queue_frame(LLMMessagesAppendFrame(
                     messages=[{"role": "user", "content": "BEGIN_CALL"}],
                     run_llm=True,
                 ))
+
+                # Release after 6 seconds — enough for any greeting to finish speaking.
+                # After this point customer speech can interrupt normally.
+                async def _release_greeting_lock():
+                    await asyncio.sleep(6.0)
+                    gemini_live._greeting_in_progress = False
+                    logger.debug(f"[{call_sid}] Greeting lock released")
+
+                asyncio.create_task(_release_greeting_lock())
 
         # ------------------------------------------------------------------
         # Disconnect handler
