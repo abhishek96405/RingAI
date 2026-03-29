@@ -127,7 +127,6 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         Suppress VAD-triggered interruptions while:
         - A function call is executing (_fn_in_progress)
         - The opening greeting is still being spoken (_greeting_in_progress)
-        Without this, customer speech like "hello" or "yeah" kills in-flight work.
         """
         if self._fn_in_progress:
             logger.debug("VAD interruption suppressed — function call in progress")
@@ -136,6 +135,32 @@ class RingAIGeminiLive(GeminiLiveLLMService):
             logger.debug("VAD interruption suppressed — greeting in progress")
             return
         await super()._handle_interruption()
+
+    async def _run_function_call(self, tool_call, llm_context):
+        """
+        Set _fn_in_progress BEFORE the handler coroutine is scheduled.
+        Without this, _cancel_function_call fires from the pipeline's
+        interruption broadcast path before the handler body can set the flag.
+        """
+        self._fn_in_progress = True
+        try:
+            await super()._run_function_call(tool_call, llm_context)
+        finally:
+            self._fn_in_progress = False
+
+    async def _cancel_function_call(self, tool_call_id):
+        """
+        Block cancellation when a function call is actively executing.
+        Pipecat calls this from broadcast_interruption which bypasses
+        _handle_interruption — so we guard here as a second line of defence.
+        """
+        if self._fn_in_progress:
+            logger.debug(
+                f"Function call cancel suppressed — fn_in_progress "
+                f"(tool_call_id={tool_call_id})"
+            )
+            return
+        await super()._cancel_function_call(tool_call_id)
 
     async def _handle_msg_model_turn(self, message):
         # In Gemini 3.1, output_transcription arrives in the same message as model_turn.
@@ -618,15 +643,48 @@ def classify_booking_intent(
         date_confidence = 1.0
         date_trigger = "iso_date"
 
-    # ── 2. Month + day  ("march 29", "april 15th") ────────────────────
+    # ── 2. Month + day  ("march 29", "april 15th", "april fifth") ─────
     if not date_str:
         months = {
             "january":1,"february":2,"march":3,"april":4,"may":5,"june":6,
             "july":7,"august":8,"september":9,"october":10,"november":11,"december":12,
         }
+        # Word ordinals for spoken dates ("fifth", "twenty-first", etc.)
+        word_ordinals = {
+            "first":1,"second":2,"third":3,"fourth":4,"fifth":5,
+            "sixth":6,"seventh":7,"eighth":8,"ninth":9,"tenth":10,
+            "eleventh":11,"twelfth":12,"thirteenth":13,"fourteenth":14,"fifteenth":15,
+            "sixteenth":16,"seventeenth":17,"eighteenth":18,"nineteenth":19,"twentieth":20,
+            "twenty-first":21,"twenty-second":22,"twenty-third":23,"twenty-fourth":24,
+            "twenty-fifth":25,"twenty-sixth":26,"twenty-seventh":27,"twenty-eighth":28,
+            "twenty-ninth":29,"thirtieth":30,"thirty-first":31,
+        }
         month_pattern = "|".join(months.keys())
-        m = _re.search(rf"\b({month_pattern})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b", customer_text)
-        if m:
+        ordinal_pattern = "|".join(word_ordinals.keys())
+
+        # Try numeric day first ("april 15th", "march 29")
+        m = _re.search(
+            rf"\b({month_pattern})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b",
+            customer_text
+        )
+        # Then try word ordinal ("april fifth", "march twenty-ninth")
+        if not m:
+            m = _re.search(
+                rf"\b({month_pattern})\s+({ordinal_pattern})\b",
+                customer_text
+            )
+            if m:
+                try:
+                    month_num = months[m.group(1)]
+                    day_num = word_ordinals[m.group(2)]
+                    year = today.year if month_num >= today.month else today.year + 1
+                    candidate = _date(year, month_num, day_num)
+                    date_str = candidate.strftime("%Y-%m-%d")
+                    date_confidence = 0.9
+                    date_trigger = "month_word_ordinal"
+                except ValueError:
+                    pass
+        elif m:
             try:
                 month_num = months[m.group(1)]
                 day_num = int(m.group(2))
@@ -878,10 +936,12 @@ async def create_call_pipeline(
                     "available": False,
                     "message": f"No available slots on {date_str}.",
                 }
+            # Return ALL available slots — truncating causes the AI to hallucinate
+            # that slots exist beyond what was listed because count > len(shown slots)
             return {
                 "available": True,
                 "date": date_str,
-                "slots": ", ".join(s["display_time"] for s in available[:8]),
+                "slots": ", ".join(s["display_time"] for s in available),
                 "count": len(available),
             }
 
@@ -902,24 +962,14 @@ async def create_call_pipeline(
                     await result_callback({"error": "date is required"})
                     return
 
-                # Explicit entry log at DEBUG level from Pipecat's own call path
-                # If this line appears, the function was genuinely invoked by Gemini.
-                # If the AI gives availability info WITHOUT this line, it hallucinated.
                 logger.info(
                     f"[{call_sid}] ✅ check_availability INVOKED by Gemini "
                     f"(tool_call_id={tool_call_id})"
                 )
-
-                # ── Mute VAD interruptions for the duration of this call ──
-                llm._fn_in_progress = True
+                # Note: _fn_in_progress is now managed by _run_function_call override
                 try:
                     result = await _fetch_availability(date_str, service_name)
-                    # Deliver result to Gemini — this completes the tool call
-                    # in Gemini's server-side context correctly
                     await result_callback(result)
-
-                    # Also append a synthetic assistant message to local context
-                    # so the aggregator's history matches what was sent to the server
                     import json as _json
                     from pipecat.processors.aggregators.llm_response_universal import (
                         LLMMessagesAppendFrame,
@@ -933,13 +983,10 @@ async def create_call_pipeline(
                         }]
                     ))
                     logger.info(f"[{call_sid}] check_availability (native) result injected: {result}")
-                    # Mark cache so classifier fallback skips this date+service
                     _intent_cache[f"{date_str}:{service_name}"] = True
                 except Exception as _e:
                     logger.error(f"[{call_sid}] check_availability error: {_e}")
                     await result_callback({"error": "Could not check availability right now."})
-                finally:
-                    llm._fn_in_progress = False
 
             gemini_live.register_function("check_availability", _handle_check_availability)
 
@@ -1175,9 +1222,18 @@ async def create_call_pipeline(
 
         async def handle_user_idle(processor, retry_count) -> bool:
             if retry_count == 1:
-                await task.queue_frame(TextFrame(
-                    text="SYSTEM: Customer silent. Say one brief sentence to check if they are still there."
-                ))
+                # Also check if Gemini is stuck after a cancelled function call
+                # and kick it out with a recovery prompt
+                if gemini_live._fn_in_progress:
+                    logger.warning(f"[{call_sid}] Gemini stuck with fn_in_progress — forcing recovery")
+                    gemini_live._fn_in_progress = False
+                    await task.queue_frame(TextFrame(
+                        text="SYSTEM: Continue the conversation. Ask the customer when they'd like to come in."
+                    ))
+                else:
+                    await task.queue_frame(TextFrame(
+                        text="SYSTEM: Customer silent. Say one brief sentence to check if they are still there."
+                    ))
                 return True
             elif retry_count == 2:
                 await task.queue_frame(TextFrame(
