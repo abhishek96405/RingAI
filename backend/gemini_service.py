@@ -1449,6 +1449,7 @@ def get_system_prompt(
                 "operating_hours": kwargs.get("operating_hours"),
                 "restaurant_timezone": kwargs.get("restaurant_timezone", "UTC"),
                 "disclosure_text": kwargs.get("disclosure_text", "Hi! How can I help you today?"),
+                "cached_availability": kwargs.get("cached_availability"),
             }
             return build_appointment_prompt(**appointment_kwargs)
         except ImportError as e:

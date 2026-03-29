@@ -2407,6 +2407,26 @@ async def twilio_incoming_call(request: Request):
     if business_type in ("clinic", "salon", "home_services", "legal"):
         services = await db.services.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
 
+    # Pre-fetch availability for appointment businesses before building prompt.
+    # This eliminates mid-call tool calls for common date requests entirely.
+    cached_availability = None
+    if business_type in ("clinic", "salon", "home_services", "legal"):
+        try:
+            from appointment_service import pre_fetch_availability
+            cached_availability = await pre_fetch_availability(
+                restaurant_id=restaurant_id,
+                services=services,
+                config={**(config or {}), "timezone": restaurant.get("timezone", "UTC")},
+                db=db,
+                days_ahead=7,
+            )
+            logger.info(
+                f"[{call_sid}] Availability pre-fetched for "
+                f"{len(cached_availability)} days"
+            )
+        except Exception as _e:
+            logger.warning(f"[{call_sid}] Availability pre-fetch failed (non-fatal): {_e}")
+
     # Use system prompt router for correct prompt by business type
     from gemini_service import get_system_prompt
     system_prompt = get_system_prompt(
@@ -2427,6 +2447,7 @@ async def twilio_incoming_call(request: Request):
         restaurant_timezone=restaurant.get("timezone", "UTC"),
         restaurant_address=restaurant.get("address"),
         services=services,
+        cached_availability=cached_availability,
     )
 
     await db.active_calls.update_one(

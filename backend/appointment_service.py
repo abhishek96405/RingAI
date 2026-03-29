@@ -154,6 +154,55 @@ async def get_available_slots(
     return result
 
 
+async def pre_fetch_availability(
+    restaurant_id: str,
+    services: List[Dict[str, Any]],
+    config: Dict[str, Any],
+    db,
+    days_ahead: int = 7,
+) -> Dict[str, Any]:
+    """
+    Pre-fetches availability for today + next N days before the call starts.
+    Result is injected into the system prompt so the AI never needs a mid-call
+    tool call for common date requests (today, tomorrow, this week).
+
+    Returns dict: {"2026-03-29": ["9:00 AM", "10:00 AM", ...], ...}
+    Empty list means closed or fully booked.
+    """
+    from datetime import date, timedelta
+    import pytz
+
+    tz_str = config.get("timezone", "UTC")
+    try:
+        tz = pytz.timezone(tz_str)
+        today = datetime.now(pytz.utc).astimezone(tz).date()
+    except Exception:
+        today = date.today()
+
+    result: Dict[str, List[str]] = {}
+
+    for i in range(days_ahead):
+        target_date = today + timedelta(days=i)
+        date_str = target_date.strftime("%Y-%m-%d")
+        try:
+            slots = await get_available_slots(
+                restaurant_id=restaurant_id,
+                date_str=date_str,
+                service_name=None,   # fetch all regardless of service
+                services=services,
+                config=config,
+                db=db,
+            )
+            result[date_str] = [
+                s["display_time"] for s in slots if s["available"]
+            ]
+        except Exception as e:
+            logger.warning(f"pre_fetch_availability: failed for {date_str}: {e}")
+            result[date_str] = []
+
+    return result
+
+
 def build_appointment_prompt(
     business_name: str,
     business_type: str,
@@ -163,6 +212,7 @@ def build_appointment_prompt(
     operating_hours: Optional[Dict[str, Any]],
     restaurant_timezone: str,
     disclosure_text: str,
+    cached_availability: Optional[Dict[str, List[str]]] = None,
 ) -> str:
     """
     System prompt for appointment booking businesses.
@@ -242,7 +292,30 @@ def build_appointment_prompt(
     appt_word, customer_word, staff_word, service_word = labels
     
     escalation_target = escalation_phone or "a team member"
-    
+
+    # Build availability block from pre-cached data
+    availability_block = ""
+    if cached_availability:
+        from datetime import datetime as _dt
+        lines = []
+        for date_str, slots in sorted(cached_availability.items()):
+            try:
+                label = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %-d")
+            except ValueError:
+                label = date_str
+            if slots:
+                lines.append(f"  {label}: {', '.join(slots)}")
+            else:
+                lines.append(f"  {label}: Fully booked")
+        if lines:
+            availability_block = (
+                "\n══════════════════════════\n"
+                "AVAILABILITY (pre-loaded — use this, do NOT call check_availability for these dates)\n"
+                "══════════════════════════\n"
+                + "\n".join(lines)
+                + "\n\nFor dates not listed above, call check_availability to get real-time slots."
+            )
+
     return f"""You are a friendly, professional phone assistant for {business_name}.
 You help callers book {appt_word}s, answer questions, and provide information.
 
@@ -275,6 +348,8 @@ CRITICAL: Only book services listed above.
 - NEVER escalate for a mishearing. Always clarify first: "Did you mean a [closest service]?"
 - Only escalate if the caller explicitly confirms they want something not on the list after you've clarified.
 - If genuinely not offered after clarification: "I'm not sure we offer that — let me connect you with someone who can help."
+{availability_block}
+
 ══════════════════════════
 BOOKING PROTOCOL — FOLLOW IN ORDER
 ══════════════════════════
