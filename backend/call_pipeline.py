@@ -563,6 +563,7 @@ def classify_booking_intent(
     transcript: List[Dict],
     services: List[Dict],
     order_state_confirmed: bool,
+    timezone_str: str = "UTC",
 ) -> BookingIntent:
     """
     Structured intent classifier for appointment availability checks.
@@ -583,7 +584,16 @@ def classify_booking_intent(
     if len(transcript) < 2:
         return BookingIntent(None, None, 0.0, "insufficient_context")
 
-    today = _date.today()
+    # Resolve against business local timezone, not UTC.
+    # At 10pm CDT (UTC-5), UTC date is already the next calendar day —
+    # using UTC here causes "tomorrow" to resolve one day too far ahead.
+    try:
+        import pytz as _pytz
+        _tz = _pytz.timezone(timezone_str)
+        today = datetime.now(_pytz.utc).astimezone(_tz).date()
+    except Exception:
+        today = _date.today()
+
     date_str = None
     date_confidence = 0.0
     date_trigger = "none"
@@ -733,6 +743,10 @@ async def create_call_pipeline(
 
         async def on_ai_transcript(full_text: str):
             if not session:
+                return
+            # Don't record injected SYSTEM frames as AI transcript entries
+            if full_text.startswith("SYSTEM:"):
+                logger.debug(f"[{call_sid}] Skipping SYSTEM frame from transcript")
                 return
             logger.info(f"[{call_sid}] AI: {full_text}")
             session.add_transcript_entry("ai", full_text)
@@ -904,6 +918,8 @@ async def create_call_pipeline(
                         }]
                     ))
                     logger.info(f"[{call_sid}] check_availability (native) result injected: {result}")
+                    # Mark cache so classifier fallback skips this date+service
+                    _intent_cache[f"{date_str}:{service_name}"] = True
                 except Exception as _e:
                     logger.error(f"[{call_sid}] check_availability error: {_e}")
                     await result_callback({"error": "Could not check availability right now."})
@@ -932,10 +948,13 @@ async def create_call_pipeline(
             if not any(p in ai_text.lower() for p in check_phrases):
                 return
 
-            # Skip if native handler is running (flag still set from that path)
+            # Skip if native handler is currently running
             if gemini_live._fn_in_progress:
                 logger.debug(f"[{call_sid}] Classifier skipped — native handler in progress")
                 return
+
+            # Also skip if native handler already handled this intent
+            # (classify first so we have the cache key before fetching)
 
             # Run classifier over transcript + conversation state
             intent = classify_booking_intent(
@@ -944,6 +963,7 @@ async def create_call_pipeline(
                 order_state_confirmed=session.order.state in (
                     OrderState.CONFIRMED, OrderState.COMPLETED
                 ),
+                timezone_str=session.restaurant.get("timezone", "UTC"),
             )
 
             logger.info(
@@ -956,10 +976,11 @@ async def create_call_pipeline(
                 logger.info(f"[{call_sid}] Classifier confidence too low — skipping injection")
                 return
 
-            # Deduplicate: don't inject the same date twice
+            # Deduplicate: skip if native handler OR a prior classifier run
+            # already handled this date+service combination
             cache_key = f"{intent.date_str}:{intent.service_name}"
             if _intent_cache.get(cache_key):
-                logger.debug(f"[{call_sid}] Already injected result for {cache_key}")
+                logger.debug(f"[{call_sid}] Classifier skipped — already handled {cache_key}")
                 return
             _intent_cache[cache_key] = True
 
@@ -1058,6 +1079,10 @@ async def create_call_pipeline(
                 full_text = message.content.strip() if message.content else ""
                 if not full_text:
                     return
+                # Don't record injected SYSTEM frames as AI transcript entries
+                if full_text.startswith("SYSTEM:"):
+                    logger.debug(f"[{call_sid}] Skipping SYSTEM frame from transcript")
+                    return
                 logger.info(f"[{call_sid}] AI: {full_text}")
                 session.add_transcript_entry("ai", full_text)
                 text_lower = full_text.lower()
@@ -1153,12 +1178,15 @@ async def create_call_pipeline(
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            # ✅ PROACTIVE GREETING FIX: Send BEGIN_CALL immediately when client connects
-            # This triggers the AI to greet first without waiting for customer
+            # Delay BEGIN_CALL by 800ms so the media stream stabilises before
+            # the AI starts generating audio. This prevents the customer's
+            # opening "Hello" from interrupting a half-generated greeting,
+            # which would force a costly regeneration cycle.
             nonlocal _greeting_sent
             if not _greeting_sent:
                 _greeting_sent = True
-                logger.info(f"[{call_sid}] Client connected - triggering proactive greeting")
+                logger.info(f"[{call_sid}] Client connected - greeting in 800ms")
+                await asyncio.sleep(0.8)
                 from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
                 await task.queue_frame(LLMMessagesAppendFrame(
                     messages=[{"role": "user", "content": "BEGIN_CALL"}],
