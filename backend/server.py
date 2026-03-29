@@ -2411,6 +2411,7 @@ async def twilio_incoming_call(request: Request):
     # This eliminates mid-call tool calls for common date requests entirely.
     cached_availability = None
     if business_type in ("clinic", "salon", "home_services", "legal"):
+        logger.info(f"[{call_sid}] Starting availability pre-fetch for {business_type}")
         try:
             from appointment_service import pre_fetch_availability
             cached_availability = await pre_fetch_availability(
