@@ -310,10 +310,11 @@ def build_appointment_prompt(
         if lines:
             availability_block = (
                 "\n══════════════════════════\n"
-                "AVAILABILITY (pre-loaded — use this, do NOT call check_availability for these dates)\n"
+                "AVAILABILITY (loaded at call start — accurate as of now)\n"
                 "══════════════════════════\n"
                 + "\n".join(lines)
                 + "\n\nFor dates not listed above, call check_availability to get real-time slots."
+                + "\nNote: System will verify the slot at confirmation — if taken, a staff member will follow up."
             )
 
     return f"""You are a friendly, professional phone assistant for {business_name}.
@@ -666,18 +667,8 @@ async def dispatch_appointment(
         except Exception as e:
             logger.error(f"Calendar event creation failed: {e}")
     
-    # Send SMS confirmation
-    if customer_phone:
-        try:
-            sms_sent = await send_appointment_sms(
-                caller_number=customer_phone,
-                booking=booking,
-                business_name=business_name,
-                duration_minutes=duration_minutes,
-            )
-            result["sms_sent"] = sms_sent
-        except Exception as e:
-            logger.error(f"Appointment SMS failed: {e}")
+    # Send SMS confirmation — deferred until after race check
+    # sms_sent will be set below after slot_status is determined
     
     # Save appointment to database
     if db is not None:
@@ -737,6 +728,27 @@ async def dispatch_appointment(
             logger.info(f"Appointment saved: {appointment_doc['id']} status={slot_status}")
             result["appointment_id"] = appointment_doc["id"]
             result["slot_conflict"] = slot_status == "conflict"
+
+            # Send SMS only if slot was clean — don't confirm a conflicted booking
+            if slot_status == "confirmed" and customer_phone:
+                try:
+                    sms_sent = await send_appointment_sms(
+                        caller_number=customer_phone,
+                        booking=booking,
+                        business_name=business_name,
+                        duration_minutes=duration_minutes,
+                    )
+                    result["sms_sent"] = sms_sent
+                except Exception as e:
+                    logger.error(f"Appointment SMS failed: {e}")
+            elif slot_status == "conflict":
+                logger.warning(
+                    f"SMS suppressed — slot conflict for "
+                    f"{preferred_date} {preferred_time}. "
+                    f"Dashboard review required."
+                )
+                result["sms_sent"] = False
+
         except Exception as e:
             logger.error(f"Failed to save appointment to database: {e}")
 

@@ -2879,6 +2879,29 @@ async def run_test_scenario(
     if business_type in ("clinic", "salon", "home_services", "legal"):
         services = await db.services.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
 
+    # Pre-fetch current availability for appointment businesses.
+    # Queries db.appointments + db.blocked_slots fresh at call start —
+    # so open, booked, and blocked slots are all accurate at the moment of this call.
+    cached_availability = None
+    if business_type in ("clinic", "salon", "home_services", "legal"):
+        logger.info(f"[{call_sid}] Starting availability pre-fetch for {business_type}")
+        try:
+            from appointment_service import pre_fetch_availability
+            cached_availability = await pre_fetch_availability(
+                restaurant_id=restaurant_id,
+                services=services,
+                config={**(config or {}), "timezone": restaurant.get("timezone", "UTC")},
+                db=db,
+                days_ahead=7,
+            )
+            logger.info(
+                f"[{call_sid}] Availability pre-fetched: "
+                f"{sum(len(v) for v in cached_availability.values())} total open slots "
+                f"across {len(cached_availability)} days"
+            )
+        except Exception as _e:
+            logger.warning(f"[{call_sid}] Availability pre-fetch failed (non-fatal): {_e}")
+
     # Use system prompt router for correct prompt by business type
     from gemini_service import get_system_prompt
     system_prompt = get_system_prompt(
