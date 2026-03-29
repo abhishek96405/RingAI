@@ -117,6 +117,18 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         self._on_ai_transcript = on_ai_transcript
         self._ai_text_buffer: List[str] = []
         self._last_captured_from_model_turn = False
+        # Guards VAD interruption during critical function call window
+        self._fn_in_progress = False
+
+    async def _handle_interruption(self):
+        """
+        Suppress VAD-triggered interruptions while a function call is executing.
+        Without this, any customer speech (even "yeah") cancels the in-flight call.
+        """
+        if self._fn_in_progress:
+            logger.debug("VAD interruption suppressed — function call in progress")
+            return  # Drop the interruption entirely — do NOT call super()
+        await super()._handle_interruption()
 
     async def _handle_msg_model_turn(self, message):
         # In Gemini 3.1, output_transcription arrives in the same message as model_turn.
@@ -529,6 +541,155 @@ class CallSession:
 # Pipeline factory
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Structured booking intent classifier
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field as dc_field
+import re as _re
+from datetime import date as _date, timedelta as _td
+
+
+@dataclass
+class BookingIntent:
+    date_str: Optional[str]               # "YYYY-MM-DD" or None
+    service_name: Optional[str]           # matched service name or None
+    confidence: float                     # 0.0–1.0
+    trigger: str                          # what drove the classification
+    already_injected: bool = False        # prevents double-injection
+
+
+def classify_booking_intent(
+    transcript: List[Dict],
+    services: List[Dict],
+    order_state_confirmed: bool,
+) -> BookingIntent:
+    """
+    Structured intent classifier for appointment availability checks.
+
+    Examines:
+      - Conversation position (must be in date-negotiation, not post-confirm)
+      - Last N customer turns for explicit/relative/named dates
+      - All turns for service name mentions
+      - Confidence scoring across multiple signals
+
+    Returns BookingIntent with confidence 0 if no check is warranted.
+    """
+    # Don't check after booking is already confirmed
+    if order_state_confirmed:
+        return BookingIntent(None, None, 0.0, "already_confirmed")
+
+    # Need at least 2 transcript entries to have context
+    if len(transcript) < 2:
+        return BookingIntent(None, None, 0.0, "insufficient_context")
+
+    today = _date.today()
+    date_str = None
+    date_confidence = 0.0
+    date_trigger = "none"
+
+    # Search recent customer turns (last 10 entries)
+    recent = transcript[-10:]
+    customer_turns = [e for e in recent if e.get("role") == "customer"]
+    all_text = " ".join(e.get("text", "") for e in recent).lower()
+    customer_text = " ".join(e.get("text", "") for e in customer_turns).lower()
+
+    # ── 1. Explicit ISO / numeric dates ──────────────────────────────────
+    iso_match = _re.search(r"\b(\d{4}-\d{2}-\d{2})\b", all_text)
+    if iso_match:
+        date_str = iso_match.group(1)
+        date_confidence = 1.0
+        date_trigger = "iso_date"
+
+    # ── 2. Month + day  ("march 29", "april 15th") ────────────────────
+    if not date_str:
+        months = {
+            "january":1,"february":2,"march":3,"april":4,"may":5,"june":6,
+            "july":7,"august":8,"september":9,"october":10,"november":11,"december":12,
+        }
+        month_pattern = "|".join(months.keys())
+        m = _re.search(rf"\b({month_pattern})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b", customer_text)
+        if m:
+            try:
+                month_num = months[m.group(1)]
+                day_num = int(m.group(2))
+                year = today.year if month_num >= today.month else today.year + 1
+                candidate = _date(year, month_num, day_num)
+                date_str = candidate.strftime("%Y-%m-%d")
+                date_confidence = 0.95
+                date_trigger = "month_day"
+            except ValueError:
+                pass
+
+    # ── 3. Relative words ─────────────────────────────────────────────
+    if not date_str:
+        if "today" in customer_text:
+            date_str = today.strftime("%Y-%m-%d")
+            date_confidence = 0.9
+            date_trigger = "relative_today"
+        elif "tomorrow" in customer_text:
+            date_str = (today + _td(days=1)).strftime("%Y-%m-%d")
+            date_confidence = 0.9
+            date_trigger = "relative_tomorrow"
+        elif "day after tomorrow" in customer_text:
+            date_str = (today + _td(days=2)).strftime("%Y-%m-%d")
+            date_confidence = 0.85
+            date_trigger = "relative_day_after"
+
+    # ── 4. Named weekdays ("this friday", "next monday") ──────────────
+    if not date_str:
+        day_names = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+        this_next = _re.search(
+            r"\b(this|next)?\s*(" + "|".join(day_names) + r")\b",
+            customer_text
+        )
+        if this_next:
+            modifier = this_next.group(1) or "this"
+            target_day = day_names.index(this_next.group(2))
+            days_ahead = (target_day - today.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7 if modifier == "next" else 0
+            elif modifier == "next":
+                days_ahead += 7
+            date_str = (today + _td(days=days_ahead)).strftime("%Y-%m-%d")
+            date_confidence = 0.8
+            date_trigger = f"weekday_{this_next.group(2)}"
+
+    if not date_str or date_confidence < 0.5:
+        return BookingIntent(None, None, 0.0, "no_date_found")
+
+    # ── Service name resolution ────────────────────────────────────────
+    matched_service = None
+    service_confidence = 0.0
+
+    for svc in services:
+        svc_name = svc.get("name", "").lower()
+        if svc_name in all_text:
+            matched_service = svc.get("name")
+            service_confidence = 1.0
+            break
+        # Partial word match (e.g. "haircut" matches "Standard Haircut")
+        words = svc_name.split()
+        if any(w in all_text for w in words if len(w) > 4):
+            if service_confidence < 0.7:
+                matched_service = svc.get("name")
+                service_confidence = 0.7
+
+    # Fallback: single service business
+    if not matched_service and len(services) == 1:
+        matched_service = services[0].get("name")
+        service_confidence = 0.6
+
+    overall_confidence = date_confidence * max(service_confidence, 0.5)
+
+    return BookingIntent(
+        date_str=date_str,
+        service_name=matched_service,
+        confidence=overall_confidence,
+        trigger=f"{date_trigger}|service={'matched' if matched_service else 'fallback'}",
+    )
+
+
 async def create_call_pipeline(
     websocket,
     system_prompt: str,
@@ -625,6 +786,9 @@ async def create_call_pipeline(
                     session.order.transition(OrderState.CONFIRMED, "signal")
                     asyncio.create_task(session._handle_appointment_confirmed())
 
+            # ── Classifier-based availability fallback ──
+            asyncio.create_task(_classifier_availability_check(full_text))
+
             # ── CALL_END signal — explicit end requested by AI ──
             call_end_phrases = [
                 "call_end",
@@ -676,48 +840,177 @@ async def create_call_pipeline(
             ),
         )
 
-        # ── Register check_availability handler (appointment businesses only) ──
+        # ── Shared availability fetch (used by both handler paths) ────────────
+        async def _fetch_availability(date_str: str, service_name: Optional[str]) -> dict:
+            from appointment_service import get_available_slots
+            slots = await get_available_slots(
+                restaurant_id=session.restaurant_id,
+                date_str=date_str,
+                service_name=service_name or None,
+                services=session.services,
+                config=session.config,
+                db=session.db,
+            )
+            available = [s for s in slots if s["available"]]
+            if not available:
+                return {
+                    "available": False,
+                    "message": f"No available slots on {date_str}.",
+                }
+            return {
+                "available": True,
+                "date": date_str,
+                "slots": ", ".join(s["display_time"] for s in available[:8]),
+                "count": len(available),
+            }
+
+        # ── Native function call handler (fast path — no VAD interference) ────
+        # _fn_in_progress suppresses _handle_interruption for the duration.
+        # After result_callback, we also append to context so Gemini's
+        # server-side history reflects the completed tool call.
         if _tools_list and session:
             async def _handle_check_availability(
                 function_name, tool_call_id, args, llm, context, result_callback
             ):
                 date_str = args.get("date", "").strip()
-                service_name = args.get("service_name", "").strip()
+                service_name = args.get("service_name", "").strip() or None
                 logger.info(
-                    f"[{call_sid}] check_availability called: date={date_str} service={service_name}"
+                    f"[{call_sid}] check_availability (native): date={date_str} service={service_name}"
                 )
                 if not date_str:
                     await result_callback({"error": "date is required"})
                     return
+
+                # ── Mute VAD interruptions for the duration of this call ──
+                llm._fn_in_progress = True
                 try:
-                    from appointment_service import get_available_slots
-                    slots = await get_available_slots(
-                        restaurant_id=session.restaurant_id,
-                        date_str=date_str,
-                        service_name=service_name or None,
-                        services=session.services,
-                        config=session.config,
-                        db=session.db,
+                    result = await _fetch_availability(date_str, service_name)
+                    # Deliver result to Gemini — this completes the tool call
+                    # in Gemini's server-side context correctly
+                    await result_callback(result)
+
+                    # Also append a synthetic assistant message to local context
+                    # so the aggregator's history matches what was sent to the server
+                    import json as _json
+                    from pipecat.processors.aggregators.llm_response_universal import (
+                        LLMMessagesAppendFrame,
                     )
-                    available = [s for s in slots if s["available"]]
-                    if not available:
-                        await result_callback({
-                            "available": False,
-                            "message": f"No available slots on {date_str}. Please suggest another date.",
-                        })
-                    else:
-                        slot_times = ", ".join(s["display_time"] for s in available[:8])
-                        await result_callback({
-                            "available": True,
-                            "date": date_str,
-                            "slots": slot_times,
-                            "count": len(available),
-                        })
+                    await task.queue_frame(LLMMessagesAppendFrame(
+                        messages=[{
+                            "role": "system",
+                            "content": (
+                                f"[check_availability completed: {_json.dumps(result)}]"
+                            ),
+                        }]
+                    ))
+                    logger.info(f"[{call_sid}] check_availability (native) result injected: {result}")
                 except Exception as _e:
                     logger.error(f"[{call_sid}] check_availability error: {_e}")
                     await result_callback({"error": "Could not check availability right now."})
+                finally:
+                    llm._fn_in_progress = False
 
             gemini_live.register_function("check_availability", _handle_check_availability)
+
+        # ── Classifier-based fallback path (fires when native call was cancelled) ─
+        # Triggered from on_ai_transcript when the AI says a check phrase.
+        # Uses BookingIntent classifier over full transcript + conversation state.
+        # Injects result via both LLMMessagesAppendFrame (context) + TextFrame (prompt).
+        _intent_cache: dict = {}  # date_str → bool, prevents duplicate injections
+
+        async def _classifier_availability_check(ai_text: str):
+            if not session:
+                return
+            if session.business_type not in ("clinic", "salon", "home_services", "legal"):
+                return
+
+            # Only fire on explicit check phrases in the AI's output
+            check_phrases = [
+                "one moment", "let me check", "let me look",
+                "checking availability", "checking for you", "look that up",
+            ]
+            if not any(p in ai_text.lower() for p in check_phrases):
+                return
+
+            # Skip if native handler is running (flag still set from that path)
+            if gemini_live._fn_in_progress:
+                logger.debug(f"[{call_sid}] Classifier skipped — native handler in progress")
+                return
+
+            # Run classifier over transcript + conversation state
+            intent = classify_booking_intent(
+                transcript=session.transcript,
+                services=session.services,
+                order_state_confirmed=session.order.state in (
+                    OrderState.CONFIRMED, OrderState.COMPLETED
+                ),
+            )
+
+            logger.info(
+                f"[{call_sid}] BookingIntent: date={intent.date_str} "
+                f"service={intent.service_name} confidence={intent.confidence:.2f} "
+                f"trigger={intent.trigger}"
+            )
+
+            if intent.confidence < 0.5 or not intent.date_str:
+                logger.info(f"[{call_sid}] Classifier confidence too low — skipping injection")
+                return
+
+            # Deduplicate: don't inject the same date twice
+            cache_key = f"{intent.date_str}:{intent.service_name}"
+            if _intent_cache.get(cache_key):
+                logger.debug(f"[{call_sid}] Already injected result for {cache_key}")
+                return
+            _intent_cache[cache_key] = True
+
+            try:
+                import json as _json
+                from pipecat.processors.aggregators.llm_response_universal import (
+                    LLMMessagesAppendFrame,
+                )
+
+                result = await _fetch_availability(intent.date_str, intent.service_name)
+                logger.info(
+                    f"[{call_sid}] Classifier fallback injecting for "
+                    f"{intent.date_str}: {result}"
+                )
+
+                # Step 1: Append to local context history so Gemini's aggregator
+                # treats the function as completed for this conversation turn
+                await task.queue_frame(LLMMessagesAppendFrame(
+                    messages=[{
+                        "role": "system",
+                        "content": (
+                            f"[check_availability completed via fallback: "
+                            f"{_json.dumps(result)}]"
+                        ),
+                    }]
+                ))
+
+                # Step 2: Queue a TextFrame so the live model generates a
+                # spoken response using the injected context
+                if result["available"]:
+                    prompt = (
+                        f"SYSTEM: Availability check complete. "
+                        f"For {intent.date_str}, available slots are: {result['slots']}. "
+                        f"Tell the customer which times are open. "
+                        f"If they asked for a specific time, confirm it if it appears in the list, "
+                        f"or offer the nearest available slot. One sentence only."
+                    )
+                else:
+                    prompt = (
+                        f"SYSTEM: Availability check complete. "
+                        f"No slots available on {intent.date_str}. "
+                        f"Tell the customer we're fully booked that day and ask "
+                        f"if they'd like to try a different date. One sentence only."
+                    )
+
+                await task.queue_frame(TextFrame(text=prompt))
+
+            except Exception as _e:
+                logger.error(f"[{call_sid}] Classifier fallback error: {_e}")
+                # Don't leave cache poisoned on error
+                _intent_cache.pop(cache_key, None)
 
        # ------------------------------------------------------------------
         # Build pipeline
@@ -797,6 +1090,9 @@ async def create_call_pipeline(
                         logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
                         session.order.transition(OrderState.CONFIRMED, "signal")
                         asyncio.create_task(session._handle_order_confirmed())
+
+                # ── Classifier-based availability fallback ──
+                asyncio.create_task(_classifier_availability_check(full_text))
 
                 # ── APPOINTMENT_CONFIRMED signal ──
                 appointment_confirmed_phrases = [
