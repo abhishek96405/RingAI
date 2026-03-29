@@ -409,6 +409,10 @@ class RestaurantConfig(BaseModel):
     google_calendar_tokens: Optional[Dict[str, Any]] = None
     google_calendar_id: Optional[str] = None
 
+    # Slot scheduling config (appointment businesses)
+    slot_capacity: int = 1            # max concurrent bookings per slot
+    slot_interval_minutes: int = 30   # minutes between slot start times
+
 
 class RestaurantConfigUpdate(BaseModel):
     # Business type for horizontal platform
@@ -438,6 +442,10 @@ class RestaurantConfigUpdate(BaseModel):
     # Google Calendar integration
     google_calendar_tokens: Optional[Dict[str, Any]] = None
     google_calendar_id: Optional[str] = None
+
+    # Slot scheduling config
+    slot_capacity: Optional[int] = None
+    slot_interval_minutes: Optional[int] = None
 
 
 class MenuItemModifier(BaseModel):
@@ -607,6 +615,12 @@ class AppointmentRecord(BaseModel):
 # ============================================================
 # AUTH / TENANCY HELPERS
 # ============================================================
+
+class BlockSlotRequest(BaseModel):
+    date: str         # "YYYY-MM-DD"
+    slot_time: str    # "HH:MM" 24h local time
+    reason: str = "walk-in / manual block"
+
 
 async def get_current_user(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
@@ -1104,6 +1118,87 @@ async def get_appointment(
         raise HTTPException(status_code=404, detail="Appointment not found")
     await ensure_restaurant_access(appointment["restaurant_id"], user)
     return appointment
+
+
+# ── BLOCKED SLOTS ENDPOINTS ───────────────────────────────────────────────
+
+@api_router.get("/restaurants/{restaurant_id}/blocked-slots")
+async def get_blocked_slots(
+    restaurant_id: str,
+    date: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Return all blocked slots for a business on a given date (YYYY-MM-DD)."""
+    await ensure_restaurant_access(restaurant_id, user)
+    slots = await db.blocked_slots.find(
+        {"restaurant_id": restaurant_id, "date": date},
+        {"_id": 0},
+    ).to_list(200)
+    return {"blocked_slots": slots}
+
+
+@api_router.post("/restaurants/{restaurant_id}/blocked-slots")
+async def block_slot(
+    restaurant_id: str,
+    data: BlockSlotRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Block a specific slot (prevents AI from booking it)."""
+    await ensure_restaurant_access(restaurant_id, user)
+    import uuid as _uuid
+    doc = {
+        "id": str(_uuid.uuid4()),
+        "restaurant_id": restaurant_id,
+        "date": data.date,
+        "slot_time": data.slot_time,
+        "reason": data.reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.blocked_slots.insert_one(doc)
+    return serialize_mongo_doc(doc)
+
+
+@api_router.delete("/restaurants/{restaurant_id}/blocked-slots/{slot_id}")
+async def unblock_slot(
+    restaurant_id: str,
+    slot_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Unblock a previously blocked slot."""
+    await ensure_restaurant_access(restaurant_id, user)
+    result = await db.blocked_slots.delete_one(
+        {"id": slot_id, "restaurant_id": restaurant_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Blocked slot not found")
+    return {"deleted": True}
+
+
+@api_router.get("/restaurants/{restaurant_id}/available-slots")
+async def get_available_slots_endpoint(
+    restaurant_id: str,
+    date: str,
+    service_name: Optional[str] = None,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Return computed available slots for the dashboard Availability tab."""
+    await ensure_restaurant_access(restaurant_id, user)
+    from appointment_service import get_available_slots
+    config = await db.restaurant_configs.find_one(
+        {"restaurant_id": restaurant_id}, {"_id": 0}
+    ) or {}
+    services = await db.services.find(
+        {"restaurant_id": restaurant_id}, {"_id": 0}
+    ).to_list(100)
+    slots = await get_available_slots(
+        restaurant_id=restaurant_id,
+        date_str=date,
+        service_name=service_name,
+        services=services,
+        config=config,
+        db=db,
+    )
+    return {"date": date, "slots": slots}
 
 
 @api_router.patch("/appointments/{appointment_id}/cancel")

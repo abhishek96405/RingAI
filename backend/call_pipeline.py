@@ -67,6 +67,41 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ── Gemini Live function-calling tool definition ──────────────────────────
+try:
+    from google.genai import types as _genai_types
+
+    CHECK_AVAILABILITY_TOOL = _genai_types.Tool(
+        function_declarations=[
+            _genai_types.FunctionDeclaration(
+                name="check_availability",
+                description=(
+                    "Check available appointment slots for a specific date. "
+                    "Call this before confirming any appointment time with the customer."
+                ),
+                parameters=_genai_types.Schema(
+                    type=_genai_types.Type.OBJECT,
+                    properties={
+                        "date": _genai_types.Schema(
+                            type=_genai_types.Type.STRING,
+                            description="Date in YYYY-MM-DD format (e.g. '2026-04-15')",
+                        ),
+                        "service_name": _genai_types.Schema(
+                            type=_genai_types.Type.STRING,
+                            description="Name of the service the customer wants to book",
+                        ),
+                    },
+                    required=["date"],
+                ),
+            )
+        ]
+    )
+    _TOOLS_AVAILABLE = True
+except Exception as _tools_err:
+    CHECK_AVAILABILITY_TOOL = None
+    _TOOLS_AVAILABLE = False
+    logging.getLogger(__name__).warning(f"Tool definition failed: {_tools_err}")
+
 
 class RingAIGeminiLive(GeminiLiveLLMService):
     """Subclass capturing AI transcript for Gemini 3.1 Flash Live.
@@ -612,6 +647,16 @@ async def create_call_pipeline(
                             asyncio.create_task(session._schedule_hangup(reason="farewell_timeout"))
                     session._farewell_timer = asyncio.create_task(_farewell_hangup())
 
+        # Only pass availability tool for appointment businesses
+        _tools_list = None
+        if (
+            _TOOLS_AVAILABLE
+            and CHECK_AVAILABILITY_TOOL
+            and session
+            and session.business_type in ("clinic", "salon", "home_services", "legal")
+        ):
+            _tools_list = [CHECK_AVAILABILITY_TOOL]
+
         gemini_live = RingAIGeminiLive(
             on_ai_transcript=on_ai_transcript,
             api_key=api_key,
@@ -619,6 +664,7 @@ async def create_call_pipeline(
             system_instruction=system_prompt,
             voice_id=voice,
             http_options={"api_version": "v1alpha"},
+            tools=_tools_list,
             params=InputParams(
                 thinking=ThinkingConfig(thinking_level="MINIMAL"),
                 vad=GeminiVADParams(
@@ -629,6 +675,49 @@ async def create_call_pipeline(
                 ),
             ),
         )
+
+        # ── Register check_availability handler (appointment businesses only) ──
+        if _tools_list and session:
+            async def _handle_check_availability(
+                function_name, tool_call_id, args, llm, context, result_callback
+            ):
+                date_str = args.get("date", "").strip()
+                service_name = args.get("service_name", "").strip()
+                logger.info(
+                    f"[{call_sid}] check_availability called: date={date_str} service={service_name}"
+                )
+                if not date_str:
+                    await result_callback({"error": "date is required"})
+                    return
+                try:
+                    from appointment_service import get_available_slots
+                    slots = await get_available_slots(
+                        restaurant_id=session.restaurant_id,
+                        date_str=date_str,
+                        service_name=service_name or None,
+                        services=session.services,
+                        config=session.config,
+                        db=session.db,
+                    )
+                    available = [s for s in slots if s["available"]]
+                    if not available:
+                        await result_callback({
+                            "available": False,
+                            "message": f"No available slots on {date_str}. Please suggest another date.",
+                        })
+                    else:
+                        slot_times = ", ".join(s["display_time"] for s in available[:8])
+                        await result_callback({
+                            "available": True,
+                            "date": date_str,
+                            "slots": slot_times,
+                            "count": len(available),
+                        })
+                except Exception as _e:
+                    logger.error(f"[{call_sid}] check_availability error: {_e}")
+                    await result_callback({"error": "Could not check availability right now."})
+
+            gemini_live.register_function("check_availability", _handle_check_availability)
 
        # ------------------------------------------------------------------
         # Build pipeline

@@ -29,6 +29,131 @@ logger = logging.getLogger(__name__)
 # Appointment System Prompt Builder (NEW - separate from restaurant prompt)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Slot availability engine
+# ---------------------------------------------------------------------------
+
+async def get_available_slots(
+    restaurant_id: str,
+    date_str: str,
+    service_name: Optional[str],
+    services: List[Dict[str, Any]],
+    config: Dict[str, Any],
+    db,
+) -> List[Dict[str, Any]]:
+    """
+    Return available slot times for a given date.
+
+    A slot is unavailable if:
+      - Already booked >= slot_capacity times
+      - Explicitly blocked in db.blocked_slots
+      - Outside operating hours
+    """
+    from datetime import datetime, timedelta
+
+    slot_interval = int(config.get("slot_interval_minutes", 30))
+    slot_capacity = int(config.get("slot_capacity", 1))
+    operating_hours = config.get("operating_hours", {})
+
+    # Resolve service duration
+    duration_minutes = 60
+    if service_name and services:
+        for svc in services:
+            if svc.get("name", "").lower() == service_name.lower():
+                duration_minutes = svc.get("duration_minutes", 60)
+                break
+
+    # Parse requested date
+    try:
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        logger.error(f"get_available_slots: invalid date {date_str!r}")
+        return []
+
+    # Business hours for that day
+    day_name = date_obj.strftime("%A").lower()
+    day_hours = operating_hours.get(day_name, {})
+    if day_hours.get("closed"):
+        return []
+
+    open_str = day_hours.get("open", "09:00")
+    close_str = day_hours.get("close", "17:00")
+    try:
+        open_h, open_m = map(int, open_str.split(":"))
+        close_h, close_m = map(int, close_str.split(":"))
+    except ValueError:
+        return []
+
+    # Generate slot grid
+    slots_grid: List[str] = []
+    cursor_total = open_h * 60 + open_m
+    close_total = close_h * 60 + close_m
+
+    while cursor_total + duration_minutes <= close_total:
+        h, m = divmod(cursor_total, 60)
+        slots_grid.append(f"{h:02d}:{m:02d}")
+        cursor_total += slot_interval
+
+    if not slots_grid:
+        return []
+
+    # Fetch existing bookings
+    booked_counts: Dict[str, int] = {}
+    if db is not None:
+        existing = await db.appointments.find(
+            {
+                "restaurant_id": restaurant_id,
+                "scheduled_date": date_str,
+                "status": {"$nin": ["cancelled"]},
+            },
+            {"_id": 0, "scheduled_time": 1},
+        ).to_list(500)
+        for appt in existing:
+            raw = appt.get("scheduled_time", "")
+            try:
+                t_upper = raw.strip().upper()
+                if "AM" in t_upper or "PM" in t_upper:
+                    t = datetime.strptime(t_upper, "%I:%M %p")
+                else:
+                    t = datetime.strptime(raw.strip(), "%H:%M")
+                key = t.strftime("%H:%M")
+                booked_counts[key] = booked_counts.get(key, 0) + 1
+            except Exception:
+                pass
+
+    # Fetch blocked slots
+    blocked_times: set = set()
+    if db is not None:
+        blocked_docs = await db.blocked_slots.find(
+            {"restaurant_id": restaurant_id, "date": date_str},
+            {"_id": 0, "slot_time": 1},
+        ).to_list(200)
+        blocked_times = {d["slot_time"] for d in blocked_docs}
+
+    # Build result
+    result = []
+    for slot in slots_grid:
+        booked = booked_counts.get(slot, 0)
+        blocked = slot in blocked_times
+        available = booked < slot_capacity and not blocked
+        h, m = map(int, slot.split(":"))
+        dt = datetime(2000, 1, 1, h, m)
+        try:
+            display = dt.strftime("%-I:%M %p")   # Linux/Mac
+        except ValueError:
+            display = dt.strftime("%I:%M %p").lstrip("0")  # fallback
+        result.append({
+            "slot_time": slot,
+            "display_time": display,
+            "booked": booked,
+            "capacity": slot_capacity,
+            "blocked": blocked,
+            "available": available,
+        })
+
+    return result
+
+
 def build_appointment_prompt(
     business_name: str,
     business_type: str,
@@ -156,10 +281,17 @@ STEP 1: Ask what service they need.
 STEP 2: Ask for preferred date and time.
   "When would you like to come in?"
   If vague: suggest 2 specific times.
-  IMPORTANT: You do NOT have access to a live calendar.
-  Always confirm slot in ONE short sentence: "[time] works! What's your name?"
+
+  AVAILABILITY CHECKING — REQUIRED:
+  You have access to a `check_availability` tool. You MUST call it before confirming any slot.
+  - Call check_availability with the date the caller wants (and the service name).
+  - If the requested slot appears in the results: confirm it.
+  - If their exact time isn't available: offer the nearest available slot from the results.
+  - If NO slots available on that date: "Sorry, we're fully booked on [date]. Can I check another day for you?"
+  - NEVER confirm a slot without calling check_availability first.
+
+  After checking and finding an open slot, confirm in ONE sentence: "[time] works! What's your name?"
   Combine slot confirmation + name request in ONE sentence — never two.
-  NEVER say a slot is unavailable unless it's outside operating hours.
 
 STEP 3: Collect {customer_word} name only:
   "Could I get your name for the booking?"
@@ -465,6 +597,39 @@ async def dispatch_appointment(
         try:
             import uuid
             from datetime import datetime, timezone
+
+            # ── Race condition check: re-verify slot before saving ────────
+            slot_status = "confirmed"
+            if preferred_date and preferred_time:
+                try:
+                    _t = preferred_time.strip().upper()
+                    if "AM" in _t or "PM" in _t:
+                        _parsed = datetime.strptime(_t, "%I:%M %p")
+                    else:
+                        _parsed = datetime.strptime(_t, "%H:%M")
+                    _slot_key = _parsed.strftime("%H:%M")
+
+                    available_slots = await get_available_slots(
+                        restaurant_id=restaurant.get("id", ""),
+                        date_str=preferred_date,
+                        service_name=service_name,
+                        services=services,
+                        config=config,
+                        db=db,
+                    )
+                    slot_still_open = any(
+                        s["slot_time"] == _slot_key and s["available"]
+                        for s in available_slots
+                    )
+                    if not slot_still_open:
+                        slot_status = "conflict"
+                        logger.warning(
+                            f"Slot conflict detected for {preferred_date} {_slot_key} "
+                            f"— saving with status='conflict'"
+                        )
+                except Exception as _race_err:
+                    logger.warning(f"Race check skipped (non-fatal): {_race_err}")
+
             appointment_doc = {
                 "id": str(uuid.uuid4()),
                 "restaurant_id": restaurant.get("id", ""),
@@ -475,15 +640,16 @@ async def dispatch_appointment(
                 "scheduled_date": preferred_date,
                 "scheduled_time": preferred_time,
                 "duration_minutes": duration_minutes,
-                "status": "confirmed",
+                "status": slot_status,
                 "calendar_event_id": result.get("calendar_event_id"),
                 "special_instructions": booking.get("special_instructions", ""),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": None,
             }
             await db.appointments.insert_one(appointment_doc)
-            logger.info(f"Appointment saved to database: {appointment_doc['id']}")
+            logger.info(f"Appointment saved: {appointment_doc['id']} status={slot_status}")
             result["appointment_id"] = appointment_doc["id"]
+            result["slot_conflict"] = slot_status == "conflict"
         except Exception as e:
             logger.error(f"Failed to save appointment to database: {e}")
 

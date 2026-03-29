@@ -209,6 +209,22 @@ export const cancelAppointment = (appointmentId: string) =>
 export const bookAppointment = (restaurantId: string | null | undefined, data: unknown) =>
   api.post(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/book`, data);
 
+export const getBlockedSlots = (restaurantId: string, date: string) =>
+  api.get(`/restaurants/${restaurantId}/blocked-slots`, { params: { date } });
+
+export const blockSlot = (
+  restaurantId: string,
+  data: { date: string; slot_time: string; reason?: string }
+) => api.post(`/restaurants/${restaurantId}/blocked-slots`, data);
+
+export const unblockSlot = (restaurantId: string, slotId: string) =>
+  api.delete(`/restaurants/${restaurantId}/blocked-slots/${slotId}`);
+
+export const getAvailableSlots = (restaurantId: string, date: string, serviceName?: string) =>
+  api.get(`/restaurants/${restaurantId}/available-slots`, {
+    params: { date, service_name: serviceName },
+  });
+
 export const getCalendarStatus = (restaurantId?: string | null) =>
   api.get(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/status`);
 

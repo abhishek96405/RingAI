@@ -145,6 +145,12 @@ const SettingsPage = () => {
         payload.delivery_minimum = Number(config?.delivery_minimum || 0);
       }
 
+      // Appointment-only config fields
+      if (isAppointmentBusiness) {
+        payload.slot_capacity = Number(config?.slot_capacity ?? 1);
+        payload.slot_interval_minutes = Number(config?.slot_interval_minutes ?? 30);
+      }
+
       await updateConfig(restaurantId, payload);
       await refreshSession(restaurantId);
       toast.success("AI configuration saved!");
@@ -360,6 +366,52 @@ const SettingsPage = () => {
                 })}
               </div>
             </div>
+            {/* Slot scheduling — appointment businesses only */}
+            {isAppointmentBusiness && (
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold mb-1">Slot Scheduling</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Controls how the AI checks and offers appointment times.
+                  </p>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Slot Interval (minutes)</Label>
+                    <Select
+                      value={String(config?.slot_interval_minutes ?? 30)}
+                      onValueChange={(v) => setConfig({ ...config, slot_interval_minutes: Number(v) })}
+                    >
+                      <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="15">15 min</SelectItem>
+                        <SelectItem value="20">20 min</SelectItem>
+                        <SelectItem value="30">30 min</SelectItem>
+                        <SelectItem value="45">45 min</SelectItem>
+                        <SelectItem value="60">60 min</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Bookings per Slot</Label>
+                    <Select
+                      value={String(config?.slot_capacity ?? 1)}
+                      onValueChange={(v) => setConfig({ ...config, slot_capacity: Number(v) })}
+                    >
+                      <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n} {n === 1 ? "booking" : "bookings"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <Button onClick={saveConfig} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
               <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Config"}
             </Button>
