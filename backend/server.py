@@ -415,7 +415,6 @@ class RestaurantConfig(BaseModel):
 
 
 class RestaurantConfigUpdate(BaseModel):
-    # Business type for horizontal platform
     business_type: Optional[str] = None
 
     persona: Optional[str] = None
@@ -437,13 +436,9 @@ class RestaurantConfigUpdate(BaseModel):
     escalation_phone_number: Optional[str] = None
     operating_hours: Optional[Dict[str, Any]] = None
 
-    # Business type for horizontal platform
-    business_type: Optional[str] = None
-    # Google Calendar integration
     google_calendar_tokens: Optional[Dict[str, Any]] = None
     google_calendar_id: Optional[str] = None
 
-    # Slot scheduling config
     slot_capacity: Optional[int] = None
     slot_interval_minutes: Optional[int] = None
 
@@ -780,6 +775,11 @@ async def get_restaurant(restaurant_id: str, user: Dict[str, Any] = Depends(get_
 async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    # Also manually preserve integer fields that could be 0 (falsy but valid)
+    for field in ("slot_capacity", "slot_interval_minutes", "delivery_minimum"):
+        val = getattr(data, field, None)
+        if val is not None:
+            update_data[field] = val
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
