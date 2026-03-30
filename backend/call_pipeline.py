@@ -308,6 +308,7 @@ class CallSession:
         self._escalated         = False
         self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
         self._booking_dispatched = False  # For appointment businesses
+        self._appointment_total  = 0      # price_cents sum for booked services
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
@@ -510,7 +511,11 @@ class CallSession:
             "escalated_to_human": self._escalated,
             "transcript":         self.transcript,
             "order":              self.order.to_dict() if self.order.items else None,
-            "order_total":        self.order.total,
+            "order_total": (
+                self._appointment_total
+                if self.business_type in ("clinic", "salon", "home_services", "legal")
+                else self.order.total
+            ),
             "kitchen_order_id":   self.order.kitchen_order_id,
             "quality_eval":       quality,
             "business_type":      self.business_type,  # Track business type
@@ -548,6 +553,22 @@ class CallSession:
         if not booking:
             logger.info(f"[{self.call_sid}] No confirmed booking found in transcript")
             return False
+
+        # Calculate revenue from booked service(s)
+        # service_name may be comma-separated for multiple services
+        booked_names = [
+            s.strip().lower()
+            for s in booking.get("service_name", "").split(",")
+        ]
+        total_cents = 0
+        for svc in self.services:
+            if svc.get("name", "").lower() in booked_names:
+                total_cents += svc.get("price_cents", 0) or 0
+        self._appointment_total = total_cents
+        logger.info(
+            f"[{self.call_sid}] Appointment revenue: "
+            f"${total_cents/100:.2f} for {booking.get('service_name')}"
+        )
 
         logger.info(f"[{self.call_sid}] Booking extracted: {booking.get('service_name')} for {booking.get('customer_name')}")
 
