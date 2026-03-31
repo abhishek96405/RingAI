@@ -899,7 +899,7 @@ async def create_call_pipeline(
                 vad=GeminiVADParams(
                     start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
                     end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
-                    silence_duration_ms=800,
+                    silence_duration_ms=600,
                     prefix_padding_ms=0,
                 ),
             ),
