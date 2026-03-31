@@ -562,8 +562,20 @@ class CallSession:
         ]
         total_cents = 0
         for svc in self.services:
-            if svc.get("name", "").lower() in booked_names:
-                total_cents += svc.get("price_cents", 0) or 0
+            svc_name = svc.get("name", "").strip().lower()
+            price = svc.get("price_cents", 0) or 0
+            # Exact match first
+            if svc_name in booked_names:
+                total_cents += price
+                continue
+            # Fuzzy match — check if any booked name contains or is contained
+            # by the service name (handles "Standard Haircut" vs "Haircut" etc.)
+            if any(
+                svc_name in b or b in svc_name
+                for b in booked_names
+                if len(b) > 4  # avoid matching short words like "cut"
+            ):
+                total_cents += price
         self._appointment_total = total_cents
         logger.info(
             f"[{self.call_sid}] Appointment revenue: "
@@ -834,60 +846,12 @@ async def create_call_pipeline(
             if full_text.startswith("SYSTEM:"):
                 logger.debug(f"[{call_sid}] Skipping SYSTEM frame from transcript")
                 return
+            # on_ai_transcript fires from RingAIGeminiLive's buffer flush.
+            # Signal detection and classifier run in on_assistant_turn_stopped
+            # (aggregator level) which is more reliable. We only log here to
+            # avoid duplicate processing on every chunk.
             logger.info(f"[{call_sid}] AI: {full_text}")
             session.add_transcript_entry("ai", full_text)
-            text_lower = full_text.lower()
-
-            # ── Menu SMS trigger ──
-            if "i'll text you" in text_lower and "menu" in text_lower:
-                from gemini_service import send_menu_sms
-                asyncio.create_task(send_menu_sms(
-                    caller_number=session.caller_number,
-                    restaurant_name=session.restaurant.get("name", "the restaurant"),
-                    restaurant_id=session.restaurant_id,
-                    base_url="https://ringai-v2.onrender.com",
-                ))
-                logger.info(f"[{call_sid}] Menu SMS triggered")
-
-            # ── ORDER_CONFIRMED signal (restaurant) ──
-            order_confirmed_phrases = [
-                "your order is confirmed",
-                "order is confirmed",
-                "i'll send you a text confirmation",
-                "sending you a text confirmation",
-                "ready in about",
-                "thank you for calling",
-            ]
-            if (
-                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                and any(p in text_lower for p in order_confirmed_phrases)
-            ):
-                if session.business_type == "restaurant":
-                    logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
-                    session.order.transition(OrderState.CONFIRMED, "signal")
-                    asyncio.create_task(session._handle_order_confirmed())
-
-            # ── APPOINTMENT_CONFIRMED signal ──
-            appointment_confirmed_phrases = [
-                "your appointment is confirmed",
-                "appointment is confirmed",
-                "appointment has been confirmed",
-                "i'll send you a text confirmation",
-                "we'll see you",
-                "we look forward to seeing you",
-            ]
-            if (
-                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                and any(p in text_lower for p in appointment_confirmed_phrases)
-            ):
-                business_type = session.config.get("business_type", "restaurant")
-                if business_type in ("clinic", "salon", "home_services", "legal"):
-                    logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
-                    session.order.transition(OrderState.CONFIRMED, "signal")
-                    asyncio.create_task(session._handle_appointment_confirmed())
-
-            # ── Classifier-based availability fallback ──
-            asyncio.create_task(_classifier_availability_check(full_text))
 
             # ── CALL_END signal — explicit end requested by AI ──
             call_end_phrases = [
@@ -931,6 +895,7 @@ async def create_call_pipeline(
             tools=_tools_list,
             params=InputParams(
                 thinking=ThinkingConfig(thinking_level="MINIMAL"),
+                output_sample_rate=8000,   # match Twilio — no resampling needed
                 vad=GeminiVADParams(
                     start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
                     end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
@@ -1123,7 +1088,7 @@ async def create_call_pipeline(
 
         async def _idle_placeholder(processor, retry_count) -> bool:
             return False
-        idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=30.0)
+        idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=60.0)
 
         # Official Pipecat transcript aggregators for Gemini Live
         context = LLMContext()

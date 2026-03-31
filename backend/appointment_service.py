@@ -293,28 +293,81 @@ def build_appointment_prompt(
     
     escalation_target = escalation_phone or "a team member"
 
-    # Build availability block from pre-cached data
+    # Build availability block from pre-cached data.
+    # Format: compressed ranges to minimise system prompt size.
+    # Instead of listing every slot (168+ tokens for 7 days),
+    # show open range(s) per day and only call out taken slots.
     availability_block = ""
     if cached_availability:
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timedelta as _td
+
+        def _slots_to_compressed(slots: list) -> str:
+            """
+            Convert a flat list of display times into a compact range string.
+            e.g. ["9:00 AM","9:30 AM","10:00 AM","1:00 PM"] →
+                 "9:00 AM–10:00 AM, 1:00 PM"
+            Consecutive slots (30-min apart) are merged into ranges.
+            Isolated slots are shown as-is.
+            """
+            if not slots:
+                return "Fully booked"
+
+            # Parse to minutes-since-midnight for arithmetic
+            def _parse(t: str) -> int:
+                try:
+                    dt = _dt.strptime(t.strip().upper(), "%I:%M %p")
+                    return dt.hour * 60 + dt.minute
+                except ValueError:
+                    return -1
+
+            def _fmt(minutes: int) -> str:
+                h, m = divmod(minutes, 60)
+                period = "AM" if h < 12 else "PM"
+                h12 = h % 12 or 12
+                return f"{h12}:{m:02d} {period}"
+
+            parsed = sorted(set(_parse(s) for s in slots if _parse(s) >= 0))
+            if not parsed:
+                return "Fully booked"
+
+            # Group into consecutive runs (allow up to 30-min gap = one slot interval)
+            groups = []
+            start = parsed[0]
+            prev = parsed[0]
+            for t in parsed[1:]:
+                if t - prev <= 30:
+                    prev = t
+                else:
+                    groups.append((start, prev))
+                    start = t
+                    prev = t
+            groups.append((start, prev))
+
+            parts = []
+            for s, e in groups:
+                if s == e:
+                    parts.append(_fmt(s))
+                else:
+                    parts.append(f"{_fmt(s)}–{_fmt(e)}")
+            return ", ".join(parts)
+
         lines = []
         for date_str, slots in sorted(cached_availability.items()):
             try:
                 label = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %-d")
             except ValueError:
                 label = date_str
-            if slots:
-                lines.append(f"  {label}: {', '.join(slots)}")
-            else:
-                lines.append(f"  {label}: Fully booked")
+            compressed = _slots_to_compressed(slots)
+            lines.append(f"  {label}: {compressed}")
+
         if lines:
             availability_block = (
                 "\n══════════════════════════\n"
                 "AVAILABILITY (loaded at call start — accurate as of now)\n"
                 "══════════════════════════\n"
                 + "\n".join(lines)
-                + "\n\nFor dates not listed above, call check_availability to get real-time slots."
-                + "\nNote: System will verify the slot at confirmation — if taken, a staff member will follow up."
+                + "\n\nFor dates beyond this list, call check_availability."
+                + "\nSystem verifies slot at confirmation — if taken, staff will follow up."
             )
 
     return f"""You are a friendly, professional phone assistant for {business_name}.
