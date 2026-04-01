@@ -210,6 +210,15 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         self._last_captured_from_model_turn = False
         await super()._handle_interruption()
 
+    async def _create_initial_response(self):
+        """
+        Suppress Pipecat's automatic BEGIN_CALL injection.
+        Gemini 3.1 has no proactive audio — customer speaks first,
+        AI greets naturally on the first real customer turn.
+        TODO: Remove this override when Gemini 3.1 adds proactive audio support.
+        """
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Availability check
