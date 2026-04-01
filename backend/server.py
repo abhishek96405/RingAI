@@ -443,6 +443,57 @@ class RestaurantConfigUpdate(BaseModel):
     slot_interval_minutes: Optional[int] = None
 
 
+# ============================================================
+# MODIFIER MODELS (restaurant-level reusable modifier library)
+# ============================================================
+
+class ModifierOption(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    price_delta: int = 0          # cents, can be negative
+    default_selected: bool = False
+    in_stock: bool = True
+    display_order: int = 0
+    ai_aliases: List[str] = []    # e.g. ["medium", "regular"] for "Medium"
+
+class ModifierGroupBase(BaseModel):
+    name: str
+    selection_type: str = "single"  # "single" or "multiple"
+    required: bool = False
+    min_selections: int = 0
+    max_selections: int = 1
+    display_order: int = 0
+    active: bool = True
+    options: List[ModifierOption] = []
+
+class ModifierGroupCreate(ModifierGroupBase):
+    pass
+
+class ModifierGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    selection_type: Optional[str] = None
+    required: Optional[bool] = None
+    min_selections: Optional[int] = None
+    max_selections: Optional[int] = None
+    display_order: Optional[int] = None
+    active: Optional[bool] = None
+    options: Optional[List[ModifierOption]] = None
+
+class ModifierGroup(ModifierGroupBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    restaurant_id: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+class MenuItemModifierAssignment(BaseModel):
+    modifier_group_id: str
+    override_required: Optional[bool] = None
+    override_min: Optional[int] = None
+    override_max: Optional[int] = None
+    override_name: Optional[str] = None
+    display_order: int = 0
+
+# Legacy — kept for backward compatibility
 class MenuItemModifier(BaseModel):
     name: str
     required: bool = False
@@ -455,9 +506,11 @@ class MenuItemBase(BaseModel):
     category: str
     price: int  # cents
     available: bool = True
-    modifiers: List[MenuItemModifier] = []
+    modifiers: List[MenuItemModifier] = []          # legacy
+    modifier_group_assignments: List[MenuItemModifierAssignment] = []  # new
     allergens: List[str] = []
     image_url: Optional[str] = None
+    special_instructions_enabled: bool = True
 
 
 class MenuItemCreate(MenuItemBase):
@@ -471,7 +524,9 @@ class MenuItemUpdate(BaseModel):
     price: Optional[int] = None
     available: Optional[bool] = None
     modifiers: Optional[List[MenuItemModifier]] = None
+    modifier_group_assignments: Optional[List[MenuItemModifierAssignment]] = None
     allergens: Optional[List[str]] = None
+    special_instructions_enabled: Optional[bool] = None
 
 
 class MenuItem(MenuItemBase):
@@ -1012,6 +1067,123 @@ async def toggle_menu_item_availability(item_id: str, user: Dict[str, Any] = Dep
     new_availability = not item.get("available", True)
     await db.menu_items.update_one({"id": item_id}, {"$set": {"available": new_availability}})
     return {"id": item_id, "available": new_availability}
+
+
+# ============================================================
+# MODIFIER GROUP ENDPOINTS (restaurant-level modifier library)
+# ============================================================
+
+@api_router.post("/restaurants/{restaurant_id}/modifier-groups")
+async def create_modifier_group(
+    restaurant_id: str,
+    data: ModifierGroupCreate,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    await ensure_restaurant_access(restaurant_id, user)
+    group = ModifierGroup(restaurant_id=restaurant_id, **data.model_dump())
+    await db.modifier_groups.insert_one(group.model_dump())
+    return group.model_dump()
+
+@api_router.get("/restaurants/{restaurant_id}/modifier-groups")
+async def get_modifier_groups(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    await ensure_restaurant_access(restaurant_id, user)
+    groups = await db.modifier_groups.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    ).sort("display_order", 1).to_list(200)
+    return groups
+
+@api_router.put("/modifier-groups/{group_id}")
+async def update_modifier_group(
+    group_id: str,
+    data: ModifierGroupUpdate,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    group = await db.modifier_groups.find_one({"id": group_id}, {"_id": 0})
+    if not group:
+        raise HTTPException(status_code=404, detail="Modifier group not found")
+    await ensure_restaurant_access(group["restaurant_id"], user)
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if "options" in update_data:
+        update_data["options"] = [
+            o.model_dump() if hasattr(o, "model_dump") else o
+            for o in update_data["options"]
+        ]
+    await db.modifier_groups.update_one({"id": group_id}, {"$set": update_data})
+    return await db.modifier_groups.find_one({"id": group_id}, {"_id": 0})
+
+@api_router.delete("/modifier-groups/{group_id}")
+async def delete_modifier_group(
+    group_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    group = await db.modifier_groups.find_one({"id": group_id}, {"_id": 0})
+    if not group:
+        raise HTTPException(status_code=404, detail="Modifier group not found")
+    await ensure_restaurant_access(group["restaurant_id"], user)
+    await db.modifier_groups.delete_one({"id": group_id})
+    await db.menu_items.update_many(
+        {"restaurant_id": group["restaurant_id"]},
+        {"$pull": {"modifier_group_assignments": {"modifier_group_id": group_id}}}
+    )
+    return {"deleted": group_id}
+
+@api_router.put("/menu/{item_id}/modifier-assignments")
+async def update_item_modifier_assignments(
+    item_id: str,
+    assignments: List[MenuItemModifierAssignment],
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    item = await db.menu_items.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    await ensure_restaurant_access(item["restaurant_id"], user)
+    await db.menu_items.update_one(
+        {"id": item_id},
+        {"$set": {"modifier_group_assignments": [a.model_dump() for a in assignments]}}
+    )
+    return {"id": item_id, "modifier_group_assignments": [a.model_dump() for a in assignments]}
+
+@api_router.get("/restaurants/{restaurant_id}/menu-with-modifiers")
+async def get_menu_with_modifiers(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Returns full menu with modifier groups resolved — used by dashboard and AI."""
+    await ensure_restaurant_access(restaurant_id, user)
+    items = await db.menu_items.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    ).to_list(500)
+    groups = await db.modifier_groups.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    ).to_list(200)
+    group_map = {g["id"]: g for g in groups}
+
+    for item in items:
+        resolved = []
+        for assignment in item.get("modifier_group_assignments", []):
+            gid = assignment.get("modifier_group_id")
+            if gid in group_map:
+                g = dict(group_map[gid])
+                if assignment.get("override_required") is not None:
+                    g["required"] = assignment["override_required"]
+                if assignment.get("override_min") is not None:
+                    g["min_selections"] = assignment["override_min"]
+                if assignment.get("override_max") is not None:
+                    g["max_selections"] = assignment["override_max"]
+                if assignment.get("override_name"):
+                    g["name"] = assignment["override_name"]
+                g["display_order"] = assignment.get("display_order", g.get("display_order", 0))
+                resolved.append(g)
+        resolved.sort(key=lambda x: x.get("display_order", 0))
+        item["resolved_modifiers"] = resolved
+
+    return items
 
 
 # ============================================================
@@ -2431,6 +2603,31 @@ async def twilio_incoming_call(request: Request):
     restaurant_id = restaurant["id"]
     config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+
+    # Enrich menu items with resolved modifier groups for AI prompt
+    if business_type == "restaurant" or config is None or config.get("business_type", "restaurant") == "restaurant":
+        modifier_groups = await db.modifier_groups.find(
+            {"restaurant_id": restaurant_id, "active": True}, {"_id": 0}
+        ).to_list(200)
+        group_map = {g["id"]: g for g in modifier_groups}
+        for item in menu_items:
+            resolved = []
+            for assignment in item.get("modifier_group_assignments", []):
+                gid = assignment.get("modifier_group_id")
+                if gid in group_map:
+                    g = dict(group_map[gid])
+                    if assignment.get("override_required") is not None:
+                        g["required"] = assignment["override_required"]
+                    if assignment.get("override_min") is not None:
+                        g["min_selections"] = assignment["override_min"]
+                    if assignment.get("override_max") is not None:
+                        g["max_selections"] = assignment["override_max"]
+                    if assignment.get("override_name"):
+                        g["name"] = assignment["override_name"]
+                    g["display_order"] = assignment.get("display_order", g.get("display_order", 0))
+                    resolved.append(g)
+            resolved.sort(key=lambda x: x.get("display_order", 0))
+            item["resolved_modifiers"] = resolved
 
     # Get business type for horizontal platform support
     business_type = config.get("business_type", "restaurant") if config else "restaurant"

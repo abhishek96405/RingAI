@@ -156,6 +156,32 @@ def is_gemini_available() -> bool:
 # Menu Index — fast validated lookup (no AI, no hallucinations)
 # ---------------------------------------------------------------------------
 
+def _format_modifiers_compact(resolved_modifiers: List[Dict]) -> str:
+    """
+    Format resolved modifier groups into compact prompt text.
+    Required groups marked with *, options separated by /.
+    Example: [Size: S/M/L*] [Toppings: Cheese/Mushrooms]
+    Price deltas shown only if non-zero.
+    """
+    if not resolved_modifiers:
+        return ""
+    parts = []
+    for group in resolved_modifiers:
+        if not group.get("active", True):
+            continue
+        options = group.get("options", [])
+        if not options:
+            continue
+        opts_str = "/".join(
+            o["name"] + (f"+${o['price_delta']/100:.2f}" if o.get("price_delta", 0) > 0 else "")
+            for o in options
+            if o.get("in_stock", True)
+        )
+        required_marker = "*" if group.get("required") else ""
+        name = group.get("name", "")
+        parts.append(f"[{name}: {opts_str}{required_marker}]")
+    return " " + "".join(parts) if parts else ""
+
 class MenuIndex:
     """Pre-built lookup for a restaurant's menu. All item validation runs here."""
 
@@ -200,6 +226,7 @@ class MenuIndex:
             items_str = " | ".join(
                 f"{item['name']} ${item['price']/100:.2f}"
                 + (f"[!{','.join(item['allergens'])}]" if item.get("allergens") else "")
+                + _format_modifiers_compact(item.get("resolved_modifiers", []))
                 for item in cat_items
             )
             lines.append(f"{cat.upper()}: {items_str}")
@@ -310,10 +337,22 @@ async def extract_order_from_transcript(
 Return ONLY valid JSON, no markdown, no code blocks.
 
 Menu (use EXACT names from this list only):
-{chr(10).join(f"  • {item['name']} ${item['price']/100:.2f}" for item in menu_index.items.values())}
+{chr(10).join(
+    f"  • {item['name']} ${item['price']/100:.2f}"
+    + ((" [" + ", ".join(
+        g["name"] + ": " + "/".join(o["name"] for o in g.get("options", []) if o.get("in_stock", True))
+        + ("*" if g.get("required") else "")
+        for g in item.get("resolved_modifiers", [])
+        if g.get("active", True) and g.get("options")
+    ) + "]") if item.get("resolved_modifiers") else "")
+    for item in menu_index.items.values()
+)}
 
 Required JSON format:
-{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":[],"special_instructions":""}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
+{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":["Large","Thin Crust"],"special_instructions":"no onions"}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
+
+- modifiers: list of confirmed modifier option names the customer chose (e.g. ["Large", "Thin Crust", "Extra Cheese"])
+- special_instructions: any free-text customization the customer added (e.g. "no onions", "extra crispy")
 
 RULES:
 - order_confirmed must be true or false — never omit this field
@@ -940,6 +979,30 @@ STEP 2: Take the order. Acknowledge each item briefly — "Got it", "Added", "Pe
   Do NOT ask "Is that correct?" after each item — confirmation happens at STEP 4 only.
   NEVER add an item unless the customer clearly and completely named it.
   If unsure what the customer said — ask: "Sorry, what was that item?"
+
+  CUSTOMIZATIONS & MODIFIERS:
+  Each menu item may have modifier groups shown in brackets after its price.
+  Example: "Margherita $12.00 [Size: S/M/L*] [Crust: Thin/Regular/Thick]"
+  - Groups marked with * are REQUIRED — you MUST ask if customer doesn't specify.
+  - Groups without * are optional — only ask if customer brings it up, or during upsell.
+  - If customer already specifies a valid option (e.g. "large"), accept it immediately.
+  - If customer specifies an invalid option, offer the valid choices: "We have S, M, or L — which works?"
+  - Validate against the exact option names in brackets. Use common sense for aliases
+    (e.g. "regular" = "Medium", "hot" = "Spicy").
+  - For multi-select groups (no max shown or max > 1): accept multiple options.
+  - For single-select groups (max = 1): if customer picks multiple, ask them to choose one.
+  - REQUIRED modifier flow example:
+    Customer: "I want a Margherita pizza."
+    AI: "Got it! What size — Small, Medium, or Large?"
+    Customer: "Large."
+    AI: "Perfect, anything else?"
+  - OPTIONAL modifier flow example:
+    Customer: "I want a Margherita pizza, large."
+    AI: "Got it, large Margherita! Anything else?" ← do NOT ask about optional crust unprompted
+  - Special instructions: if the item has special_instructions_enabled, customer can add
+    free-text notes like "extra crispy" or "no onions" — capture these verbatim.
+  - Include all confirmed modifiers in the STEP 4 readback:
+    "One large Margherita with thin crust. Does that sound right?"
 
 STEP 3: Ask for customer name: "Could I get a name for the order?"
   Wait for the name before doing anything else.
