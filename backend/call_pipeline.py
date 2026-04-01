@@ -852,6 +852,7 @@ async def create_call_pipeline(
             # avoid duplicate processing on every chunk.
             logger.info(f"[{call_sid}] AI: {full_text}")
             session.add_transcript_entry("ai", full_text)
+            text_lower = full_text.lower()
 
             # ── CALL_END signal — explicit end requested by AI ──
             call_end_phrases = [
