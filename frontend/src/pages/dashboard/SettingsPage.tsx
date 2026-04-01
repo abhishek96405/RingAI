@@ -12,16 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertTriangle, Mic, Plus, Save, Settings as SettingsIcon, ShieldAlert, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 
-const playVoicePreview = async (voiceId: string) => {
-  try {
-    const res = await getVoicePreview(voiceId);
-    const audio = new Audio(`data:audio/wav;base64,${res.data.audio_base64}`);
-    audio.play();
-  } catch {
-    toast.error("Could not load voice preview");
-  }
-};
-
 const voiceOptions = [
   { id: "Leda",   name: "Leda - Warm",          accent: "American" },
   { id: "Kore",   name: "Kore - Professional",   accent: "American" },
@@ -68,6 +58,15 @@ const getSpecialtyLabel = (businessType: string) => {
 };
 
 const SettingsPage = () => {
+  const playVoicePreview = async (voiceId: string) => {
+    try {
+      const res = await getVoicePreview(voiceId);
+      const audio = new Audio(`data:audio/wav;base64,${res.data.audio_base64}`);
+      await audio.play();
+    } catch {
+      toast.error("Could not load voice preview");
+    }
+  };
   const { activeRestaurant, refreshSession } = useAppSession();
   const [restaurant, setRestaurant] = useState<any>(null);
   const [config, setConfig] = useState<any>(null);
