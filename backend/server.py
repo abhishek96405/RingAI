@@ -824,6 +824,39 @@ async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpd
     config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     return config
 
+    @api_router.get("/voice-preview/{voice_name}")
+async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Generate a short audio preview of a Gemini voice using TTS API."""
+    import base64
+    ALLOWED_VOICES = {"Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"}
+    if voice_name not in ALLOWED_VOICES:
+        raise HTTPException(status_code=400, detail=f"Invalid voice name: {voice_name}")
+    try:
+        from google import genai
+        from google.genai import types
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-tts",
+            contents="Hi! I'm your AI assistant. How can I help you today?",
+            config=types.GenerateContentConfig(
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice_name
+                        )
+                    )
+                ),
+                response_modalities=["AUDIO"],
+            ),
+        )
+        audio_data = response.candidates[0].content.parts[0].inline_data.data
+        audio_b64 = base64.b64encode(audio_data).decode("utf-8")
+        return {"audio_base64": audio_b64, "format": "wav"}
+    except Exception as e:
+        logger.error(f"Voice preview error for {voice_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ---------------------------------------------------------------------------
 # PUBLIC MENU PAGE (no auth required)
 # ---------------------------------------------------------------------------
