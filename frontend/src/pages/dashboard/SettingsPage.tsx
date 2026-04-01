@@ -61,7 +61,43 @@ const SettingsPage = () => {
   const playVoicePreview = async (voiceId: string) => {
     try {
       const res = await getVoicePreview(voiceId);
-      const audio = new Audio(`data:audio/wav;base64,${res.data.audio_base64}`);
+      const base64 = res.data.audio_base64;
+
+      // Decode base64 → raw PCM bytes (Gemini returns 16-bit PCM @ 24kHz, no WAV header)
+      const binaryStr = atob(base64);
+      const pcmBytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) pcmBytes[i] = binaryStr.charCodeAt(i);
+
+      // Build a valid WAV container around the raw PCM
+      const sampleRate = 24000;
+      const numChannels = 1;
+      const bitsPerSample = 16;
+      const dataSize = pcmBytes.byteLength;
+      const wavBuffer = new ArrayBuffer(44 + dataSize);
+      const v = new DataView(wavBuffer);
+
+      // RIFF header
+      [0x52,0x49,0x46,0x46].forEach((b, i) => v.setUint8(i, b));       // "RIFF"
+      v.setUint32(4, 36 + dataSize, true);
+      [0x57,0x41,0x56,0x45].forEach((b, i) => v.setUint8(8 + i, b));   // "WAVE"
+      // fmt chunk
+      [0x66,0x6d,0x74,0x20].forEach((b, i) => v.setUint8(12 + i, b));  // "fmt "
+      v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true);                                          // PCM
+      v.setUint16(22, numChannels, true);
+      v.setUint32(24, sampleRate, true);
+      v.setUint32(28, sampleRate * numChannels * bitsPerSample / 8, true);
+      v.setUint16(32, numChannels * bitsPerSample / 8, true);
+      v.setUint16(34, bitsPerSample, true);
+      // data chunk
+      [0x64,0x61,0x74,0x61].forEach((b, i) => v.setUint8(36 + i, b));  // "data"
+      v.setUint32(40, dataSize, true);
+      new Uint8Array(wavBuffer, 44).set(pcmBytes);
+
+      const blob = new Blob([wavBuffer], { type: "audio/wav" });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
       await audio.play();
     } catch {
       toast.error("Could not load voice preview");
