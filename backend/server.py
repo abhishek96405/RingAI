@@ -824,7 +824,7 @@ async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpd
     config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     return config
 
-    @api_router.get("/voice-preview/{voice_name}")
+@api_router.get("/voice-preview/{voice_name}")
 async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Generate a short audio preview of a Gemini voice using TTS API."""
     import base64
