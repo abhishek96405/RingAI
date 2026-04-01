@@ -815,6 +815,7 @@ async def create_call_pipeline(
     stream_sid: str = "",
     on_call_complete: Optional[Callable] = None,
     session: Optional[CallSession] = None,
+    voice: Optional[str] = None,
 ):
     if not is_pipeline_available():
         logger.warning("[Pipeline] Not available — missing API keys")

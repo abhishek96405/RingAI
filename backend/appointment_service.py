@@ -97,6 +97,25 @@ async def get_available_slots(
     if not slots_grid:
         return []
 
+    # Filter out past slots if the requested date is today
+    import pytz
+    try:
+        tz_str = config.get("timezone", "UTC")
+        tz = pytz.timezone(tz_str)
+        now_local = datetime.now(pytz.utc).astimezone(tz)
+        today_str = now_local.strftime("%Y-%m-%d")
+        if date_str == today_str:
+            current_minutes = now_local.hour * 60 + now_local.minute
+            slots_grid = [
+                s for s in slots_grid
+                if int(s.split(":")[0]) * 60 + int(s.split(":")[1]) > current_minutes
+            ]
+    except Exception:
+        pass  # timezone error — keep all slots rather than blocking everything
+
+    if not slots_grid:
+        return []
+
     # Fetch existing bookings
     booked_counts: Dict[str, int] = {}
     if db is not None:

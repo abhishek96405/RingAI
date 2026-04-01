@@ -220,6 +220,9 @@ export const blockSlot = (
 export const unblockSlot = (restaurantId: string, slotId: string) =>
   api.delete(`/restaurants/${restaurantId}/blocked-slots/${slotId}`);
 
+export const getVoicePreview = (voiceName: string) =>
+  api.get(`/voice-preview/${voiceName}`);
+
 export const getAvailableSlots = (restaurantId: string, date: string, serviceName?: string) =>
   api.get(`/restaurants/${restaurantId}/available-slots`, {
     params: { date, service_name: serviceName },

@@ -2619,6 +2619,7 @@ async def twilio_media_stream(websocket: WebSocket):
                 stream_sid=stream_sid,
                 on_call_complete=on_call_complete,
                 session=session,
+                voice=config.get("voice_id") if config else None,
             )
         else:
             logger.warning("Pipecat pipeline not available — closing WebSocket")

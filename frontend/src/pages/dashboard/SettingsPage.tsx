@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getConfig, getRestaurant, getRestaurantId, updateConfig, updateRestaurant } from "@/lib/api";
+import { getConfig, getRestaurant, getRestaurantId, updateConfig, updateRestaurant, getVoicePreview } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,12 +12,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertTriangle, Mic, Plus, Save, Settings as SettingsIcon, ShieldAlert, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 
+const playVoicePreview = async (voiceId: string) => {
+  try {
+    const res = await getVoicePreview(voiceId);
+    const audio = new Audio(`data:audio/wav;base64,${res.data.audio_base64}`);
+    audio.play();
+  } catch {
+    toast.error("Could not load voice preview");
+  }
+};
+
 const voiceOptions = [
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel - Professional", accent: "American" },
-  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi - Warm", accent: "American" },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella - Friendly", accent: "American" },
-  { id: "TX3LPaxmHKxFdv7VOQHJ", name: "Liam - Calm", accent: "American" },
-  { id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel - Authoritative", accent: "British" },
+  { id: "Leda",   name: "Leda - Warm",          accent: "American" },
+  { id: "Kore",   name: "Kore - Professional",   accent: "American" },
+  { id: "Aoede",  name: "Aoede - Friendly",       accent: "American" },
+  { id: "Puck",   name: "Puck - Energetic",       accent: "American" },
+  { id: "Zephyr", name: "Zephyr - Bright",        accent: "American" },
+  { id: "Orus",   name: "Orus - Confident",       accent: "American" },
+  { id: "Fenrir", name: "Fenrir - Calm",          accent: "American" },
+  { id: "Charon", name: "Charon - Deep",          accent: "American" },
 ];
 
 const defaultHours = {
@@ -293,7 +306,16 @@ const SettingsPage = () => {
                   <div key={voice.id} onClick={() => setConfig({ ...config, voice_id: voice.id })} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${config?.voice_id === voice.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
                     <Volume2 className="w-4 h-4 text-muted-foreground" />
                     <div className="flex-1"><p className="text-sm font-medium">{voice.name}</p><p className="text-xs text-muted-foreground">{voice.accent}</p></div>
-                    {config?.voice_id === voice.id && <span className="text-xs bg-primary/10 text-primary rounded-full px-2 py-0.5">Selected</span>}
+                    <div className="flex items-center gap-2">
+                      {config?.voice_id === voice.id && <span className="text-xs bg-primary/10 text-primary rounded-full px-2 py-0.5">Selected</span>}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); playVoicePreview(voice.id); }}
+                        className="text-muted-foreground hover:text-primary transition-colors"
+                        title="Preview voice"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
