@@ -842,19 +842,66 @@ async def create_call_pipeline(
         async def on_ai_transcript(full_text: str):
             if not session:
                 return
-            # Don't record injected SYSTEM frames as AI transcript entries
+            # on_ai_transcript is the primary signal handler for Gemini Live.
+            # on_assistant_turn_stopped is NOT reliable for Gemini Live turns
+            # (audio streams bypass the aggregator's frame-based turn detection),
+            # so all critical signals live here.
             if full_text.startswith("SYSTEM:"):
                 logger.debug(f"[{call_sid}] Skipping SYSTEM frame from transcript")
                 return
-            # on_ai_transcript fires from RingAIGeminiLive's buffer flush.
-            # Signal detection and classifier run in on_assistant_turn_stopped
-            # (aggregator level) which is more reliable. We only log here to
-            # avoid duplicate processing on every chunk.
             logger.info(f"[{call_sid}] AI: {full_text}")
             session.add_transcript_entry("ai", full_text)
             text_lower = full_text.lower()
 
-            # ── CALL_END signal — explicit end requested by AI ──
+            # ── Menu SMS trigger ──
+            if "i'll text you" in text_lower and "menu" in text_lower:
+                from gemini_service import send_menu_sms
+                asyncio.create_task(send_menu_sms(
+                    caller_number=session.caller_number,
+                    restaurant_name=session.restaurant.get("name", "the restaurant"),
+                    restaurant_id=session.restaurant_id,
+                    base_url="https://ringai-v2.onrender.com",
+                ))
+                logger.info(f"[{call_sid}] Menu SMS triggered")
+
+            # ── ORDER_CONFIRMED signal (restaurant) ──
+            order_confirmed_phrases = [
+                "your order is confirmed",
+                "order is confirmed",
+                "i'll send you a text confirmation",
+                "sending you a text confirmation",
+                "ready in about",
+                "thank you for calling",
+            ]
+            if (
+                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                and any(p in text_lower for p in order_confirmed_phrases)
+                and session.business_type == "restaurant"
+            ):
+                logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
+                session.order.transition(OrderState.CONFIRMED, "signal")
+                asyncio.create_task(session._handle_order_confirmed())
+
+            # ── APPOINTMENT_CONFIRMED signal ──
+            appointment_confirmed_phrases = [
+                "your appointment is confirmed",
+                "appointment is confirmed",
+                "appointment has been confirmed",
+                "i'll send you a text confirmation",
+                "we'll see you",
+                "we look forward to seeing you",
+            ]
+            if (
+                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                and any(p in text_lower for p in appointment_confirmed_phrases)
+            ):
+                business_type = session.config.get("business_type", "restaurant")
+                if business_type in ("clinic", "salon", "home_services", "legal"):
+                    logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
+                    session.order.transition(OrderState.CONFIRMED, "signal")
+                    asyncio.create_task(session._handle_appointment_confirmed())
+
+            # ── CALL_END signal — farewell phrases trigger a 30s hangup timer ──
             call_end_phrases = [
                 "call_end",
                 "goodbye!",
@@ -937,26 +984,24 @@ async def create_call_pipeline(
         # After result_callback, we also append to context so Gemini's
         # server-side history reflects the completed tool call.
         if _tools_list and session:
-            async def _handle_check_availability(
-                function_name, tool_call_id, args, llm, context, result_callback
-            ):
-                date_str = args.get("date", "").strip()
-                service_name = args.get("service_name", "").strip() or None
+            async def _handle_check_availability(params):
+                date_str = params.arguments.get("date", "").strip()
+                service_name = params.arguments.get("service_name", "").strip() or None
                 logger.info(
                     f"[{call_sid}] check_availability (native): date={date_str} service={service_name}"
                 )
                 if not date_str:
-                    await result_callback({"error": "date is required"})
+                    await params.result_callback({"error": "date is required"})
                     return
 
                 logger.info(
                     f"[{call_sid}] ✅ check_availability INVOKED by Gemini "
-                    f"(tool_call_id={tool_call_id})"
+                    f"(tool_call_id={params.tool_call_id})"
                 )
                 # Note: _fn_in_progress is now managed by _run_function_call override
                 try:
                     result = await _fetch_availability(date_str, service_name)
-                    await result_callback(result)
+                    await params.result_callback(result)
                     import json as _json
                     from pipecat.processors.aggregators.llm_response_universal import (
                         LLMMessagesAppendFrame,
@@ -973,7 +1018,7 @@ async def create_call_pipeline(
                     _intent_cache[f"{date_str}:{service_name}"] = True
                 except Exception as _e:
                     logger.error(f"[{call_sid}] check_availability error: {_e}")
-                    await result_callback({"error": "Could not check availability right now."})
+                    await params.result_callback({"error": "Could not check availability right now."})
 
             gemini_live.register_function("check_availability", _handle_check_availability)
 
@@ -1125,70 +1170,19 @@ async def create_call_pipeline(
 
             @assistant_aggregator.event_handler("on_assistant_turn_stopped")
             async def on_assistant_turn_stopped(aggregator, message: AssistantTurnStoppedMessage):
+                # on_assistant_turn_stopped is NOT reliable for Gemini Live — audio
+                # streams bypass the frame-based aggregator turn detection.
+                # All critical signals (APPOINTMENT_CONFIRMED, ORDER_CONFIRMED, CALL_END)
+                # are handled in on_ai_transcript.  This handler runs the classifier
+                # fallback only, which is idempotent and non-critical.
                 full_text = message.content.strip() if message.content else ""
-                if not full_text:
+                if not full_text or full_text.startswith("SYSTEM:"):
                     return
-                # Don't record injected SYSTEM frames as AI transcript entries
-                if full_text.startswith("SYSTEM:"):
-                    logger.debug(f"[{call_sid}] Skipping SYSTEM frame from transcript")
-                    return
-                logger.info(f"[{call_sid}] AI: {full_text}")
-                session.add_transcript_entry("ai", full_text)
-                text_lower = full_text.lower()
-
-                # ── Menu SMS trigger ──
-                if "i'll text you" in text_lower and "menu" in text_lower:
-                    from gemini_service import send_menu_sms
-                    asyncio.create_task(send_menu_sms(
-                        caller_number=session.caller_number,
-                        restaurant_name=session.restaurant.get("name", "the restaurant"),
-                        restaurant_id=session.restaurant_id,
-                        base_url="https://ringai-v2.onrender.com",
-                    ))
-                    logger.info(f"[{call_sid}] Menu SMS triggered")
-
-                # ── ORDER_CONFIRMED signal (restaurant) ──
-                order_confirmed_phrases = [
-                    "your order is confirmed",
-                    "order is confirmed",
-                    "i'll send you a text confirmation",
-                    "sending you a text confirmation",
-                    "ready in about",
-                    "thank you for calling",
-                ]
-                if (
-                    session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                    and any(p in text_lower for p in order_confirmed_phrases)
-                ):
-                    if session.business_type == "restaurant":
-                        logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
-                        session.order.transition(OrderState.CONFIRMED, "signal")
-                        asyncio.create_task(session._handle_order_confirmed())
-
-                # ── Classifier-based availability fallback ──
                 asyncio.create_task(_classifier_availability_check(full_text))
-
-                # ── APPOINTMENT_CONFIRMED signal ──
-                appointment_confirmed_phrases = [
-                    "your appointment is confirmed",
-                    "appointment is confirmed",
-                    "appointment has been confirmed",
-                    "i'll send you a text confirmation",
-                    "we'll see you",
-                    "we look forward to seeing you",
-                ]
-                if (
-                    session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                    and any(p in text_lower for p in appointment_confirmed_phrases)
-                ):
-                    business_type = session.config.get("business_type", "restaurant")
-                    if business_type in ("clinic", "salon", "home_services", "legal"):
-                        logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
-                        session.order.transition(OrderState.CONFIRMED, "signal")
-                        asyncio.create_task(session._handle_appointment_confirmed())
 
         task = PipelineTask(
             pipeline,
+            enable_rtvi=False,
             params=PipelineParams(
                 allow_interruptions=True,
                 enable_metrics=True,
