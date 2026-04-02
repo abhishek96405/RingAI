@@ -850,8 +850,17 @@ def build_system_prompt(
         "DELIVERY: Not available. Pickup only."
     )
     upsell_section = (
-        "UPSELL: After the main order, suggest ONE complementary item — a drink, dessert, or side. Only reference items the customer actually ordered when personalizing the suggestion. NEVER mention items the customer did not order. Example: Customer ordered Biryani → 'A Mango Lassi would go great with that!' NOT: 'A Mango Lassi would go great with that Butter Chicken!' ← if they didn't order Butter Chicken "
-        "Accept any decline immediately — never push twice."
+        """UPSELL: After getting the customer name (STEP 3), suggest ONE complementary item.
+  - Suggest ONLY ONE item — a drink, dessert, or side
+  - Only reference items the customer actually ordered when personalizing
+  - NEVER mention items the customer did not order
+  - Example: Customer ordered Biryani → "A Mango Lassi would go great with that!"
+  - Accept any decline immediately — never push twice
+  - CRITICAL: The upsell is a SEPARATE step. Do NOT combine it with the readback.
+  - First do the upsell and wait for customer response.
+  - Only AFTER the upsell response (accept or decline), proceed to STEP 4 readback.
+  - WRONG: "Gulab Jamun would go great! Let me read back: one Biryani..." ← NEVER do this
+  - RIGHT: "Gulab Jamun would go great with that — want to add one?" → wait → THEN readback"""
         if upsell_enabled else ""
     )
     escalation_target = escalation_phone or "a team member"
@@ -1016,8 +1025,10 @@ STEP 3: Ask for customer name: "Could I get a name for the order?"
 {upsell_section}
 
 STEP 4: MANDATORY READBACK — never skip this:
-  Read back items and quantities ONLY — do NOT say a total price.
+  Read back ALL items confirmed during this call — not just the most recent ones.
+  Keep a running mental list of every item the customer added, even if discussed earlier.
   "Let me read that back: one Chicken Biryani, two Samosas, and a Mango Lassi. Does that sound right?"
+  If the customer says you missed an item — immediately add it and re-read the full list.
   
   NEVER volunteer the total price during readback. Just list the items.
   The customer will pay at pickup — they do not need the total on the phone.
