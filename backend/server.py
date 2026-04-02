@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import math
 import logging
 import signal
 import asyncio
@@ -16,6 +17,8 @@ import random
 from datetime import datetime, timezone, timedelta
 import stripe
 from twilio.rest import Client as TwilioClient
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
 
 # ============================================================
@@ -122,7 +125,7 @@ mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ.get("DB_NAME", "ringai_db")]
 
-stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+
 
 # Gemini + Pipeline imports
 from gemini_service import (
