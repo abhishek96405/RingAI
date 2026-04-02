@@ -360,6 +360,25 @@ class CallSession:
     # Order confirmed — dispatch then hang up
     # ------------------------------------------------------------------
 
+    async def _handle_order_confirmed(self):
+        """Handle restaurant orders — dispatch order then hang up."""
+        self._hangup_scheduled = True
+        if not self._order_dispatched:
+            await self.dispatch_order_if_ready()
+        if self._on_call_complete:
+            try:
+                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_order_confirmed")
+                await self._on_call_complete(
+                    call_sid=self.call_sid,
+                    restaurant_id=self.restaurant_id,
+                    transcript=self.transcript,
+                    session=self,
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+        self._hangup_scheduled = False
+        await self._schedule_hangup(reason="order_confirmed")
+
     async def _handle_appointment_confirmed(self):
         """Handle appointment businesses — dispatch booking then hang up."""
         self._hangup_scheduled = True
