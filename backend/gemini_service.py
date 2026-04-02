@@ -1503,7 +1503,7 @@ def get_system_prompt(
     appointment → build_appointment_prompt() [NEW]
     """
     if business_type in ("restaurant",):
-        restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+        restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
         return build_system_prompt(**restaurant_kwargs)
 
     elif business_type in ("clinic", "salon", "home_services", "legal"):
@@ -1523,7 +1523,7 @@ def get_system_prompt(
             return build_appointment_prompt(**appointment_kwargs)
         except ImportError as e:
             logger.error(f"Could not import appointment_service: {e}")
-            restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
+            restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
             return build_system_prompt(**restaurant_kwargs)
 
     else:

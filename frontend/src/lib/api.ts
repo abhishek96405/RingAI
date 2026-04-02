@@ -239,6 +239,9 @@ export const updateItemModifierAssignments = (itemId: string, assignments: any[]
 export const getVoicePreview = (voiceName: string) =>
   api.get(`/voice-preview/${voiceName}`);
 
+export const getAdminCostAnalytics = (days: number = 30) =>
+  api.get(`/admin/cost-analytics?days=${days}`);
+
 export const getAvailableSlots = (restaurantId: string, date: string, serviceName?: string) =>
   api.get(`/restaurants/${restaurantId}/available-slots`, {
     params: { date, service_name: serviceName },
