@@ -1411,10 +1411,10 @@ async def create_call_pipeline(
 # ---------------------------------------------------------------------------
 
 def generate_twiml_stream_response(websocket_url: str, call_sid: str, status_callback_url: str = "") -> str:
-    status_attr = f' statusCallback="{status_callback_url}" statusCallbackMethod="POST"' if status_callback_url else ""
+    response_attr = f' statusCallback="{status_callback_url}" statusCallbackMethod="POST" statusCallbackEvent="completed"' if status_callback_url else ""
     return f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect{status_attr}>
+<Response{response_attr}>
+    <Connect>
         <Stream url="{websocket_url}">
             <Parameter name="callSid" value="{call_sid}" />
         </Stream>
