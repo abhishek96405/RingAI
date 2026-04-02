@@ -220,6 +220,22 @@ export const blockSlot = (
 export const unblockSlot = (restaurantId: string, slotId: string) =>
   api.delete(`/restaurants/${restaurantId}/blocked-slots/${slotId}`);
 
+// Modifier Groups
+export const getModifierGroups = (restaurantId: string) =>
+  api.get(`/restaurants/${restaurantId}/modifier-groups`);
+
+export const createModifierGroup = (restaurantId: string, data: any) =>
+  api.post(`/restaurants/${restaurantId}/modifier-groups`, data);
+
+export const updateModifierGroup = (groupId: string, data: any) =>
+  api.put(`/modifier-groups/${groupId}`, data);
+
+export const deleteModifierGroup = (groupId: string) =>
+  api.delete(`/modifier-groups/${groupId}`);
+
+export const updateItemModifierAssignments = (itemId: string, assignments: any[]) =>
+  api.put(`/menu/${itemId}/modifier-assignments`, assignments);
+
 export const getVoicePreview = (voiceName: string) =>
   api.get(`/voice-preview/${voiceName}`);
 

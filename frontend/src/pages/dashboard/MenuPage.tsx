@@ -9,8 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { createMenuItem, deleteMenuItem, getMenuItems, toggleMenuItem, updateMenuItem } from "@/lib/api";
-import { DollarSign, Edit2, Plus, Search, Trash2, UtensilsCrossed, X, Settings2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  createMenuItem, deleteMenuItem, getMenuItems, toggleMenuItem, updateMenuItem,
+  getModifierGroups, createModifierGroup, updateModifierGroup, deleteModifierGroup,
+  updateItemModifierAssignments
+} from "@/lib/api";
+import { useAppSession } from "@/context/AppSessionContext";
+import { DollarSign, Edit2, Plus, Search, Trash2, UtensilsCrossed, X, Settings2, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -22,19 +28,317 @@ const defaultItem = {
   available: true,
   allergens: [] as string[],
   modifiers: [] as any[],
+  modifier_group_assignments: [] as any[],
+  special_instructions_enabled: true,
 };
 
 const categories = ["Appetizers", "Pizza", "Pasta", "Entrees", "Desserts", "Beverages", "Sides", "Specials", "Uncategorized"];
 const allergenOptions = ["gluten", "dairy", "nuts", "soy", "eggs", "shellfish"];
 
-// Default modifier groups as starting templates
-const defaultModifierGroups = [
-  { name: "Spice Level", options: ["Mild", "Medium", "Hot", "Extra Hot"] },
-  { name: "Protein", options: ["Chicken", "Tofu", "Shrimp", "Beef"] },
-  { name: "Extras", options: ["Extra sauce", "No sauce", "On the side"] },
-];
+// ── Modifier Library Tab ───────────────────────────────────────────────────
+
+function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
+  const [groups, setGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingGroup, setEditingGroup] = useState<any>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<any>({
+    name: "",
+    selection_type: "single",
+    required: false,
+    min_selections: 0,
+    max_selections: 1,
+    active: true,
+    options: [],
+  });
+  const [newOptionName, setNewOptionName] = useState("");
+  const [newOptionPrice, setNewOptionPrice] = useState("");
+  const [newOptionAliases, setNewOptionAliases] = useState("");
+
+  const fetchGroups = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getModifierGroups(restaurantId);
+      setGroups(res.data || []);
+    } catch {
+      toast.error("Failed to load modifier groups");
+    } finally {
+      setLoading(false);
+    }
+  }, [restaurantId]);
+
+  useEffect(() => { fetchGroups(); }, [fetchGroups]);
+
+  const openAdd = () => {
+    setEditingGroup(null);
+    setForm({ name: "", selection_type: "single", required: false, min_selections: 0, max_selections: 1, active: true, options: [] });
+    setNewOptionName("");
+    setNewOptionPrice("");
+    setNewOptionAliases("");
+    setDialogOpen(true);
+  };
+
+  const openEdit = (group: any) => {
+    setEditingGroup(group);
+    setForm({ ...group });
+    setNewOptionName("");
+    setNewOptionPrice("");
+    setNewOptionAliases("");
+    setDialogOpen(true);
+  };
+
+  const addOption = () => {
+    if (!newOptionName.trim()) return;
+    const priceDelta = Math.round(parseFloat(newOptionPrice || "0") * 100) || 0;
+    const aliases = newOptionAliases.split(",").map(a => a.trim()).filter(Boolean);
+    const newOpt = {
+      id: crypto.randomUUID(),
+      name: newOptionName.trim(),
+      price_delta: priceDelta,
+      default_selected: false,
+      in_stock: true,
+      display_order: form.options.length,
+      ai_aliases: aliases,
+    };
+    setForm((prev: any) => ({ ...prev, options: [...prev.options, newOpt] }));
+    setNewOptionName("");
+    setNewOptionPrice("");
+    setNewOptionAliases("");
+  };
+
+  const removeOption = (optId: string) => {
+    setForm((prev: any) => ({ ...prev, options: prev.options.filter((o: any) => o.id !== optId) }));
+  };
+
+  const toggleOptionStock = (optId: string) => {
+    setForm((prev: any) => ({
+      ...prev,
+      options: prev.options.map((o: any) => o.id === optId ? { ...o, in_stock: !o.in_stock } : o)
+    }));
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { toast.error("Group name is required"); return; }
+    if (form.options.length === 0) { toast.error("Add at least one option"); return; }
+    setSaving(true);
+    try {
+      if (editingGroup) {
+        await updateModifierGroup(editingGroup.id, form);
+        toast.success("Modifier group updated!");
+      } else {
+        await createModifierGroup(restaurantId, form);
+        toast.success("Modifier group created!");
+      }
+      setDialogOpen(false);
+      fetchGroups();
+    } catch {
+      toast.error("Failed to save modifier group");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (groupId: string) => {
+    try {
+      await deleteModifierGroup(groupId);
+      toast.success("Modifier group deleted");
+      fetchGroups();
+    } catch {
+      toast.error("Failed to delete modifier group");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-display font-bold text-lg">Modifier Library</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Create reusable modifier groups — Size, Spice Level, Toppings — then assign them to menu items.</p>
+        </div>
+        <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+          <Plus className="w-4 h-4 mr-2" /> New Group
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="grid sm:grid-cols-2 gap-4">{[...Array(4)].map((_, i) => <div key={i} className="premium-card h-32 animate-pulse" />)}</div>
+      ) : groups.length === 0 ? (
+        <Card className="p-12 text-center">
+          <Settings2 className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+          <h3 className="font-display font-semibold mb-1">No modifier groups yet</h3>
+          <p className="text-sm text-muted-foreground mb-4">Create groups like "Size", "Spice Level", or "Toppings" and assign them to menu items.</p>
+          <Button onClick={openAdd} variant="outline">Create First Group</Button>
+        </Card>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-4">
+          {groups.map((group) => (
+            <Card key={group.id} className={`p-4 ${!group.active ? "opacity-50" : ""}`}>
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-display font-semibold">{group.name}</h4>
+                    {group.required && <Badge className="text-xs bg-destructive/10 text-destructive border-0">Required</Badge>}
+                    {!group.active && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {group.selection_type === "single" ? "Single select" : "Multi select"}
+                    {group.required ? ` · min ${group.min_selections}` : " · optional"}
+                    {group.max_selections > 1 ? ` · max ${group.max_selections}` : ""}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(group)}>
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(group.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {group.options.map((opt: any) => (
+                  <span key={opt.id} className={`text-xs px-2 py-0.5 rounded-full border ${!opt.in_stock ? "opacity-40 line-through" : ""} bg-muted/50`}>
+                    {opt.name}{opt.price_delta > 0 ? ` +$${(opt.price_delta / 100).toFixed(2)}` : ""}
+                  </span>
+                ))}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Create/Edit Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingGroup ? "Edit Modifier Group" : "New Modifier Group"}</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh] pr-2">
+            <div className="space-y-4 py-1">
+              {/* Name */}
+              <div className="space-y-1.5">
+                <Label>Group Name</Label>
+                <Input value={form.name} onChange={(e) => setForm((p: any) => ({ ...p, name: e.target.value }))} placeholder="e.g. Size, Spice Level, Toppings" />
+              </div>
+
+              {/* Selection type */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Selection Type</Label>
+                  <Select value={form.selection_type} onValueChange={(v) => setForm((p: any) => ({ ...p, selection_type: v }))}>
+                    <SelectTrigger className="h-9 rounded-lg"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="single">Single select</SelectItem>
+                      <SelectItem value="multiple">Multi select</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Required?</Label>
+                  <div className="flex items-center gap-2 h-9">
+                    <Switch checked={form.required} onCheckedChange={(v) => setForm((p: any) => ({ ...p, required: v, min_selections: v ? 1 : 0 }))} />
+                    <span className="text-sm text-muted-foreground">{form.required ? "Required" : "Optional"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {form.selection_type === "multiple" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Min Selections</Label>
+                    <Input type="number" min={0} value={form.min_selections} onChange={(e) => setForm((p: any) => ({ ...p, min_selections: parseInt(e.target.value) || 0 }))} className="h-9" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max Selections</Label>
+                    <Input type="number" min={1} value={form.max_selections} onChange={(e) => setForm((p: any) => ({ ...p, max_selections: parseInt(e.target.value) || 1 }))} className="h-9" />
+                  </div>
+                </div>
+              )}
+
+              {/* Active toggle */}
+              <div className="flex items-center gap-2">
+                <Switch checked={form.active} onCheckedChange={(v) => setForm((p: any) => ({ ...p, active: v }))} />
+                <Label>Active</Label>
+              </div>
+
+              {/* Options */}
+              <div className="space-y-2">
+                <Label>Options</Label>
+                {form.options.length > 0 && (
+                  <div className="space-y-1.5 mb-2">
+                    {form.options.map((opt: any) => (
+                      <div key={opt.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/30 border border-border/50">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-sm font-medium ${!opt.in_stock ? "line-through text-muted-foreground" : ""}`}>{opt.name}</span>
+                            {opt.price_delta > 0 && <span className="text-xs text-emerald-600">+${(opt.price_delta / 100).toFixed(2)}</span>}
+                          </div>
+                          {opt.ai_aliases?.length > 0 && (
+                            <p className="text-xs text-muted-foreground">aliases: {opt.ai_aliases.join(", ")}</p>
+                          )}
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => toggleOptionStock(opt.id)} title="Toggle stock">
+                          <span className="text-xs">{opt.in_stock ? "✓" : "✗"}</span>
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 text-destructive hover:text-destructive" onClick={() => removeOption(opt.id)}>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add option form */}
+                <div className="border border-dashed border-border/50 rounded-lg p-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={newOptionName}
+                      onChange={(e) => setNewOptionName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addOption()}
+                      placeholder="Option name"
+                      className="h-8 text-sm"
+                    />
+                    <Input
+                      value={newOptionPrice}
+                      onChange={(e) => setNewOptionPrice(e.target.value)}
+                      placeholder="Price delta (e.g. 1.50)"
+                      className="h-8 text-sm"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                    />
+                  </div>
+                  <Input
+                    value={newOptionAliases}
+                    onChange={(e) => setNewOptionAliases(e.target.value)}
+                    placeholder="AI aliases (comma separated, e.g. medium, regular)"
+                    className="h-8 text-sm"
+                  />
+                  <Button variant="outline" size="sm" className="w-full h-8 text-xs" onClick={addOption}>
+                    <Plus className="w-3 h-3 mr-1" /> Add Option
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </ScrollArea>
+          <DialogFooter className="pt-4 border-t">
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground">
+              {saving ? "Saving..." : editingGroup ? "Update Group" : "Create Group"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Menu Items Tab ─────────────────────────────────────────────────────────
 
 const MenuPage = () => {
+  const { activeRestaurant } = useAppSession();
+  const restaurantId = activeRestaurant?.id ?? "";
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -43,8 +347,9 @@ const MenuPage = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>(defaultItem);
   const [saving, setSaving] = useState(false);
+  const [modifierGroups, setModifierGroups] = useState<any[]>([]);
 
-  // Modifier state
+  // Legacy modifier state (kept for backward compat)
   const [newGroupName, setNewGroupName] = useState("");
   const [newOption, setNewOption] = useState<Record<number, string>>({});
 
@@ -60,7 +365,18 @@ const MenuPage = () => {
     }
   }, []);
 
+  const fetchModifierGroups = useCallback(async () => {
+    if (!restaurantId) return;
+    try {
+      const res = await getModifierGroups(restaurantId);
+      setModifierGroups(res.data || []);
+    } catch {
+      // non-fatal
+    }
+  }, [restaurantId]);
+
   useEffect(() => { fetchItems(); }, [fetchItems]);
+  useEffect(() => { fetchModifierGroups(); }, [fetchModifierGroups]);
 
   const openAdd = () => {
     setEditingItem(null);
@@ -80,6 +396,8 @@ const MenuPage = () => {
       available: item.available,
       allergens: item.allergens || [],
       modifiers: item.modifiers || [],
+      modifier_group_assignments: item.modifier_group_assignments || [],
+      special_instructions_enabled: item.special_instructions_enabled !== false,
     });
     setNewGroupName("");
     setNewOption({});
@@ -87,17 +405,21 @@ const MenuPage = () => {
   };
 
   const handleSave = async () => {
-    if (!formData.name.trim()) {
-      toast.error("Item name is required");
-      return;
-    }
+    if (!formData.name.trim()) { toast.error("Item name is required"); return; }
     setSaving(true);
     try {
+      const payload = { ...formData };
       if (editingItem) {
-        await updateMenuItem(editingItem.id, formData);
+        await updateMenuItem(editingItem.id, payload);
+        // Save modifier assignments separately
+        await updateItemModifierAssignments(editingItem.id, formData.modifier_group_assignments || []);
         toast.success("Menu item updated!");
       } else {
-        await createMenuItem(null, formData);
+        const res = await createMenuItem(null, payload);
+        // Save modifier assignments for new item
+        if (res.data?.id && formData.modifier_group_assignments?.length > 0) {
+          await updateItemModifierAssignments(res.data.id, formData.modifier_group_assignments);
+        }
         toast.success("Menu item added!");
       }
       setDialogOpen(false);
@@ -137,23 +459,42 @@ const MenuPage = () => {
     }));
   };
 
-  // Modifier group helpers
+  const toggleModifierGroupAssignment = (groupId: string) => {
+    setFormData((prev: any) => {
+      const assignments = prev.modifier_group_assignments || [];
+      const exists = assignments.find((a: any) => a.modifier_group_id === groupId);
+      if (exists) {
+        return { ...prev, modifier_group_assignments: assignments.filter((a: any) => a.modifier_group_id !== groupId) };
+      } else {
+        return {
+          ...prev,
+          modifier_group_assignments: [...assignments, {
+            modifier_group_id: groupId,
+            override_required: null,
+            override_min: null,
+            override_max: null,
+            override_name: null,
+            display_order: assignments.length,
+          }]
+        };
+      }
+    });
+  };
+
+  const isGroupAssigned = (groupId: string) =>
+    (formData.modifier_group_assignments || []).some((a: any) => a.modifier_group_id === groupId);
+
+  // Legacy modifier helpers
   const addModifierGroup = () => {
     if (!newGroupName.trim()) return;
     const exists = formData.modifiers.some((m: any) => m.name.toLowerCase() === newGroupName.trim().toLowerCase());
     if (exists) { toast.error("Group already exists"); return; }
-    setFormData((prev: any) => ({
-      ...prev,
-      modifiers: [...prev.modifiers, { name: newGroupName.trim(), options: [] }],
-    }));
+    setFormData((prev: any) => ({ ...prev, modifiers: [...prev.modifiers, { name: newGroupName.trim(), options: [] }] }));
     setNewGroupName("");
   };
 
   const removeModifierGroup = (index: number) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      modifiers: prev.modifiers.filter((_: any, i: number) => i !== index),
-    }));
+    setFormData((prev: any) => ({ ...prev, modifiers: prev.modifiers.filter((_: any, i: number) => i !== index) }));
   };
 
   const addOptionToGroup = (groupIndex: number) => {
@@ -176,15 +517,6 @@ const MenuPage = () => {
     });
   };
 
-  const addTemplateGroup = (template: { name: string; options: string[] }) => {
-    const exists = formData.modifiers.some((m: any) => m.name.toLowerCase() === template.name.toLowerCase());
-    if (exists) { toast.error("Group already exists"); return; }
-    setFormData((prev: any) => ({
-      ...prev,
-      modifiers: [...prev.modifiers, { name: template.name, options: [...template.options] }],
-    }));
-  };
-
   const filteredItems = useMemo(() => items.filter((item) => {
     if (activeCategory !== "all" && item.category !== activeCategory) return false;
     if (search && !item.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -199,199 +531,186 @@ const MenuPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row gap-4 justify-between">
-        <div className="relative max-w-md flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search menu items..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-10 rounded-xl" />
+      <Tabs defaultValue="items">
+        <div className="flex flex-col sm:flex-row gap-4 justify-between items-start">
+          <TabsList className="bg-muted/50 rounded-xl p-1 h-auto">
+            <TabsTrigger value="items" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
+              <UtensilsCrossed className="w-4 h-4 mr-2" />Menu Items
+            </TabsTrigger>
+            <TabsTrigger value="modifiers" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
+              <Settings2 className="w-4 h-4 mr-2" />Modifier Library
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="items" className="mt-0">
+            <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+              <Plus className="w-4 h-4 mr-2" /> Add Item
+            </Button>
+          </TabsContent>
         </div>
-        <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
-          <Plus className="w-4 h-4 mr-2" /> Add Item
-        </Button>
-      </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {["all", ...categories].map((cat) => (
-          <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
-            {cat === "all" ? "All Items" : cat}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="premium-card h-44 animate-pulse" />)}</div>
-      ) : Object.keys(groupedItems).length === 0 ? (
-        <div className="text-center py-20">
-          <UtensilsCrossed className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-          <h3 className="font-display font-semibold text-lg mb-1">No menu items found</h3>
-          <p className="text-sm text-muted-foreground">Try a different search or add new items.</p>
-        </div>
-      ) : Object.entries(groupedItems).map(([category, catItems]) => (
-        <div key={category}>
-          <h3 className="font-display font-bold text-lg mb-4">{category}</h3>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {(catItems as any[]).map((item, i) => (
-              <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="premium-card p-5">
-                <div className="flex justify-between items-start mb-3 gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="font-display font-semibold truncate">{item.name}</h4>
-                      {!item.available && <span className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-xs font-medium">Unavailable</span>}
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
-                    {item.allergens?.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {item.allergens.map((a: string) => <Badge key={a} variant="secondary" className="text-xs border-0 bg-warning/10 text-warning">{a}</Badge>)}
-                      </div>
-                    )}
-                    {item.modifiers?.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {item.modifiers.map((m: any) => (
-                          <Badge key={m.name} variant="secondary" className="text-xs border-0 bg-primary/10 text-primary">
-                            <Settings2 className="w-2.5 h-2.5 mr-1" />{m.name}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <Switch checked={item.available} onCheckedChange={() => handleToggle(item.id)} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center text-lg font-display font-bold"><DollarSign className="w-4 h-4 mr-0.5" />{(item.price / 100).toFixed(2)}</span>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="sm" className="rounded-lg h-8 w-8 p-0" onClick={() => openEdit(item)}><Edit2 className="w-3.5 h-3.5" /></Button>
-                    <Button variant="ghost" size="sm" className="rounded-lg h-8 w-8 p-0 text-destructive" onClick={() => handleDelete(item.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
-                  </div>
-                </div>
-              </motion.div>
+        <TabsContent value="items" className="mt-4 space-y-4">
+          {/* Category filter */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {["all", ...categories].map((cat) => (
+              <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted"}`}>
+                {cat === "all" ? "All Items" : cat}
+              </button>
             ))}
           </div>
-        </div>
-      ))}
 
+          {/* Search */}
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Search menu items..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-10 rounded-xl" />
+          </div>
+
+          {loading ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="premium-card h-44 animate-pulse" />)}</div>
+          ) : Object.keys(groupedItems).length === 0 ? (
+            <div className="text-center py-20">
+              <UtensilsCrossed className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+              <h3 className="font-display font-semibold text-lg mb-1">No menu items found</h3>
+              <p className="text-sm text-muted-foreground">Try a different search or add new items.</p>
+            </div>
+          ) : Object.entries(groupedItems).map(([category, catItems]) => (
+            <div key={category}>
+              <h3 className="font-display font-bold text-lg mb-4">{category}</h3>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {(catItems as any[]).map((item, i) => (
+                  <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="premium-card p-5">
+                    <div className="flex justify-between items-start mb-3 gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-display font-semibold truncate">{item.name}</h4>
+                          {!item.available && <span className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-xs font-medium">Unavailable</span>}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                        {item.allergens?.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {item.allergens.map((a: string) => <Badge key={a} variant="secondary" className="text-xs border-0 bg-warning/10 text-warning">{a}</Badge>)}
+                          </div>
+                        )}
+                        {item.modifier_group_assignments?.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            <Badge variant="secondary" className="text-xs border-0 bg-primary/10 text-primary">
+                              <Settings2 className="w-2.5 h-2.5 mr-1" />{item.modifier_group_assignments.length} modifier{item.modifier_group_assignments.length > 1 ? "s" : ""}
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+                      <Switch checked={item.available} onCheckedChange={() => handleToggle(item.id)} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center text-lg font-display font-bold"><DollarSign className="w-4 h-4 mr-0.5" />{(item.price / 100).toFixed(2)}</span>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)}><Edit2 className="w-3.5 h-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(item.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </TabsContent>
+
+        <TabsContent value="modifiers" className="mt-4">
+          <ModifierLibrary restaurantId={restaurantId} />
+        </TabsContent>
+      </Tabs>
+
+      {/* Add/Edit Item Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="font-display">{editingItem ? "Edit Menu Item" : "Add Menu Item"}</DialogTitle>
+            <DialogTitle>{editingItem ? "Edit Menu Item" : "Add Menu Item"}</DialogTitle>
           </DialogHeader>
-          <ScrollArea className="flex-1 pr-4">
-            <div className="space-y-4 pb-4">
-              {/* Basic Info */}
+          <ScrollArea className="max-h-[65vh] pr-2">
+            <div className="space-y-4 py-1">
+              <div className="space-y-1.5">
+                <Label>Item Name *</Label>
+                <Input value={formData.name} onChange={(e) => setFormData((p: any) => ({ ...p, name: e.target.value }))} placeholder="e.g. Margherita Pizza" />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Description</Label>
+                <Textarea value={formData.description} onChange={(e) => setFormData((p: any) => ({ ...p, description: e.target.value }))} placeholder="Brief description..." rows={2} className="resize-none" />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <Label>Name</Label>
-                  <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Item name" />
-                </div>
-                <div className="col-span-2">
-                  <Label>Description</Label>
-                  <Textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="Brief description" rows={2} />
-                </div>
-                <div>
+                <div className="space-y-1.5">
                   <Label>Category</Label>
-                  <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  <Select value={formData.category} onValueChange={(v) => setFormData((p: any) => ({ ...p, category: v }))}>
+                    <SelectTrigger className="h-9 rounded-lg"><SelectValue /></SelectTrigger>
+                    <SelectContent>{categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div>
+                <div className="space-y-1.5">
                   <Label>Price ($)</Label>
-                  <Input type="number" value={(formData.price / 100).toFixed(2)} onChange={(e) => setFormData({ ...formData, price: Math.round(parseFloat(e.target.value || "0") * 100) })} step="0.01" min="0" />
-                </div>
-                <div className="col-span-2 flex items-center gap-3">
-                  <Switch checked={formData.available} onCheckedChange={(v) => setFormData({ ...formData, available: v })} />
-                  <Label>Available</Label>
+                  <Input
+                    type="number" min={0} step={0.01}
+                    value={formData.price / 100}
+                    onChange={(e) => setFormData((p: any) => ({ ...p, price: Math.round(parseFloat(e.target.value || "0") * 100) }))}
+                    className="h-9"
+                  />
                 </div>
               </div>
 
               {/* Allergens */}
-              <div>
-                <Label className="mb-2 block">Allergens</Label>
+              <div className="space-y-1.5">
+                <Label>Allergens</Label>
                 <div className="flex flex-wrap gap-2">
                   {allergenOptions.map((a) => (
-                    <button key={a} onClick={() => toggleAllergen(a)} className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${formData.allergens.includes(a) ? "bg-warning/20 text-warning border border-warning/30" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    <button key={a} onClick={() => toggleAllergen(a)} className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${formData.allergens.includes(a) ? "bg-warning/20 border-warning text-warning" : "bg-muted/50 border-border/50 text-muted-foreground hover:border-border"}`}>
                       {a}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Customizations */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <Settings2 className="w-4 h-4 text-primary" />
-                  <Label className="text-base font-semibold">Customizations</Label>
-                </div>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Define what modifications customers can request for this item. AI will only accept these options.
-                </p>
-
-                {/* Quick-add templates */}
-                <div className="mb-3">
-                  <p className="text-xs text-muted-foreground mb-2">Quick add:</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {defaultModifierGroups.map((template) => (
-                      <button key={template.name} onClick={() => addTemplateGroup(template)}
-                        className="px-2.5 py-1 rounded-lg text-xs bg-primary/10 text-primary hover:bg-primary/20 transition-all">
-                        + {template.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Existing modifier groups */}
-                {formData.modifiers.length > 0 && (
-                  <div className="space-y-3 mb-3">
-                    {formData.modifiers.map((group: any, groupIndex: number) => (
-                      <div key={groupIndex} className="border border-border/50 rounded-xl p-3 bg-muted/20">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium">{group.name}</span>
-                          <button onClick={() => removeModifierGroup(groupIndex)} className="text-muted-foreground hover:text-destructive transition-colors">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+              {/* Modifier Group Assignments */}
+              <div className="space-y-2">
+                <Label>Modifier Groups</Label>
+                {modifierGroups.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No modifier groups yet. Create them in the Modifier Library tab first.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {modifierGroups.filter(g => g.active).map((group) => (
+                      <div
+                        key={group.id}
+                        onClick={() => toggleModifierGroupAssignment(group.id)}
+                        className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${isGroupAssigned(group.id) ? "border-primary/50 bg-primary/5" : "border-border/50 hover:border-border"}`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{group.name}</span>
+                            {group.required && <Badge className="text-xs bg-destructive/10 text-destructive border-0 h-4">Required</Badge>}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{group.options.map((o: any) => o.name).join(", ")}</p>
                         </div>
-
-                        {/* Options */}
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                          {group.options.map((option: string) => (
-                            <span key={option} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background border border-border/50 text-xs">
-                              {option}
-                              <button onClick={() => removeOptionFromGroup(groupIndex, option)} className="text-muted-foreground hover:text-destructive ml-0.5">
-                                <X className="w-2.5 h-2.5" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-
-                        {/* Add option */}
-                        <div className="flex gap-2">
-                          <Input
-                            value={newOption[groupIndex] || ""}
-                            onChange={(e) => setNewOption((prev) => ({ ...prev, [groupIndex]: e.target.value }))}
-                            onKeyDown={(e) => e.key === "Enter" && addOptionToGroup(groupIndex)}
-                            placeholder="Add option..."
-                            className="h-7 text-xs"
-                          />
-                          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => addOptionToGroup(groupIndex)}>
-                            Add
-                          </Button>
-                        </div>
+                        <Switch checked={isGroupAssigned(group.id)} onCheckedChange={() => toggleModifierGroupAssignment(group.id)} onClick={(e) => e.stopPropagation()} />
                       </div>
                     ))}
                   </div>
                 )}
+              </div>
 
-                {/* Add new group */}
-                <div className="flex gap-2">
-                  <Input
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && addModifierGroup()}
-                    placeholder="New group name (e.g. Sauce, Size)"
-                    className="h-8 text-sm"
-                  />
-                  <Button variant="outline" size="sm" className="h-8 px-3 whitespace-nowrap" onClick={addModifierGroup}>
-                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Group
-                  </Button>
+              {/* Special Instructions toggle */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
+                <div>
+                  <p className="text-sm font-medium">Special Instructions</p>
+                  <p className="text-xs text-muted-foreground">Allow customers to add free-text notes</p>
                 </div>
+                <Switch
+                  checked={formData.special_instructions_enabled !== false}
+                  onCheckedChange={(v) => setFormData((p: any) => ({ ...p, special_instructions_enabled: v }))}
+                />
+              </div>
+
+              {/* Available toggle */}
+              <div className="flex items-center justify-between">
+                <Label>Available</Label>
+                <Switch checked={formData.available} onCheckedChange={(v) => setFormData((p: any) => ({ ...p, available: v }))} />
               </div>
             </div>
           </ScrollArea>
