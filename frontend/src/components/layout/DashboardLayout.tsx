@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Bell, Calendar, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed, Briefcase, X, CheckCircle2, AlertTriangle, Info, PhoneIncoming, Wifi, WifiOff } from "lucide-react";
+import { Bell, Calendar, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed, Briefcase, X, CheckCircle2, AlertTriangle, Info, PhoneIncoming, Wifi, WifiOff, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -10,7 +10,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { SignOutButton, UserButton } from "@clerk/clerk-react";
+import { SignOutButton, UserButton, useUser } from "@clerk/clerk-react";
 import { useAppSession } from "@/context/AppSessionContext";
 import { getConfig } from "@/lib/api";
 import { useWebSocketNotifications } from "@/hooks/useWebSocketNotifications";
@@ -71,10 +71,15 @@ const tailNavItems = [
   { icon: Settings, label: "Settings", path: "/dashboard/settings" },
 ];
 
+const ADMIN_CLERK_ID = import.meta.env.VITE_ADMIN_CLERK_ID || "";
+
 const DashboardLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [businessType, setBusinessType] = useState<string>("restaurant");
+  const { user } = useUser();
+  const isAdmin = ADMIN_CLERK_ID && user?.id === ADMIN_CLERK_ID;
+  console.log("Admin debug:", { ADMIN_CLERK_ID, userId: user?.id, match: user?.id === ADMIN_CLERK_ID });
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const location = useLocation();
@@ -141,10 +146,15 @@ const DashboardLayout = () => {
   const isAppointmentBusiness = ["clinic", "salon", "home_services", "legal"].includes(businessType);
 
   // Build nav items based on business type
+  const adminNavItems = isAdmin
+    ? [{ icon: ShieldCheck, label: "Admin", path: "/dashboard/admin" }]
+    : [];
+
   const navItems = [
     ...baseNavItems,
     ...(isAppointmentBusiness ? appointmentNavItems : restaurantNavItems),
     ...tailNavItems,
+    ...adminNavItems,
   ];
 
   const isActive = (path: string) => location.pathname === path || (path !== "/dashboard" && location.pathname.startsWith(path));
