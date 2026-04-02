@@ -2605,10 +2605,11 @@ async def twilio_incoming_call(request: Request):
     # Pre-fetch all pipeline data NOW so WebSocket handler starts instantly
     restaurant_id = restaurant["id"]
     config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    business_type = config.get("business_type", "restaurant") if config else "restaurant"
     menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
 
     # Enrich menu items with resolved modifier groups for AI prompt
-    if business_type == "restaurant" or config is None or config.get("business_type", "restaurant") == "restaurant":
+    if business_type == "restaurant" or config is None:
         modifier_groups = await db.modifier_groups.find(
             {"restaurant_id": restaurant_id, "active": True}, {"_id": 0}
         ).to_list(200)
