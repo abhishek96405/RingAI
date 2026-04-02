@@ -567,6 +567,17 @@ class CallRecord(BaseModel):
     caller_name: Optional[str] = None
     order_total: Optional[int] = None  # cents
 
+    # ── Internal cost tracking (admin only — never exposed to business owners) ──
+    cost_twilio_voice_cents: Optional[float] = None   # $0.0085/min inbound
+    cost_twilio_sms_cents: Optional[float] = None     # $0.0083/message
+    cost_gemini_live_cents: Optional[float] = None    # $0 now (free preview), track duration for future
+    cost_gemini_extract_cents: Optional[float] = None # $0.075/1M input + $0.30/1M output
+    cost_gemini_tts_cents: Optional[float] = None     # voice preview calls
+    cost_total_cents: Optional[float] = None          # sum of all above
+    gemini_extract_tokens: Optional[int] = None       # input + output tokens from extraction
+    twilio_sms_count: int = 0                         # number of SMS sent this call
+    duration_seconds_twilio: Optional[int] = None     # exact from Twilio status callback
+
 
 class CallAnalysis(BaseModel):
     quality_score: int
@@ -2705,9 +2716,148 @@ async def twilio_incoming_call(request: Request):
     scheme = "wss" if request.url.scheme == "https" else "ws"
     ws_url = f"{scheme}://{host}/api/twilio/media-stream"
 
-    twiml = generate_twiml_stream_response(ws_url, call_sid)
+    backend_url = get_backend_public_url()
+    status_callback_url = f"{backend_url}/api/twilio/call-status"
+    twiml = generate_twiml_stream_response(ws_url, call_sid, status_callback_url)
     return Response(content=twiml, media_type="application/xml")
 
+
+@api_router.post("/twilio/call-status")
+async def twilio_call_status(request: Request):
+    """
+    Twilio status callback — fires after every call ends.
+    Captures exact CallDuration and updates the call record with accurate cost data.
+    """
+    form = await request.form()
+    call_sid = form.get("CallSid", "")
+    call_status = form.get("CallStatus", "")
+    duration_seconds = form.get("CallDuration")  # exact seconds from Twilio
+
+    if not call_sid:
+        return Response(content="ok", media_type="text/plain")
+
+    logger.info(f"[{call_sid}] Twilio status callback: status={call_status} duration={duration_seconds}s")
+
+    if duration_seconds is not None:
+        try:
+            duration_secs = int(duration_seconds)
+            import math
+
+            # Exact costs from Twilio
+            cost_twilio_voice = math.ceil(duration_secs / 60) * 0.0085
+
+            # Fetch existing call record to get SMS count
+            record = await db.call_records.find_one({"twilio_call_sid": call_sid}, {"_id": 0})
+            if record:
+                sms_count = record.get("twilio_sms_count", 0)
+                cost_twilio_sms = sms_count * 0.0083
+                extract_tokens = record.get("gemini_extract_tokens", 0)
+                cost_gemini_extract = (
+                    (extract_tokens * 0.7 / 1_000_000) * 0.075 +
+                    (extract_tokens * 0.3 / 1_000_000) * 0.30
+                )
+                cost_total = cost_twilio_voice + cost_twilio_sms + cost_gemini_extract
+
+                await db.call_records.update_one(
+                    {"twilio_call_sid": call_sid},
+                    {"$set": {
+                        "duration_seconds_twilio": duration_secs,
+                        "cost_twilio_voice_cents": round(cost_twilio_voice * 100, 4),
+                        "cost_twilio_sms_cents": round(cost_twilio_sms * 100, 4),
+                        "cost_gemini_live_cents": 0.0,
+                        "cost_gemini_extract_cents": round(cost_gemini_extract * 100, 4),
+                        "cost_total_cents": round(cost_total * 100, 4),
+                        "twilio_call_status_final": call_status,
+                    }}
+                )
+                logger.info(f"[{call_sid}] Cost updated: voice=${cost_twilio_voice:.4f} sms=${cost_twilio_sms:.4f} total=${cost_total:.4f}")
+        except Exception as e:
+            logger.error(f"[{call_sid}] Cost callback error: {e}")
+
+    return Response(content="ok", media_type="text/plain")
+
+@api_router.get("/admin/cost-analytics")
+async def admin_cost_analytics(
+    days: int = 30,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Admin-only endpoint — internal cost and margin tracking.
+    Never exposed to business owners.
+    """
+    admin_user_id = os.environ.get("ADMIN_USER_ID")
+    if not admin_user_id or user.get("id") != admin_user_id:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    pipeline = [
+        {"$match": {"started_at": {"$gte": since}}},
+        {"$group": {
+            "_id": "$restaurant_id",
+            "total_calls": {"$sum": 1},
+            "total_cost_cents": {"$sum": "$cost_total_cents"},
+            "total_voice_cost_cents": {"$sum": "$cost_twilio_voice_cents"},
+            "total_sms_cost_cents": {"$sum": "$cost_twilio_sms_cents"},
+            "total_gemini_cost_cents": {"$sum": "$cost_gemini_extract_cents"},
+            "total_revenue_cents": {"$sum": "$order_total"},
+            "total_duration_seconds": {"$sum": "$duration_seconds_twilio"},
+            "total_sms_count": {"$sum": "$twilio_sms_count"},
+        }},
+        {"$sort": {"total_cost_cents": -1}},
+    ]
+
+    results = await db.call_records.aggregate(pipeline).to_list(500)
+
+    # Enrich with restaurant names
+    restaurant_ids = [r["_id"] for r in results if r["_id"]]
+    restaurants = await db.restaurants.find(
+        {"id": {"$in": restaurant_ids}},
+        {"_id": 0, "id": 1, "name": 1}
+    ).to_list(500)
+    name_map = {r["id"]: r["name"] for r in restaurants}
+
+    # Overall totals
+    overall = {
+        "total_calls": sum(r["total_calls"] for r in results),
+        "total_cost_dollars": sum(r.get("total_cost_cents", 0) for r in results) / 100,
+        "total_revenue_dollars": sum(r.get("total_revenue_cents", 0) or 0 for r in results) / 100,
+        "total_sms_sent": sum(r.get("total_sms_count", 0) for r in results),
+        "avg_cost_per_call_cents": (
+            sum(r.get("total_cost_cents", 0) for r in results) / sum(r["total_calls"] for r in results)
+            if results else 0
+        ),
+    }
+    overall["gross_margin_pct"] = (
+        ((overall["total_revenue_dollars"] - overall["total_cost_dollars"]) / overall["total_revenue_dollars"] * 100)
+        if overall["total_revenue_dollars"] > 0 else 0
+    )
+
+    per_restaurant = [
+        {
+            "restaurant_id": r["_id"],
+            "restaurant_name": name_map.get(r["_id"], "Unknown"),
+            "total_calls": r["total_calls"],
+            "cost_dollars": round(r.get("total_cost_cents", 0) / 100, 4),
+            "revenue_dollars": round((r.get("total_revenue_cents", 0) or 0) / 100, 2),
+            "voice_cost_dollars": round(r.get("total_voice_cost_cents", 0) / 100, 4),
+            "sms_cost_dollars": round(r.get("total_sms_cost_cents", 0) / 100, 4),
+            "gemini_cost_dollars": round(r.get("total_gemini_cost_cents", 0) / 100, 6),
+            "sms_count": r.get("total_sms_count", 0),
+            "avg_duration_seconds": round(
+                r.get("total_duration_seconds", 0) / r["total_calls"]
+                if r["total_calls"] > 0 else 0, 1
+            ),
+        }
+        for r in results
+    ]
+
+    return {
+        "period_days": days,
+        "overall": overall,
+        "per_restaurant": per_restaurant,
+    }
 
 @app.websocket("/api/twilio/media-stream")
 async def twilio_media_stream(websocket: WebSocket):
@@ -2841,6 +2991,8 @@ async def twilio_media_stream(websocket: WebSocket):
                         prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
                         payment_link=payment_link,
                     )
+                    if session:
+                        session._sms_count += 1
             except Exception as e:
                 logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
 

@@ -326,6 +326,7 @@ async def extract_order_from_transcript(
     transcript: List[Dict],
     menu_index: MenuIndex,
 ) -> Optional[LiveOrder]:
+    extract_order_from_transcript._last_tokens = 0  # reset each call
     """Parse a transcript and return a validated LiveOrder. Returns None if no confirmed order."""
     client = _get_client()
     transcript_text = "\n".join(
@@ -378,9 +379,14 @@ JSON:"""
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=2000,  # Increased from 600 to prevent truncation
+                max_tokens=2000,
             )
             raw = resp.choices[0].message.content.strip()
+            # Capture token usage for cost tracking
+            if hasattr(resp, "usage") and resp.usage:
+                extract_order_from_transcript._last_tokens = (
+                    (resp.usage.prompt_tokens or 0) + (resp.usage.completion_tokens or 0)
+                )
         except Exception as e:
             logger.error(f"Order extraction error: {e}")
 

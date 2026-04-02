@@ -318,6 +318,8 @@ class CallSession:
         self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
         self._booking_dispatched = False  # For appointment businesses
         self._appointment_total  = 0      # price_cents sum for booked services
+        self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
+        self._twilio_duration_seconds = None  # exact duration from Twilio status callback
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
@@ -533,7 +535,57 @@ class CallSession:
         # Add booking info for appointment businesses
         if self._booking_dispatched and self.business_type in ("clinic", "salon", "home_services", "legal"):
             record["booking_dispatched"] = True
-        
+
+        # ── Internal cost tracking (admin only) ──
+        duration_secs = getattr(self, "_twilio_duration_seconds", None)
+        if duration_secs is None:
+            # Fallback: estimate from started_at to now
+            try:
+                started = datetime.fromisoformat(self.started_at.replace("Z", "+00:00"))
+                duration_secs = int((datetime.now(timezone.utc) - started).total_seconds())
+            except Exception:
+                duration_secs = 0
+
+        duration_minutes = duration_secs / 60.0
+
+        # Twilio voice: $0.0085/min inbound, ceil per minute
+        import math
+        cost_twilio_voice = math.ceil(duration_minutes) * 0.0085
+
+        # Twilio SMS: $0.0083/message
+        sms_count = getattr(self, "_sms_count", 0)
+        cost_twilio_sms = sms_count * 0.0083
+
+        # Gemini Live: free preview — track duration for future billing
+        # Estimated future cost: ~$0.008/min when priced
+        cost_gemini_live = 0.0  # free preview
+
+        # Gemini extraction tokens: $0.075/1M input + $0.30/1M output
+        # We track total tokens as combined input+output approximation
+        # Real split unavailable without modifying return signature
+        from gemini_service import extract_order_from_transcript
+        extract_tokens = getattr(extract_order_from_transcript, "_last_tokens", 0)
+        # For appointment businesses, use booking extraction tokens instead
+        if self.business_type in ("clinic", "salon", "home_services", "legal"):
+            from appointment_service import extract_booking_from_transcript
+            extract_tokens = getattr(extract_booking_from_transcript, "_last_tokens", 0)
+        # Approximate: 70% input, 30% output
+        cost_gemini_extract = (
+            (extract_tokens * 0.7 / 1_000_000) * 0.075 +
+            (extract_tokens * 0.3 / 1_000_000) * 0.30
+        )
+
+        cost_total = cost_twilio_voice + cost_twilio_sms + cost_gemini_live + cost_gemini_extract
+
+        record["cost_twilio_voice_cents"] = round(cost_twilio_voice * 100, 4)
+        record["cost_twilio_sms_cents"] = round(cost_twilio_sms * 100, 4)
+        record["cost_gemini_live_cents"] = round(cost_gemini_live * 100, 4)
+        record["cost_gemini_extract_cents"] = round(cost_gemini_extract * 100, 4)
+        record["cost_total_cents"] = round(cost_total * 100, 4)
+        record["gemini_extract_tokens"] = extract_tokens
+        record["twilio_sms_count"] = sms_count
+        record["duration_seconds_twilio"] = duration_secs
+
         return record
 
     # ------------------------------------------------------------------
@@ -605,6 +657,8 @@ class CallSession:
 
         if result.get("success"):
             logger.info(f"[{self.call_sid}] Appointment dispatched: calendar={result.get('calendar_event_id')}, sms={result.get('sms_sent')}")
+            if result.get("sms_sent"):
+                self._sms_count += 1
         else:
             logger.warning(f"[{self.call_sid}] Appointment dispatch partial: {result}")
 
@@ -872,6 +926,7 @@ async def create_call_pipeline(
                     restaurant_id=session.restaurant_id,
                     base_url="https://ringai-v2.onrender.com",
                 ))
+                session._sms_count += 1
                 logger.info(f"[{call_sid}] Menu SMS triggered")
 
             # ── ORDER_CONFIRMED signal (restaurant) ──
@@ -1336,10 +1391,11 @@ async def create_call_pipeline(
 # TwiML generator
 # ---------------------------------------------------------------------------
 
-def generate_twiml_stream_response(websocket_url: str, call_sid: str) -> str:
+def generate_twiml_stream_response(websocket_url: str, call_sid: str, status_callback_url: str = "") -> str:
+    status_attr = f' statusCallback="{status_callback_url}" statusCallbackMethod="POST"' if status_callback_url else ""
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
+    <Connect{status_attr}>
         <Stream url="{websocket_url}">
             <Parameter name="callSid" value="{call_sid}" />
         </Stream>

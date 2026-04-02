@@ -536,6 +536,7 @@ async def extract_booking_from_transcript(
     transcript: List[Dict[str, Any]],
     services: List[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
+    extract_booking_from_transcript._last_tokens = 0  # reset each call
     """
     Extract booking details from appointment call transcript.
     
@@ -605,6 +606,11 @@ JSON:"""
         )
         raw = response.choices[0].message.content.strip()
         logger.info(f"Booking extraction raw: {raw[:500]}")
+        # Capture token usage for cost tracking
+        if hasattr(response, "usage") and response.usage:
+            extract_booking_from_transcript._last_tokens = (
+                (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)
+            )
 
         try:
             from gemini_service import _repair_json
