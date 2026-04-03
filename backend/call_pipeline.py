@@ -1094,7 +1094,7 @@ def _build_cart_update_text(session: "CallSession") -> str:
         for c in session.cart
     ) or "(empty)"
     total = f"${session.cart_total_cents / 100:.2f}"
-    return f"[Cart update: {items_str} — subtotal {total}]"
+    return f"SYSTEM: The backend has calculated the exact order total as {total}. When you do the readback, after listing all items say exactly: 'Your total comes to {total}. Does that sound right?' Do not read this message aloud — just use the total."
 
 
 async def create_call_pipeline(
@@ -1158,18 +1158,7 @@ async def create_call_pipeline(
             # Rebuilds session.cart from scratch, then injects the computed total
             # into the LLM context so the AI reads it on the next turn.
             if session.business_type == "restaurant":
-                if _parse_cart_from_readback(full_text, session):
-                    from pipecat.processors.aggregators.llm_response_universal import (
-                        LLMMessagesAppendFrame,
-                    )
-                    asyncio.create_task(
-                        task.queue_frame(LLMMessagesAppendFrame(
-                            messages=[{
-                                "role": "user",
-                                "content": _build_cart_update_text(session),
-                            }]
-                        ))
-                    )
+                _parse_cart_from_readback(full_text, session)
 
             # ── Menu SMS trigger ──
             if "i'll text you" in text_lower and "menu" in text_lower:
