@@ -477,6 +477,25 @@ class CallSession:
             self._order_dispatched = False
             return False
 
+        # Prefer real-time cart as the source of truth for dispatch.
+        # Fall back to Gemini extraction only when cart is empty.
+        if self.cart and not self.order.items:
+            from gemini_service import OrderItem as _OrderItem
+            self.order.items = [
+                _OrderItem(
+                    name=c["name"],
+                    menu_item_id=c["menu_item_id"],
+                    category="",
+                    unit_price=c["unit_price_cents"],
+                    quantity=c["quantity"],
+                )
+                for c in self.cart
+            ]
+            logger.info(
+                f"[{self.call_sid}] Using cart for dispatch: "
+                + ", ".join(f"{c['quantity']}x {c['name']}" for c in self.cart)
+            )
+
         if not self.order.items:
             for attempt in range(1, max_retries + 1):
                 extracted = await extract_order_from_transcript(
@@ -523,6 +542,69 @@ class CallSession:
         return True
 
     # ------------------------------------------------------------------
+    # Cart-vs-extraction reconciliation
+    # ------------------------------------------------------------------
+
+    def _cart_or_extraction_order(self) -> Optional[Dict]:
+        """
+        Return the order dict to store in the call record.
+        Cart is primary when it has items; Gemini extraction is the fallback.
+        Logs a warning when both exist but totals diverge by more than $1.
+        """
+        from gemini_service import OrderItem as _OrderItem
+
+        if self.cart:
+            # Build an order dict from cart items directly
+            cart_items = [
+                {
+                    "name":                c["name"],
+                    "menu_item_id":        c["menu_item_id"],
+                    "category":            "",
+                    "unit_price":          c["unit_price_cents"],
+                    "quantity":            c["quantity"],
+                    "modifiers":           [],
+                    "special_instructions": "",
+                    "allergens":           [],
+                    "subtotal":            c["subtotal_cents"],
+                }
+                for c in self.cart
+            ]
+            cart_order = {
+                "call_sid":             self.call_sid,
+                "state":                self.order.state,
+                "items":                cart_items,
+                "order_type":           self.order.order_type,
+                "customer_name":        self.order.customer_name,
+                "delivery_address":     self.order.delivery_address,
+                "special_instructions": self.order.special_instructions,
+                "total":                self.cart_total_cents,
+                "confirmed_at":         self.order.confirmed_at,
+                "kitchen_order_id":     self.order.kitchen_order_id,
+                "source":               "cart",
+            }
+
+            # Warn when extraction also ran and totals diverge
+            if self.order.items and self.order.total > 0:
+                diff = abs(self.cart_total_cents - self.order.total)
+                if diff > 100:  # more than $1.00 difference
+                    logger.warning(
+                        f"[{self.call_sid}] Cart/extraction total mismatch: "
+                        f"cart=${self.cart_total_cents / 100:.2f} "
+                        f"extraction=${self.order.total / 100:.2f} "
+                        f"diff=${diff / 100:.2f} — using cart"
+                    )
+
+            return cart_order
+
+        # Fallback: Gemini extraction result
+        if self.order.items:
+            d = self.order.to_dict()
+            d["source"] = "extraction"
+            return d
+
+        return None
+
+    # ------------------------------------------------------------------
     # Final call record builder
     # ------------------------------------------------------------------
 
@@ -542,7 +624,7 @@ class CallSession:
             "contained_by_ai":    not self._escalated,
             "escalated_to_human": self._escalated,
             "transcript":         self.transcript,
-            "order":              self.order.to_dict() if self.order.items else None,
+            "order":              self._cart_or_extraction_order(),
             "order_total": (
                 self._appointment_total
                 if self.business_type in ("clinic", "salon", "home_services", "legal")
@@ -892,13 +974,19 @@ _CART_NUMBER_WORDS: Dict[str, int] = {
     "a": 1, "an": 1,
 }
 
-# Trigger phrases that indicate the AI is CONFIRMING an add
+# Trigger phrases that indicate the AI is CONFIRMING an add.
+# Entries marked with a (*) below require a menu-item name also present in the turn
+# to avoid false-firing on generic "Perfect." or "Sure." responses.
 _CART_ADD_TRIGGERS = (
     "got it,", "got it!", "got it —", "got it-",
-    "added", "i've added", "i'll add", "i have added",
+    "added", "added!", "i've added", "i'll add", "i have added",
     "sure,", "sure!", "of course,", "of course!", "absolutely,", "absolutely!",
     "no problem,", "no problem!",
+    # (*) requires menu-item guard (checked in _parse_cart_from_ai_text)
+    "perfect,", "perfect!",
 )
+# Triggers that are only valid when a menu item name also appears in the same turn
+_CART_ADD_TRIGGERS_MENU_REQUIRED = frozenset({"perfect,", "perfect!"})
 # Trigger phrases for removal
 _CART_REMOVE_TRIGGERS = (
     "removed", "i've removed", "i removed", "i'll remove",
@@ -996,7 +1084,17 @@ def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
 
     is_remove  = any(p in text_lower for p in _CART_REMOVE_TRIGGERS)
     is_replace = any(p in text_lower for p in _CART_REPLACE_TRIGGERS)
-    is_add     = (not is_remove and not is_replace) and any(p in text_lower for p in _CART_ADD_TRIGGERS)
+
+    # Determine add trigger, applying menu-item guard for ambiguous phrases
+    _add_trigger_hit = next((p for p in _CART_ADD_TRIGGERS if p in text_lower), None)
+    if _add_trigger_hit and _add_trigger_hit in _CART_ADD_TRIGGERS_MENU_REQUIRED:
+        # Only count as add-trigger if at least one known menu item appears in the turn
+        _menu_hit = any(
+            name in text_lower for name in session.menu_index.name_index
+        )
+        if not _menu_hit:
+            _add_trigger_hit = None
+    is_add = (not is_remove and not is_replace) and bool(_add_trigger_hit)
 
     if not (is_add or is_remove or is_replace):
         return False
@@ -1063,7 +1161,10 @@ def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
             found = False
             for c in session.cart:
                 if c["menu_item_id"] == item_id:
-                    c["quantity"] = qty if is_replace else c["quantity"] + qty
+                    if is_replace:
+                        c["quantity"] = max(1, qty)  # default to 1 if qty missing/0
+                    else:
+                        c["quantity"] += qty
                     c["subtotal_cents"] = c["quantity"] * unit_price
                     found = True
                     modified = True
@@ -1090,19 +1191,13 @@ def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
 
 
 def _build_cart_update_text(session: "CallSession") -> str:
-    """Return the SYSTEM: CART_UPDATE string to inject into Gemini's context."""
-    lines = [
-        f"  \u2022 {c['quantity']}x {c['name']}: ${c['subtotal_cents'] / 100:.2f}"
+    """Return a compact natural-language cart summary for LLMMessagesAppendFrame injection."""
+    items_str = ", ".join(
+        f"{c['quantity']}x {c['name']} ${c['subtotal_cents'] / 100:.2f}"
         for c in session.cart
-    ]
-    cart_block = "\n".join(lines) if lines else "  (empty)"
+    ) or "(empty)"
     total = f"${session.cart_total_cents / 100:.2f}"
-    return (
-        f"SYSTEM: CART_UPDATE \u2014 Current order:\n"
-        f"{cart_block}\n"
-        f"  TOTAL: {total}\n"
-        f"  (Read this exact total if customer asks \u2014 never calculate yourself)"
-    )
+    return f"[Cart update: {items_str} — subtotal {total}]"
 
 
 async def create_call_pipeline(
@@ -1162,13 +1257,21 @@ async def create_call_pipeline(
             text_lower = full_text.lower()
 
             # ── Real-time cart parser (restaurant only) ──
-            # Runs after every AI turn. Updates session.cart, then injects a
-            # SYSTEM: CART_UPDATE frame so Gemini reads the exact total on the
-            # next turn instead of calculating it itself.
+            # Runs after every AI turn. Updates session.cart, then injects the
+            # cart summary into the LLM context aggregator so Gemini reads the
+            # exact total on the next turn instead of calculating it itself.
             if session.business_type == "restaurant":
                 if _parse_cart_from_ai_text(full_text, session):
+                    from pipecat.processors.aggregators.llm_response_universal import (
+                        LLMMessagesAppendFrame,
+                    )
                     asyncio.create_task(
-                        task.queue_frame(TextFrame(text=_build_cart_update_text(session)))
+                        task.queue_frame(LLMMessagesAppendFrame(
+                            messages=[{
+                                "role": "user",
+                                "content": _build_cart_update_text(session),
+                            }]
+                        ))
                     )
 
             # ── Menu SMS trigger ──
