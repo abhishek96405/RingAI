@@ -320,6 +320,8 @@ class CallSession:
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._twilio_duration_seconds = None  # exact duration from Twilio status callback
+        self.cart: List[Dict] = []       # {name, menu_item_id, quantity, unit_price_cents, subtotal_cents}
+        self.cart_total_cents: int = 0   # authoritative cart total for restaurants
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
@@ -544,7 +546,7 @@ class CallSession:
             "order_total": (
                 self._appointment_total
                 if self.business_type in ("clinic", "salon", "home_services", "legal")
-                else self.order.total
+                else (self.cart_total_cents if self.cart_total_cents > 0 else self.order.total)
             ),
             "kitchen_order_id":   self.order.kitchen_order_id,
             "quality_eval":       quality,
@@ -880,6 +882,167 @@ def classify_booking_intent(
     )
 
 
+# ---------------------------------------------------------------------------
+# Real-time cart parser helpers
+# ---------------------------------------------------------------------------
+
+_CART_NUMBER_WORDS: Dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "a": 1, "an": 1,
+}
+
+# Trigger phrases that indicate the AI is CONFIRMING an add
+_CART_ADD_TRIGGERS = (
+    "got it,", "got it!", "got it —", "got it-",
+    "added", "i've added", "i'll add", "i have added",
+    "sure,", "sure!", "of course,", "of course!", "absolutely,", "absolutely!",
+    "no problem,", "no problem!",
+)
+# Trigger phrases for removal
+_CART_REMOVE_TRIGGERS = (
+    "removed", "i've removed", "i removed", "i'll remove",
+    "taken that off", "taking that off",
+)
+# Trigger phrases for replacement/quantity-update
+_CART_REPLACE_TRIGGERS = (
+    "changed that to", "updated that to", "make that",
+    "i've changed that to", "changed it to", "let me make that",
+)
+# Leading phrases to strip before parsing item list
+_CART_STRIP_PREFIXES = [
+    "Got it, ", "Got it! ", "Got it — ", "Got it- ",
+    "Added ", "I've added ", "I'll add ", "I have added ",
+    "Removed ", "I've removed ", "I removed ", "I'll remove ",
+    "Changed that to ", "Updated that to ", "Make that ",
+    "I've changed that to ", "Changed it to ", "Let me make that ",
+    "Sure, ", "Sure! ", "Of course, ", "Of course! ",
+    "Absolutely, ", "Absolutely! ", "No problem, ", "No problem! ",
+]
+
+
+def _cart_parse_qty_and_name(segment: str):
+    """Return (quantity: int, item_name: str) from a segment like '2 Chicken Biryani'."""
+    segment = segment.strip().rstrip(".,!? ")
+    # Digit-first: "2 Chicken Biryani"
+    m = _re.match(r'^(\d+)\s+(.+)$', segment)
+    if m:
+        return int(m.group(1)), m.group(2).strip()
+    # Word-first: "two Chicken Biryani"
+    words = segment.split(None, 1)
+    if words and words[0].lower() in _CART_NUMBER_WORDS:
+        return _CART_NUMBER_WORDS[words[0].lower()], (words[1].strip() if len(words) > 1 else "")
+    # No quantity token — default to 1
+    return 1, segment
+
+
+def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
+    """
+    Parse an AI confirmation utterance and update session.cart in-place.
+    Returns True if the cart was modified.
+    Only fires on explicit AI confirmation phrases (conservative — never on
+    customer requests, only when the AI has already validated the item).
+    """
+    text_lower = text.lower()
+
+    is_remove  = any(p in text_lower for p in _CART_REMOVE_TRIGGERS)
+    is_replace = any(p in text_lower for p in _CART_REPLACE_TRIGGERS)
+    is_add     = (not is_remove and not is_replace) and any(p in text_lower for p in _CART_ADD_TRIGGERS)
+
+    if not (is_add or is_remove or is_replace):
+        return False
+
+    # Strip the leading trigger phrase so we're left with the item list text
+    item_text = text
+    for phrase in _CART_STRIP_PREFIXES:
+        if text_lower.startswith(phrase.lower()):
+            item_text = text[len(phrase):]
+            break
+    # Also try finding the phrase mid-sentence (e.g. "Sure, I've added two Samosa")
+    if item_text == text:
+        for phrase in _CART_STRIP_PREFIXES:
+            idx = text_lower.find(phrase.lower())
+            if idx != -1:
+                item_text = text[idx + len(phrase):]
+                break
+
+    # Trim trailing filler ("— anything else?", ". Is there anything else?", etc.)
+    item_text = _re.split(r'\s*[—\-]\s*|\.\s+[A-Z]', item_text)[0].strip()
+    item_text = item_text.rstrip(".,!? ")
+
+    # Split by " and " to handle multiple items in one utterance
+    segments = _re.split(r'\s+and\s+', item_text, flags=_re.IGNORECASE)
+
+    modified = False
+    for seg in segments:
+        qty, name = _cart_parse_qty_and_name(seg)
+        if not name:
+            continue
+        item = session.menu_index.find(name)
+        if not item:
+            logger.debug(f"[{session.call_sid}] Cart: no menu match for '{name}'")
+            continue
+
+        item_id    = item["id"]
+        unit_price = item.get("price_cents", 0)
+        item_name  = item["name"]
+
+        if is_remove:
+            for i, c in enumerate(session.cart):
+                if c["menu_item_id"] == item_id:
+                    c["quantity"] -= qty
+                    if c["quantity"] <= 0:
+                        session.cart.pop(i)
+                    else:
+                        c["subtotal_cents"] = c["quantity"] * unit_price
+                    modified = True
+                    break
+        else:
+            found = False
+            for c in session.cart:
+                if c["menu_item_id"] == item_id:
+                    c["quantity"] = qty if is_replace else c["quantity"] + qty
+                    c["subtotal_cents"] = c["quantity"] * unit_price
+                    found = True
+                    modified = True
+                    break
+            if not found:
+                session.cart.append({
+                    "name":            item_name,
+                    "menu_item_id":    item_id,
+                    "quantity":        qty,
+                    "unit_price_cents": unit_price,
+                    "subtotal_cents":  qty * unit_price,
+                })
+                modified = True
+
+    if modified:
+        session.cart_total_cents = sum(c["subtotal_cents"] for c in session.cart)
+        logger.info(
+            f"[{session.call_sid}] Cart updated: "
+            + ", ".join(f"{c['quantity']}x {c['name']}" for c in session.cart)
+            + f" | total=${session.cart_total_cents / 100:.2f}"
+        )
+
+    return modified
+
+
+def _build_cart_update_text(session: "CallSession") -> str:
+    """Return the SYSTEM: CART_UPDATE string to inject into Gemini's context."""
+    lines = [
+        f"  \u2022 {c['quantity']}x {c['name']}: ${c['subtotal_cents'] / 100:.2f}"
+        for c in session.cart
+    ]
+    cart_block = "\n".join(lines) if lines else "  (empty)"
+    total = f"${session.cart_total_cents / 100:.2f}"
+    return (
+        f"SYSTEM: CART_UPDATE \u2014 Current order:\n"
+        f"{cart_block}\n"
+        f"  TOTAL: {total}\n"
+        f"  (Read this exact total if customer asks \u2014 never calculate yourself)"
+    )
+
+
 async def create_call_pipeline(
     websocket,
     system_prompt: str,
@@ -935,6 +1098,16 @@ async def create_call_pipeline(
             logger.info(f"[{call_sid}] AI: {full_text}")
             session.add_transcript_entry("ai", full_text)
             text_lower = full_text.lower()
+
+            # ── Real-time cart parser (restaurant only) ──
+            # Runs after every AI turn. Updates session.cart, then injects a
+            # SYSTEM: CART_UPDATE frame so Gemini reads the exact total on the
+            # next turn instead of calculating it itself.
+            if session.business_type == "restaurant":
+                if _parse_cart_from_ai_text(full_text, session):
+                    asyncio.create_task(
+                        task.queue_frame(TextFrame(text=_build_cart_update_text(session)))
+                    )
 
             # ── Menu SMS trigger ──
             if "i'll text you" in text_lower and "menu" in text_lower:
