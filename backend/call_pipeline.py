@@ -930,6 +930,38 @@ _CART_SKIP_PHRASES = (
     "how about",
     "care to add",
     "shall i add",
+    # Readback summary patterns ("Sure! So that's one Lamb Biryani...")
+    "so that's",
+    "so that is",
+    "that's your order",
+    "your order so far",
+    "so far you have",
+    "here's what i have",
+    "here's your order",
+)
+# If the customer's last utterance contains any of these, treat the AI's
+# next confirmation as a REPLACE (set quantity) not an ADD (increment).
+_CART_REPLACE_CUSTOMER_SIGNALS = (
+    "instead of",
+    "not two",
+    "not three",
+    "not four",
+    "not five",
+    "change that",
+    "change the",
+    "make it",
+    "make that",
+    "just one",
+    "just two",
+    "only one",
+    "only two",
+    "actually",
+    "wait no",
+    "wait, no",
+    "correction",
+    "cancel that",
+    "never mind the",
+    "scratch that",
 )
 
 
@@ -968,6 +1000,19 @@ def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
 
     if not (is_add or is_remove or is_replace):
         return False
+
+    # Check the customer's last utterance: if they said "instead of" / "make it" /
+    # "change that" etc., the AI is confirming a quantity replacement, not an addition.
+    # The AI's wording ("Got it, one X") doesn't carry this signal, so we derive it
+    # from the customer side of the transcript.
+    if is_add:
+        last_customer = next(
+            (e["text"] for e in reversed(session.transcript) if e["role"] == "customer"),
+            "",
+        )
+        if any(p in last_customer.lower() for p in _CART_REPLACE_CUSTOMER_SIGNALS):
+            is_replace = True
+            is_add = False
 
     # Strip the leading trigger phrase so we're left with the item list text
     item_text = text
