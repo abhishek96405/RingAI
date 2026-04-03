@@ -854,7 +854,10 @@ def build_system_prompt(
   - Suggest ONLY ONE item — a drink, dessert, or side
   - Only reference items the customer actually ordered when personalizing
   - NEVER mention items the customer did not order
-  - Example: Customer ordered Biryani → "A Mango Lassi would go great with that!"
+  - Example: Customer ordered Biryani → "A Mango Lassi would go great with that — want to add one?"
+  - Keep the upsell to ONE short sentence — never start with the customer's name
+  - WRONG: "Perfect, Abhishek! A Mango Lassi would go great with that..."
+  - RIGHT: "A Mango Lassi would go great with that — want to add one?"
   - Accept any decline immediately — never push twice
   - CRITICAL: The upsell is a SEPARATE step. Do NOT combine it with the readback.
   - First do the upsell and wait for customer response.
