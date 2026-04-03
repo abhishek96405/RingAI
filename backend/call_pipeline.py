@@ -965,7 +965,7 @@ def classify_booking_intent(
 
 
 # ---------------------------------------------------------------------------
-# Real-time cart parser helpers
+# Readback cart parser
 # ---------------------------------------------------------------------------
 
 _CART_NUMBER_WORDS: Dict[str, int] = {
@@ -974,172 +974,23 @@ _CART_NUMBER_WORDS: Dict[str, int] = {
     "a": 1, "an": 1,
 }
 
-# Trigger phrases that indicate the AI is CONFIRMING an add.
-# Entries marked with a (*) below require a menu-item name also present in the turn
-# to avoid false-firing on generic "Perfect." or "Sure." responses.
-_CART_ADD_TRIGGERS = (
-    "got it,", "got it!", "got it —", "got it-",
-    "added", "added!", "i've added", "i'll add", "i have added",
-    "sure,", "sure!", "of course,", "of course!", "absolutely,", "absolutely!",
-    "no problem,", "no problem!",
-    # (*) requires menu-item guard (checked in _parse_cart_from_ai_text)
-    "perfect,", "perfect!",
-)
-# Triggers that are only valid when a menu item name also appears in the same turn
-_CART_ADD_TRIGGERS_MENU_REQUIRED = frozenset({"perfect,", "perfect!"})
-# Trigger phrases for removal
-_CART_REMOVE_TRIGGERS = (
-    "removed", "i've removed", "i removed", "i'll remove",
-    "taken that off", "taking that off",
-)
-# Trigger phrases for replacement/quantity-update
-_CART_REPLACE_TRIGGERS = (
-    "changed that to", "updated that to", "make that",
-    "i've changed that to", "changed it to", "let me make that",
-)
-# Leading phrases to strip before parsing item list
-_CART_STRIP_PREFIXES = [
-    "Got it, ", "Got it! ", "Got it — ", "Got it- ",
-    "Added ", "I've added ", "I'll add ", "I have added ",
-    "Removed ", "I've removed ", "I removed ", "I'll remove ",
-    "Changed that to ", "Updated that to ", "Make that ",
-    "I've changed that to ", "Changed it to ", "Let me make that ",
-    "Sure, ", "Sure! ", "Of course, ", "Of course! ",
-    "Absolutely, ", "Absolutely! ", "No problem, ", "No problem! ",
-]
-# If the AI turn contains any of these it is a readback or upsell question —
-# not a new item confirmation.  Skip cart parsing entirely.
-_CART_SKIP_PHRASES = (
+# AI phrases that signal the start of an order readback
+READBACK_PHRASES = (
     "let me read that back",
-    "read that back",
-    "does that sound right",
-    "would go great",
-    "want to add",
-    "how about",
-    "care to add",
-    "shall i add",
-    # Readback summary patterns ("Sure! So that's one Lamb Biryani...")
-    "so that's",
-    "so that is",
-    "that's your order",
-    "your order so far",
-    "so far you have",
+    "let me read that back for you",
     "here's what i have",
-    "here's your order",
-)
-# If the customer's last utterance contains any of these, treat the AI's
-# next confirmation as a REPLACE (set quantity) not an ADD (increment).
-_CART_REPLACE_CUSTOMER_SIGNALS = (
-    "instead of",
-    "not two",
-    "not three",
-    "not four",
-    "not five",
-    "change that",
-    "change the",
-    "make it",
-    "make that",
-    "just one",
-    "just two",
-    "only one",
-    "only two",
-    "actually",
-    "wait no",
-    "wait, no",
-    "correction",
-    "cancel that",
-    "never mind the",
-    "scratch that",
+    "to confirm, i have",
+    "let me confirm your order",
 )
 
-
-# Short AI acknowledgments that carry no item names themselves — when the
-# AI says one of these we fall back to parsing the customer's last turn.
-_CART_SHORT_ACK_PREFIXES = (
-    "added", "added!", "done", "done!",
-    "got it", "got it!", "got it,",
-    "okay", "okay!", "ok", "ok!",
-    "perfect", "perfect!", "great", "great!",
-    "sure", "sure!", "absolutely", "absolutely!",
-    "no problem", "noted",
+# Phrases that mark the end of the item list within a readback turn
+_READBACK_STOP_PHRASES = (
+    "does that sound right",
+    "sound right",
+    "is that correct",
+    "your total is",
+    "?",
 )
-
-
-def _normalize_customer_order_text(text: str) -> str:
-    """
-    Normalize spoken customer order text before item parsing.
-    Handles:
-      - "to" used as spoken separator (e.g. "two lamb biryani TO two samosa")
-        but NOT at the start of a segment where it would be the number "two"
-      - consecutive items listed without "and" (relies on menu-word boundaries)
-    """
-    # Replace " to " (not at position 0) with " and " when sandwiched between
-    # non-number words — i.e., after an item name, not before one as a quantity.
-    # "two lamb biryani to two samosa" → "two lamb biryani and two samosa"
-    normalized = _re.sub(
-        r'(?<=\w)\s+to\s+(?=(?:' + '|'.join(_CART_NUMBER_WORDS.keys()) + r'|\d)\s)',
-        ' and ',
-        text,
-        flags=_re.IGNORECASE,
-    )
-    return normalized
-
-
-def _parse_items_from_customer_text(text: str, session: "CallSession") -> bool:
-    """
-    Parse item additions directly from the customer's utterance.
-    Used as fallback when the AI gave a short ack with no item names.
-    Returns True if the cart was modified.
-    """
-    text_norm  = _normalize_customer_order_text(text)
-    text_lower = text_norm.lower()
-
-    # Segments split on " and " or commas
-    segments = _re.split(r'\s+and\s+|,\s*', text_lower, flags=_re.IGNORECASE)
-
-    modified = False
-    for seg in segments:
-        seg = seg.strip().rstrip(".,!? ")
-        if not seg:
-            continue
-        qty, name = _cart_parse_qty_and_name(seg)
-        if not name:
-            continue
-        item = session.menu_index.find(name)
-        if not item:
-            continue
-
-        item_id    = item["id"]
-        unit_price = item.get("price", 0)
-        item_name  = item["name"]
-
-        found = False
-        for c in session.cart:
-            if c["menu_item_id"] == item_id:
-                c["quantity"] += qty
-                c["subtotal_cents"] = c["quantity"] * unit_price
-                found = True
-                modified = True
-                break
-        if not found:
-            session.cart.append({
-                "name":            item_name,
-                "menu_item_id":    item_id,
-                "quantity":        qty,
-                "unit_price_cents": unit_price,
-                "subtotal_cents":  qty * unit_price,
-            })
-            modified = True
-
-    if modified:
-        session.cart_total_cents = sum(c["subtotal_cents"] for c in session.cart)
-        logger.info(
-            f"[{session.call_sid}] Cart updated (customer fallback): "
-            + ", ".join(f"{c['quantity']}x {c['name']}" for c in session.cart)
-            + f" | total=${session.cart_total_cents / 100:.2f}"
-        )
-
-    return modified
 
 
 def _cart_parse_qty_and_name(segment: str):
@@ -1157,126 +1008,83 @@ def _cart_parse_qty_and_name(segment: str):
     return 1, segment
 
 
-def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
+def _parse_cart_from_readback(text: str, session: "CallSession") -> bool:
     """
-    Parse an AI confirmation utterance and update session.cart in-place.
-    Returns True if the cart was modified.
-    Only fires on explicit AI confirmation phrases (conservative — never on
-    customer requests, only when the AI has already validated the item).
+    Parse items from an AI readback turn and rebuild session.cart from scratch.
+    Returns True if at least one menu item was found.
+    Only fires when the turn contains a recognised readback phrase.
     """
     text_lower = text.lower()
 
-    # Bail out immediately for readbacks and upsell questions — these contain
-    # trigger words ("Got it,") but are not new item confirmations.
-    if any(p in text_lower for p in _CART_SKIP_PHRASES):
-        return False
-
-    is_remove  = any(p in text_lower for p in _CART_REMOVE_TRIGGERS)
-    is_replace = any(p in text_lower for p in _CART_REPLACE_TRIGGERS)
-
-    # Determine add trigger, applying menu-item guard for ambiguous phrases
-    _add_trigger_hit = next((p for p in _CART_ADD_TRIGGERS if p in text_lower), None)
-    if _add_trigger_hit and _add_trigger_hit in _CART_ADD_TRIGGERS_MENU_REQUIRED:
-        # Only count as add-trigger if at least one known menu item appears in the turn
-        _menu_hit = any(
-            name in text_lower for name in session.menu_index.name_index
-        )
-        if not _menu_hit:
-            _add_trigger_hit = None
-    is_add = (not is_remove and not is_replace) and bool(_add_trigger_hit)
-
-    if not (is_add or is_remove or is_replace):
-        return False
-
-    # Check the customer's last utterance: if they said "instead of" / "make it" /
-    # "change that" etc., the AI is confirming a quantity replacement, not an addition.
-    # The AI's wording ("Got it, one X") doesn't carry this signal, so we derive it
-    # from the customer side of the transcript.
-    if is_add:
-        last_customer = next(
-            (e["text"] for e in reversed(session.transcript) if e["role"] == "customer"),
-            "",
-        )
-        if any(p in last_customer.lower() for p in _CART_REPLACE_CUSTOMER_SIGNALS):
-            is_replace = True
-            is_add = False
-
-    # Strip the leading trigger phrase so we're left with the item list text
-    item_text = text
-    for phrase in _CART_STRIP_PREFIXES:
-        if text_lower.startswith(phrase.lower()):
-            item_text = text[len(phrase):]
+    # Must be a readback turn
+    readback_start = -1
+    for phrase in READBACK_PHRASES:
+        idx = text_lower.find(phrase)
+        if idx != -1:
+            readback_start = idx + len(phrase)
             break
-    # Also try finding the phrase mid-sentence (e.g. "Sure, I've added two Samosa")
-    if item_text == text:
-        for phrase in _CART_STRIP_PREFIXES:
-            idx = text_lower.find(phrase.lower())
-            if idx != -1:
-                item_text = text[idx + len(phrase):]
-                break
+    if readback_start == -1:
+        return False
 
-    # Trim trailing filler ("— anything else?", ". Is there anything else?", etc.)
-    item_text = _re.split(r'\s*[—\-]\s*|\.\s+[A-Z]', item_text)[0].strip()
-    item_text = item_text.rstrip(".,!? ")
+    # Extract everything after the readback phrase
+    item_text = text[readback_start:].strip().lstrip(":— ")
 
-    # Split by " and " to handle multiple items in one utterance
-    segments = _re.split(r'\s+and\s+', item_text, flags=_re.IGNORECASE)
+    # Truncate at the first stop phrase (question / total announcement)
+    for stop in _READBACK_STOP_PHRASES:
+        stop_idx = item_text.lower().find(stop)
+        if stop_idx != -1:
+            item_text = item_text[:stop_idx]
 
-    modified = False
+    item_text = item_text.strip().rstrip(".,!? ")
+
+    # Split on ", " and " and "
+    segments = _re.split(r',\s*|\s+and\s+', item_text, flags=_re.IGNORECASE)
+
+    new_cart: List[Dict] = []
     for seg in segments:
+        seg = seg.strip().rstrip(".,!? ")
+        if not seg:
+            continue
         qty, name = _cart_parse_qty_and_name(seg)
         if not name:
             continue
         item = session.menu_index.find(name)
         if not item:
-            logger.debug(f"[{session.call_sid}] Cart: no menu match for '{name}'")
+            logger.debug(f"[{session.call_sid}] Readback: no menu match for '{name}'")
             continue
 
         item_id    = item["id"]
-        unit_price = item.get("price", 0)  # menu items store price in cents under "price"
+        unit_price = item.get("price", 0)
         item_name  = item["name"]
 
-        if is_remove:
-            for i, c in enumerate(session.cart):
-                if c["menu_item_id"] == item_id:
-                    c["quantity"] -= qty
-                    if c["quantity"] <= 0:
-                        session.cart.pop(i)
-                    else:
-                        c["subtotal_cents"] = c["quantity"] * unit_price
-                    modified = True
-                    break
+        # Merge duplicates within this readback (in case AI listed same item twice)
+        for c in new_cart:
+            if c["menu_item_id"] == item_id:
+                c["quantity"]      += qty
+                c["subtotal_cents"] = c["quantity"] * unit_price
+                break
         else:
-            found = False
-            for c in session.cart:
-                if c["menu_item_id"] == item_id:
-                    if is_replace:
-                        c["quantity"] = max(1, qty)  # default to 1 if qty missing/0
-                    else:
-                        c["quantity"] += qty
-                    c["subtotal_cents"] = c["quantity"] * unit_price
-                    found = True
-                    modified = True
-                    break
-            if not found:
-                session.cart.append({
-                    "name":            item_name,
-                    "menu_item_id":    item_id,
-                    "quantity":        qty,
-                    "unit_price_cents": unit_price,
-                    "subtotal_cents":  qty * unit_price,
-                })
-                modified = True
+            new_cart.append({
+                "name":             item_name,
+                "menu_item_id":     item_id,
+                "quantity":         qty,
+                "unit_price_cents": unit_price,
+                "subtotal_cents":   qty * unit_price,
+            })
 
-    if modified:
-        session.cart_total_cents = sum(c["subtotal_cents"] for c in session.cart)
-        logger.info(
-            f"[{session.call_sid}] Cart updated: "
-            + ", ".join(f"{c['quantity']}x {c['name']}" for c in session.cart)
-            + f" | total=${session.cart_total_cents / 100:.2f}"
-        )
+    if not new_cart:
+        return False
 
-    return modified
+    session.cart           = new_cart
+    session.cart_total_cents = sum(c["subtotal_cents"] for c in new_cart)
+    logger.info(
+        f"[{session.call_sid}] Cart rebuilt from readback: "
+        + ", ".join(f"{c['quantity']}x {c['name']}" for c in new_cart)
+        + f" | total=${session.cart_total_cents / 100:.2f}"
+    )
+    return True
+
+
 
 
 def _build_cart_update_text(session: "CallSession") -> str:
@@ -1345,29 +1153,12 @@ async def create_call_pipeline(
             session.add_transcript_entry("ai", full_text)
             text_lower = full_text.lower()
 
-            # ── Real-time cart parser (restaurant only) ──
-            # Runs after every AI turn. Updates session.cart, then injects the
-            # cart summary into the LLM context aggregator so Gemini reads the
-            # exact total on the next turn instead of calculating it itself.
+            # ── Readback cart parser (restaurant only) ──
+            # Fires only when the AI reads back the full order.
+            # Rebuilds session.cart from scratch, then injects the computed total
+            # into the LLM context so the AI reads it on the next turn.
             if session.business_type == "restaurant":
-                _cart_modified = _parse_cart_from_ai_text(full_text, session)
-
-                # Fallback: AI said a short ack with no item names (e.g. "Added!
-                # Anything else?"). Parse the immediately preceding customer turn.
-                if not _cart_modified and any(
-                    text_lower.startswith(p) for p in _CART_SHORT_ACK_PREFIXES
-                ):
-                    _last_customer = next(
-                        (e["text"] for e in reversed(session.transcript)
-                         if e["role"] == "customer"),
-                        None,
-                    )
-                    if _last_customer:
-                        _cart_modified = _parse_items_from_customer_text(
-                            _last_customer, session
-                        )
-
-                if _cart_modified:
+                if _parse_cart_from_readback(full_text, session):
                     from pipecat.processors.aggregators.llm_response_universal import (
                         LLMMessagesAppendFrame,
                     )
