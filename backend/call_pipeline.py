@@ -919,6 +919,18 @@ _CART_STRIP_PREFIXES = [
     "Sure, ", "Sure! ", "Of course, ", "Of course! ",
     "Absolutely, ", "Absolutely! ", "No problem, ", "No problem! ",
 ]
+# If the AI turn contains any of these it is a readback or upsell question —
+# not a new item confirmation.  Skip cart parsing entirely.
+_CART_SKIP_PHRASES = (
+    "let me read that back",
+    "read that back",
+    "does that sound right",
+    "would go great",
+    "want to add",
+    "how about",
+    "care to add",
+    "shall i add",
+)
 
 
 def _cart_parse_qty_and_name(segment: str):
@@ -944,6 +956,11 @@ def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
     customer requests, only when the AI has already validated the item).
     """
     text_lower = text.lower()
+
+    # Bail out immediately for readbacks and upsell questions — these contain
+    # trigger words ("Got it,") but are not new item confirmations.
+    if any(p in text_lower for p in _CART_SKIP_PHRASES):
+        return False
 
     is_remove  = any(p in text_lower for p in _CART_REMOVE_TRIGGERS)
     is_replace = any(p in text_lower for p in _CART_REPLACE_TRIGGERS)
@@ -984,7 +1001,7 @@ def _parse_cart_from_ai_text(text: str, session: "CallSession") -> bool:
             continue
 
         item_id    = item["id"]
-        unit_price = item.get("price_cents", 0)
+        unit_price = item.get("price", 0)  # menu items store price in cents under "price"
         item_name  = item["name"]
 
         if is_remove:
