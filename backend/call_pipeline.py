@@ -1053,6 +1053,95 @@ _CART_REPLACE_CUSTOMER_SIGNALS = (
 )
 
 
+# Short AI acknowledgments that carry no item names themselves — when the
+# AI says one of these we fall back to parsing the customer's last turn.
+_CART_SHORT_ACK_PREFIXES = (
+    "added", "added!", "done", "done!",
+    "got it", "got it!", "got it,",
+    "okay", "okay!", "ok", "ok!",
+    "perfect", "perfect!", "great", "great!",
+    "sure", "sure!", "absolutely", "absolutely!",
+    "no problem", "noted",
+)
+
+
+def _normalize_customer_order_text(text: str) -> str:
+    """
+    Normalize spoken customer order text before item parsing.
+    Handles:
+      - "to" used as spoken separator (e.g. "two lamb biryani TO two samosa")
+        but NOT at the start of a segment where it would be the number "two"
+      - consecutive items listed without "and" (relies on menu-word boundaries)
+    """
+    # Replace " to " (not at position 0) with " and " when sandwiched between
+    # non-number words — i.e., after an item name, not before one as a quantity.
+    # "two lamb biryani to two samosa" → "two lamb biryani and two samosa"
+    normalized = _re.sub(
+        r'(?<=\w)\s+to\s+(?=(?:' + '|'.join(_CART_NUMBER_WORDS.keys()) + r'|\d)\s)',
+        ' and ',
+        text,
+        flags=_re.IGNORECASE,
+    )
+    return normalized
+
+
+def _parse_items_from_customer_text(text: str, session: "CallSession") -> bool:
+    """
+    Parse item additions directly from the customer's utterance.
+    Used as fallback when the AI gave a short ack with no item names.
+    Returns True if the cart was modified.
+    """
+    text_norm  = _normalize_customer_order_text(text)
+    text_lower = text_norm.lower()
+
+    # Segments split on " and " or commas
+    segments = _re.split(r'\s+and\s+|,\s*', text_lower, flags=_re.IGNORECASE)
+
+    modified = False
+    for seg in segments:
+        seg = seg.strip().rstrip(".,!? ")
+        if not seg:
+            continue
+        qty, name = _cart_parse_qty_and_name(seg)
+        if not name:
+            continue
+        item = session.menu_index.find(name)
+        if not item:
+            continue
+
+        item_id    = item["id"]
+        unit_price = item.get("price", 0)
+        item_name  = item["name"]
+
+        found = False
+        for c in session.cart:
+            if c["menu_item_id"] == item_id:
+                c["quantity"] += qty
+                c["subtotal_cents"] = c["quantity"] * unit_price
+                found = True
+                modified = True
+                break
+        if not found:
+            session.cart.append({
+                "name":            item_name,
+                "menu_item_id":    item_id,
+                "quantity":        qty,
+                "unit_price_cents": unit_price,
+                "subtotal_cents":  qty * unit_price,
+            })
+            modified = True
+
+    if modified:
+        session.cart_total_cents = sum(c["subtotal_cents"] for c in session.cart)
+        logger.info(
+            f"[{session.call_sid}] Cart updated (customer fallback): "
+            + ", ".join(f"{c['quantity']}x {c['name']}" for c in session.cart)
+            + f" | total=${session.cart_total_cents / 100:.2f}"
+        )
+
+    return modified
+
+
 def _cart_parse_qty_and_name(segment: str):
     """Return (quantity: int, item_name: str) from a segment like '2 Chicken Biryani'."""
     segment = segment.strip().rstrip(".,!? ")
@@ -1261,7 +1350,24 @@ async def create_call_pipeline(
             # cart summary into the LLM context aggregator so Gemini reads the
             # exact total on the next turn instead of calculating it itself.
             if session.business_type == "restaurant":
-                if _parse_cart_from_ai_text(full_text, session):
+                _cart_modified = _parse_cart_from_ai_text(full_text, session)
+
+                # Fallback: AI said a short ack with no item names (e.g. "Added!
+                # Anything else?"). Parse the immediately preceding customer turn.
+                if not _cart_modified and any(
+                    text_lower.startswith(p) for p in _CART_SHORT_ACK_PREFIXES
+                ):
+                    _last_customer = next(
+                        (e["text"] for e in reversed(session.transcript)
+                         if e["role"] == "customer"),
+                        None,
+                    )
+                    if _last_customer:
+                        _cart_modified = _parse_items_from_customer_text(
+                            _last_customer, session
+                        )
+
+                if _cart_modified:
                     from pipecat.processors.aggregators.llm_response_universal import (
                         LLMMessagesAppendFrame,
                     )
