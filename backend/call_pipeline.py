@@ -96,9 +96,28 @@ try:
             )
         ]
     )
+    
+
+    GET_CART_TOTAL_TOOL = _genai_types.Tool(
+        function_declarations=[
+            _genai_types.FunctionDeclaration(
+                name="get_cart_total",
+                description=(
+                    "Get the exact backend-calculated total for the current order. "
+                    "Call this immediately before saying the total at readback. "
+                    "Never calculate the total yourself — always call this first."
+                ),
+                parameters=_genai_types.Schema(
+                    type=_genai_types.Type.OBJECT,
+                    properties={},
+                ),
+            )
+        ]
+    )
     _TOOLS_AVAILABLE = True
 except Exception as _tools_err:
     CHECK_AVAILABILITY_TOOL = None
+    GET_CART_TOTAL_TOOL = None
     _TOOLS_AVAILABLE = False
     logging.getLogger(__name__).warning(f"Tool definition failed: {_tools_err}")
 
@@ -1233,13 +1252,13 @@ async def create_call_pipeline(
 
         # Only pass availability tool for appointment businesses
         _tools_list = None
-        if (
-            _TOOLS_AVAILABLE
-            and CHECK_AVAILABILITY_TOOL
-            and session
-            and session.business_type in ("clinic", "salon", "home_services", "legal")
-        ):
-            _tools_list = [CHECK_AVAILABILITY_TOOL]
+        if _TOOLS_AVAILABLE and session:
+            if session.business_type in ("clinic", "salon", "home_services", "legal"):
+                if CHECK_AVAILABILITY_TOOL:
+                    _tools_list = [CHECK_AVAILABILITY_TOOL]
+            elif session.business_type == "restaurant":
+                if GET_CART_TOTAL_TOOL:
+                    _tools_list = [GET_CART_TOTAL_TOOL]
 
         gemini_live = RingAIGeminiLive(
             on_ai_transcript=on_ai_transcript,
@@ -1291,6 +1310,23 @@ async def create_call_pipeline(
         # _fn_in_progress suppresses _handle_interruption for the duration.
         # After result_callback, we also append to context so Gemini's
         # server-side history reflects the completed tool call.
+        # ── get_cart_total handler (restaurant only) ──────────────────────────
+        if _tools_list and session and session.business_type == "restaurant":
+            async def _handle_get_cart_total(params):
+                logger.info(f"[{call_sid}] get_cart_total called by Gemini")
+                if session.cart_total_cents > 0:
+                    total = f"${session.cart_total_cents / 100:.2f}"
+                    logger.info(f"[{call_sid}] get_cart_total returning: {total}")
+                    await params.result_callback({"total": total})
+                else:
+                    # Cart not populated yet — return a message telling AI to defer
+                    logger.warning(f"[{call_sid}] get_cart_total called but cart is empty")
+                    await params.result_callback({
+                        "total": None,
+                        "message": "Total not available yet — tell customer you'll confirm shortly."
+                    })
+            gemini_live.register_function("get_cart_total", _handle_get_cart_total)
+
         if _tools_list and session:
             async def _handle_check_availability(params):
                 date_str = params.arguments.get("date", "").strip()
