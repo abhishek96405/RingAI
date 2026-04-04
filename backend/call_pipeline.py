@@ -96,28 +96,9 @@ try:
             )
         ]
     )
-    
-
-    GET_CART_TOTAL_TOOL = _genai_types.Tool(
-        function_declarations=[
-            _genai_types.FunctionDeclaration(
-                name="get_cart_total",
-                description=(
-                    "Get the exact backend-calculated total for the current order. "
-                    "Call this immediately before saying the total at readback. "
-                    "Never calculate the total yourself — always call this first."
-                ),
-                parameters=_genai_types.Schema(
-                    type=_genai_types.Type.OBJECT,
-                    properties={},
-                ),
-            )
-        ]
-    )
     _TOOLS_AVAILABLE = True
 except Exception as _tools_err:
     CHECK_AVAILABILITY_TOOL = None
-    GET_CART_TOTAL_TOOL = None
     _TOOLS_AVAILABLE = False
     logging.getLogger(__name__).warning(f"Tool definition failed: {_tools_err}")
 
@@ -339,8 +320,6 @@ class CallSession:
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._twilio_duration_seconds = None  # exact duration from Twilio status callback
-        self.cart: List[Dict] = []       # {name, menu_item_id, quantity, unit_price_cents, subtotal_cents}
-        self.cart_total_cents: int = 0   # authoritative cart total for restaurants
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
@@ -496,25 +475,6 @@ class CallSession:
             self._order_dispatched = False
             return False
 
-        # Prefer real-time cart as the source of truth for dispatch.
-        # Fall back to Gemini extraction only when cart is empty.
-        if self.cart and not self.order.items:
-            from gemini_service import OrderItem as _OrderItem
-            self.order.items = [
-                _OrderItem(
-                    name=c["name"],
-                    menu_item_id=c["menu_item_id"],
-                    category="",
-                    unit_price=c["unit_price_cents"],
-                    quantity=c["quantity"],
-                )
-                for c in self.cart
-            ]
-            logger.info(
-                f"[{self.call_sid}] Using cart for dispatch: "
-                + ", ".join(f"{c['quantity']}x {c['name']}" for c in self.cart)
-            )
-
         if not self.order.items:
             for attempt in range(1, max_retries + 1):
                 extracted = await extract_order_from_transcript(
@@ -561,69 +521,6 @@ class CallSession:
         return True
 
     # ------------------------------------------------------------------
-    # Cart-vs-extraction reconciliation
-    # ------------------------------------------------------------------
-
-    def _cart_or_extraction_order(self) -> Optional[Dict]:
-        """
-        Return the order dict to store in the call record.
-        Cart is primary when it has items; Gemini extraction is the fallback.
-        Logs a warning when both exist but totals diverge by more than $1.
-        """
-        from gemini_service import OrderItem as _OrderItem
-
-        if self.cart:
-            # Build an order dict from cart items directly
-            cart_items = [
-                {
-                    "name":                c["name"],
-                    "menu_item_id":        c["menu_item_id"],
-                    "category":            "",
-                    "unit_price":          c["unit_price_cents"],
-                    "quantity":            c["quantity"],
-                    "modifiers":           [],
-                    "special_instructions": "",
-                    "allergens":           [],
-                    "subtotal":            c["subtotal_cents"],
-                }
-                for c in self.cart
-            ]
-            cart_order = {
-                "call_sid":             self.call_sid,
-                "state":                self.order.state,
-                "items":                cart_items,
-                "order_type":           self.order.order_type,
-                "customer_name":        self.order.customer_name,
-                "delivery_address":     self.order.delivery_address,
-                "special_instructions": self.order.special_instructions,
-                "total":                self.cart_total_cents,
-                "confirmed_at":         self.order.confirmed_at,
-                "kitchen_order_id":     self.order.kitchen_order_id,
-                "source":               "cart",
-            }
-
-            # Warn when extraction also ran and totals diverge
-            if self.order.items and self.order.total > 0:
-                diff = abs(self.cart_total_cents - self.order.total)
-                if diff > 100:  # more than $1.00 difference
-                    logger.warning(
-                        f"[{self.call_sid}] Cart/extraction total mismatch: "
-                        f"cart=${self.cart_total_cents / 100:.2f} "
-                        f"extraction=${self.order.total / 100:.2f} "
-                        f"diff=${diff / 100:.2f} — using cart"
-                    )
-
-            return cart_order
-
-        # Fallback: Gemini extraction result
-        if self.order.items:
-            d = self.order.to_dict()
-            d["source"] = "extraction"
-            return d
-
-        return None
-
-    # ------------------------------------------------------------------
     # Final call record builder
     # ------------------------------------------------------------------
 
@@ -643,11 +540,11 @@ class CallSession:
             "contained_by_ai":    not self._escalated,
             "escalated_to_human": self._escalated,
             "transcript":         self.transcript,
-            "order":              self._cart_or_extraction_order(),
+            "order":              self.order.to_dict() if self.order.items else None,
             "order_total": (
                 self._appointment_total
                 if self.business_type in ("clinic", "salon", "home_services", "legal")
-                else (self.cart_total_cents if self.cart_total_cents > 0 else self.order.total)
+                else self.order.total
             ),
             "kitchen_order_id":   self.order.kitchen_order_id,
             "quality_eval":       quality,
@@ -983,139 +880,6 @@ def classify_booking_intent(
     )
 
 
-# ---------------------------------------------------------------------------
-# Readback cart parser
-# ---------------------------------------------------------------------------
-
-_CART_NUMBER_WORDS: Dict[str, int] = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    "a": 1, "an": 1,
-}
-
-# AI phrases that signal the start of an order readback
-READBACK_PHRASES = (
-    "let me read that back",
-    "let me read that back for you",
-    "here's what i have",
-    "to confirm, i have",
-    "let me confirm your order",
-)
-
-# Phrases that mark the end of the item list within a readback turn
-_READBACK_STOP_PHRASES = (
-    "does that sound right",
-    "sound right",
-    "is that correct",
-    "your total is",
-    "?",
-)
-
-
-def _cart_parse_qty_and_name(segment: str):
-    """Return (quantity: int, item_name: str) from a segment like '2 Chicken Biryani'."""
-    segment = segment.strip().rstrip(".,!? ")
-    # Digit-first: "2 Chicken Biryani"
-    m = _re.match(r'^(\d+)\s+(.+)$', segment)
-    if m:
-        return int(m.group(1)), m.group(2).strip()
-    # Word-first: "two Chicken Biryani"
-    words = segment.split(None, 1)
-    if words and words[0].lower() in _CART_NUMBER_WORDS:
-        return _CART_NUMBER_WORDS[words[0].lower()], (words[1].strip() if len(words) > 1 else "")
-    # No quantity token — default to 1
-    return 1, segment
-
-
-def _parse_cart_from_readback(text: str, session: "CallSession") -> bool:
-    """
-    Parse items from an AI readback turn and rebuild session.cart from scratch.
-    Returns True if at least one menu item was found.
-    Only fires when the turn contains a recognised readback phrase.
-    """
-    text_lower = text.lower()
-
-    # Must be a readback turn
-    readback_start = -1
-    for phrase in READBACK_PHRASES:
-        idx = text_lower.find(phrase)
-        if idx != -1:
-            readback_start = idx + len(phrase)
-            break
-    if readback_start == -1:
-        return False
-
-    # Extract everything after the readback phrase
-    item_text = text[readback_start:].strip().lstrip(":— ")
-
-    # Truncate at the first stop phrase (question / total announcement)
-    for stop in _READBACK_STOP_PHRASES:
-        stop_idx = item_text.lower().find(stop)
-        if stop_idx != -1:
-            item_text = item_text[:stop_idx]
-
-    item_text = item_text.strip().rstrip(".,!? ")
-
-    # Split on ", " and " and "
-    segments = _re.split(r',\s*|\s+and\s+', item_text, flags=_re.IGNORECASE)
-
-    new_cart: List[Dict] = []
-    for seg in segments:
-        seg = seg.strip().rstrip(".,!? ")
-        if not seg:
-            continue
-        qty, name = _cart_parse_qty_and_name(seg)
-        if not name:
-            continue
-        item = session.menu_index.find(name)
-        if not item:
-            logger.debug(f"[{session.call_sid}] Readback: no menu match for '{name}'")
-            continue
-
-        item_id    = item["id"]
-        unit_price = item.get("price", 0)
-        item_name  = item["name"]
-
-        # Merge duplicates within this readback (in case AI listed same item twice)
-        for c in new_cart:
-            if c["menu_item_id"] == item_id:
-                c["quantity"]      += qty
-                c["subtotal_cents"] = c["quantity"] * unit_price
-                break
-        else:
-            new_cart.append({
-                "name":             item_name,
-                "menu_item_id":     item_id,
-                "quantity":         qty,
-                "unit_price_cents": unit_price,
-                "subtotal_cents":   qty * unit_price,
-            })
-
-    if not new_cart:
-        return False
-
-    session.cart           = new_cart
-    session.cart_total_cents = sum(c["subtotal_cents"] for c in new_cart)
-    logger.info(
-        f"[{session.call_sid}] Cart rebuilt from readback: "
-        + ", ".join(f"{c['quantity']}x {c['name']}" for c in new_cart)
-        + f" | total=${session.cart_total_cents / 100:.2f}"
-    )
-    return True
-
-
-
-
-def _build_cart_update_text(session: "CallSession") -> str:
-    """Return a compact natural-language cart summary for LLMMessagesAppendFrame injection."""
-    items_str = ", ".join(
-        f"{c['quantity']}x {c['name']} ${c['subtotal_cents'] / 100:.2f}"
-        for c in session.cart
-    ) or "(empty)"
-    total = f"${session.cart_total_cents / 100:.2f}"
-    return f"SYSTEM: The backend has calculated the exact order total as {total}. When you do the readback, after listing all items say exactly: 'Your total comes to {total}. Does that sound right?' Do not read this message aloud — just use the total."
-
-
 async def create_call_pipeline(
     websocket,
     system_prompt: str,
@@ -1171,13 +935,6 @@ async def create_call_pipeline(
             logger.info(f"[{call_sid}] AI: {full_text}")
             session.add_transcript_entry("ai", full_text)
             text_lower = full_text.lower()
-
-            # ── Readback cart parser (restaurant only) ──
-            # Fires only when the AI reads back the full order.
-            # Rebuilds session.cart from scratch, then injects the computed total
-            # into the LLM context so the AI reads it on the next turn.
-            if session.business_type == "restaurant":
-                _parse_cart_from_readback(full_text, session)
 
             # ── Menu SMS trigger ──
             if "i'll text you" in text_lower and "menu" in text_lower:
@@ -1252,13 +1009,13 @@ async def create_call_pipeline(
 
         # Only pass availability tool for appointment businesses
         _tools_list = None
-        if _TOOLS_AVAILABLE and session:
-            if session.business_type in ("clinic", "salon", "home_services", "legal"):
-                if CHECK_AVAILABILITY_TOOL:
-                    _tools_list = [CHECK_AVAILABILITY_TOOL]
-            elif session.business_type == "restaurant":
-                if GET_CART_TOTAL_TOOL:
-                    _tools_list = [GET_CART_TOTAL_TOOL]
+        if (
+            _TOOLS_AVAILABLE
+            and CHECK_AVAILABILITY_TOOL
+            and session
+            and session.business_type in ("clinic", "salon", "home_services", "legal")
+        ):
+            _tools_list = [CHECK_AVAILABILITY_TOOL]
 
         gemini_live = RingAIGeminiLive(
             on_ai_transcript=on_ai_transcript,
@@ -1310,23 +1067,6 @@ async def create_call_pipeline(
         # _fn_in_progress suppresses _handle_interruption for the duration.
         # After result_callback, we also append to context so Gemini's
         # server-side history reflects the completed tool call.
-        # ── get_cart_total handler (restaurant only) ──────────────────────────
-        if _tools_list and session and session.business_type == "restaurant":
-            async def _handle_get_cart_total(params):
-                logger.info(f"[{call_sid}] get_cart_total called by Gemini")
-                if session.cart_total_cents > 0:
-                    total = f"${session.cart_total_cents / 100:.2f}"
-                    logger.info(f"[{call_sid}] get_cart_total returning: {total}")
-                    await params.result_callback({"total": total})
-                else:
-                    # Cart not populated yet — return a message telling AI to defer
-                    logger.warning(f"[{call_sid}] get_cart_total called but cart is empty")
-                    await params.result_callback({
-                        "total": None,
-                        "message": "Total not available yet — tell customer you'll confirm shortly."
-                    })
-            gemini_live.register_function("get_cart_total", _handle_get_cart_total)
-
         if _tools_list and session:
             async def _handle_check_availability(params):
                 date_str = params.arguments.get("date", "").strip()
