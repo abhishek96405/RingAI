@@ -863,7 +863,8 @@ def build_system_prompt(
   - First do the upsell and wait for customer response.
   - Only AFTER the upsell response (accept or decline), proceed to STEP 4 readback.
   - WRONG: "Gulab Jamun would go great! Let me read back: one Biryani..." ← NEVER do this
-  - RIGHT: "Gulab Jamun would go great with that — want to add one?" → wait → THEN readback"""
+  - RIGHT: "Gulab Jamun would go great with that — want to add one?" → wait → THEN readback
+  - If the conversation had any confusion or interruption before the name was given: still do the upsell after getting the name — NEVER skip it."""
         if upsell_enabled else ""
     )
     escalation_target = escalation_phone or "a team member"
