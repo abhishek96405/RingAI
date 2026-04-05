@@ -1253,8 +1253,8 @@ async def create_call_pipeline(
                         session._farewell_timer.cancel()
                         session._farewell_timer = None
 
-            if session.business_type not in ("restaurant",):
-              @assistant_aggregator.event_handler("on_assistant_turn_stopped")
+        if session.business_type not in ("restaurant",):
+            @assistant_aggregator.event_handler("on_assistant_turn_stopped")
             async def on_assistant_turn_stopped(aggregator, message: AssistantTurnStoppedMessage):
                 # Classifier fallback only needed for appointment businesses
                 if session and session.business_type == "restaurant":
