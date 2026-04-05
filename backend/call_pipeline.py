@@ -995,7 +995,8 @@ async def create_call_pipeline(
                 "thank you for calling",
             ]
             if (
-                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                session.business_type != "restaurant"
+                and session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
                 and any(p in text_lower for p in call_end_phrases)
             ):
                 logger.info(f"[{call_sid}] Farewell detected — starting 30s goodbye timer")
@@ -1252,13 +1253,12 @@ async def create_call_pipeline(
                         session._farewell_timer.cancel()
                         session._farewell_timer = None
 
-            @assistant_aggregator.event_handler("on_assistant_turn_stopped")
+            if session.business_type not in ("restaurant",):
+              @assistant_aggregator.event_handler("on_assistant_turn_stopped")
             async def on_assistant_turn_stopped(aggregator, message: AssistantTurnStoppedMessage):
-                # on_assistant_turn_stopped is NOT reliable for Gemini Live — audio
-                # streams bypass the frame-based aggregator turn detection.
-                # All critical signals (APPOINTMENT_CONFIRMED, ORDER_CONFIRMED, CALL_END)
-                # are handled in on_ai_transcript.  This handler runs the classifier
-                # fallback only, which is idempotent and non-critical.
+                # Classifier fallback only needed for appointment businesses
+                if session and session.business_type == "restaurant":
+                    return
                 full_text = message.content.strip() if message.content else ""
                 if not full_text or full_text.startswith("SYSTEM:"):
                     return
@@ -1320,24 +1320,13 @@ async def create_call_pipeline(
                 logger.info(f"[{call_sid}] Client connected - greeting in 800ms")
                 await asyncio.sleep(0.8)
 
-                # Lock interruptions for the greeting window
-                gemini_live._greeting_in_progress = True
-
                 from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
                 await task.queue_frame(LLMMessagesAppendFrame(
                     messages=[{"role": "user", "content": "BEGIN_CALL"}],
                     run_llm=True,
                 ))
 
-                # Release after 6 seconds — enough for any greeting to finish speaking.
-                # After this point customer speech can interrupt normally.
-                async def _release_greeting_lock():
-                    await asyncio.sleep(6.0)
-                    gemini_live._greeting_in_progress = False
-                    logger.debug(f"[{call_sid}] Greeting lock released")
-
-                asyncio.create_task(_release_greeting_lock())
-
+                
         # ------------------------------------------------------------------
         # Disconnect handler
         # Only fires on_call_complete if _schedule_hangup hasn't already done so.
