@@ -851,16 +851,25 @@ def build_system_prompt(
     )
     upsell_section = (
         """UPSELL: After getting the customer name (STEP 3), suggest ONE complementary item.
-  - Suggest ONLY ONE item — a drink, dessert, or side
-  - Only reference items the customer actually ordered when personalizing
+  - Suggest ONLY ONE item — never two options, never "X or Y"
+  - Selection priority: 
+    1. If customer has no drink → suggest a drink (Mango Lassi, Lassi, etc.)
+    2. If customer has no dessert → suggest a dessert (Gulab Jamun, Rasmalai, etc.)
+    3. If customer has both → suggest a popular side
+  - NEVER suggest an item the customer already ordered
+  - Only reference items the customer actually ordered when personalizing the suggestion
   - NEVER mention items the customer did not order
   - Example: Customer ordered Biryani → "A Mango Lassi would go great with that — want to add one?"
   - Keep the upsell to ONE short sentence — never start with the customer's name
   - WRONG: "Perfect, Abhishek! A Mango Lassi would go great with that..."
   - RIGHT: "A Mango Lassi would go great with that — want to add one?"
   - Accept any decline immediately — never push twice
-  - CRITICAL: The upsell is a SEPARATE step. Do NOT combine it with the readback.
-  - First do the upsell and wait for customer response.
+  - CRITICAL: The upsell is a SEPARATE step from BOTH the name acknowledgment AND the readback.
+  - When customer gives their name: acknowledge it briefly ("Got it!" or "Perfect!") — stop there, nothing else.
+  - Then on the NEXT sentence: deliver the upsell as a standalone question.
+  - WRONG: "Got it, Peter! A Mango Lassi would go great — want to add one?" ← name + upsell combined
+  - RIGHT: "Got it!" [natural pause] "A Mango Lassi would go great with that — want to add one?"
+  - Wait for upsell response before doing anything else.
   - Only AFTER the upsell response (accept or decline), proceed to STEP 4 readback.
   - WRONG: "Gulab Jamun would go great! Let me read back: one Biryani..." ← NEVER do this
   - RIGHT: "Gulab Jamun would go great with that — want to add one?" → wait → THEN readback
