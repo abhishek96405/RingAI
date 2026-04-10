@@ -125,7 +125,25 @@ mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ.get("DB_NAME", "ringai_db")]
 
+def get_business_collection(business_type: str):
+    """Route to the correct business collection based on business_type."""
+    return {
+        "restaurant": db.restaurants,
+        "clinic": db.clinics,
+        "salon": db.salons,
+        "home_services": db.home_services,
+        "legal": db.legal,
+    }.get(business_type, db.restaurants)
 
+def get_config_collection(business_type: str):
+    """Route to the correct config collection based on business_type."""
+    return {
+        "restaurant": db.restaurant_configs,
+        "clinic": db.clinic_configs,
+        "salon": db.salon_configs,
+        "home_services": db.home_service_configs,
+        "legal": db.legal_configs,
+    }.get(business_type, db.restaurant_configs)
 
 # Gemini + Pipeline imports
 from gemini_service import (
@@ -159,6 +177,37 @@ from test_mode import (
 # Create the main app
 app = FastAPI(title="RingAI API", version="1.0.0")
 api_router = APIRouter(prefix="/api")
+
+@app.on_event("startup")
+async def migrate_businesses_to_typed_collections():
+    """
+    One-time migration: move documents from db.restaurants to the correct
+    typed collection based on their business_type field.
+    Idempotent — safe to run on every startup.
+    """
+    try:
+        all_docs = await db.restaurants.find(
+            {"business_type": {"$in": ["clinic", "salon", "home_services", "legal"]}},
+            {"_id": 0}
+        ).to_list(1000)
+        
+        if not all_docs:
+            return
+            
+        logger.info(f"[Migration] Found {len(all_docs)} non-restaurant businesses to migrate")
+        
+        for doc in all_docs:
+            business_type = doc.get("business_type")
+            target_coll = get_business_collection(business_type)
+            existing = await target_coll.find_one({"id": doc["id"]}, {"_id": 0})
+            if not existing:
+                await target_coll.insert_one(doc)
+                logger.info(f"[Migration] Moved {doc.get('name')} ({doc['id']}) → {business_type}")
+            await db.restaurants.delete_one({"id": doc["id"]})
+        
+        logger.info("[Migration] Business collection migration complete")
+    except Exception as e:
+        logger.error(f"[Migration] Error during migration: {e}")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -340,6 +389,7 @@ class Membership(BaseModel):
     user_id: str
     restaurant_id: str
     role: str = "owner"
+    business_type: str = "restaurant"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -731,7 +781,8 @@ async def ensure_restaurant_access(restaurant_id: str, user: Dict[str, Any]) -> 
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     if not membership:
         raise HTTPException(status_code=403, detail="You do not have access to this restaurant")
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant")
+    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
     return restaurant
@@ -742,7 +793,17 @@ async def get_bootstrap_payload(user: Dict[str, Any], preferred_restaurant_id: O
     restaurant_ids = [m["restaurant_id"] for m in memberships]
     restaurants = []
     if restaurant_ids:
-        restaurants = await db.restaurants.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100)
+        # Query all business collections in parallel
+        import asyncio as _asyncio
+        results = await _asyncio.gather(
+            db.restaurants.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100),
+            db.clinics.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100),
+            db.salons.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100),
+            db.home_services.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100),
+            db.legal.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100),
+        )
+        for r in results:
+            restaurants.extend(r)
 
     active_restaurant = None
     if restaurants:
@@ -787,7 +848,15 @@ async def repair_membership(user: Dict[str, Any] = Depends(get_current_user)):
     Dev/fix endpoint: finds any restaurant where the user is NOT yet a member
     and auto-creates an owner membership. Safe to call multiple times.
     """
-    all_restaurants = await db.restaurants.find({}, {"_id": 0}).to_list(100)
+    import asyncio as _asyncio
+    all_results = await _asyncio.gather(
+        db.restaurants.find({}, {"_id": 0}).to_list(100),
+        db.clinics.find({}, {"_id": 0}).to_list(100),
+        db.salons.find({}, {"_id": 0}).to_list(100),
+        db.home_services.find({}, {"_id": 0}).to_list(100),
+        db.legal.find({}, {"_id": 0}).to_list(100),
+    )
+    all_restaurants = [r for results in all_results for r in results]
     repaired = []
     for restaurant in all_restaurants:
         rid = restaurant.get("id")
@@ -823,8 +892,9 @@ async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depen
 
     restaurant = Restaurant(**restaurant_data)
     doc = restaurant.model_dump()
-    await db.restaurants.insert_one(doc)
-    membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner")
+    business_type = doc.get("business_type", "restaurant")
+    await get_business_collection(business_type).insert_one(doc)
+    membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner", business_type=business_type)
     await db.memberships.insert_one(membership.model_dump())
     return restaurant
 
@@ -859,10 +929,13 @@ async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Di
             update_data["timezone"] = detected_tz
             logger.info(f"Updated timezone to {detected_tz} for restaurant {restaurant_id}")
 
-    result = await db.restaurants.update_one({"id": restaurant_id}, {"$set": update_data})
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    coll = get_business_collection(business_type)
+    result = await coll.update_one({"id": restaurant_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
     return restaurant
 
 
@@ -873,7 +946,9 @@ async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Di
 @api_router.get("/restaurants/{restaurant_id}/config")
 async def get_restaurant_config(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     if not config:
         default_config = RestaurantConfig(restaurant_id=restaurant_id)
         return default_config.model_dump()
@@ -884,13 +959,16 @@ async def get_restaurant_config(restaurant_id: str, user: Dict[str, Any] = Depen
 async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpdate, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
-    existing = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id})
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    cfg_coll = get_config_collection(business_type)
+    existing = await cfg_coll.find_one({"restaurant_id": restaurant_id})
     if existing:
-        await db.restaurant_configs.update_one({"restaurant_id": restaurant_id}, {"$set": update_data})
+        await cfg_coll.update_one({"restaurant_id": restaurant_id}, {"$set": update_data})
     else:
         config = RestaurantConfig(restaurant_id=restaurant_id, **update_data)
-        await db.restaurant_configs.insert_one(config.model_dump())
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+        await cfg_coll.insert_one(config.model_dump())
+    config = await cfg_coll.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     return config
 
 @api_router.get("/voice-preview/{voice_name}")
@@ -931,9 +1009,15 @@ async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_curr
 # ---------------------------------------------------------------------------
 @app.get("/menu/{restaurant_id}", include_in_schema=False)
 async def public_menu_page(restaurant_id: str):
-    restaurant = await db.restaurants.find_one(
-        {"id": restaurant_id}, {"_id": 0}
+    import asyncio as _asyncio
+    results = await _asyncio.gather(
+        db.restaurants.find_one({"id": restaurant_id}, {"_id": 0}),
+        db.clinics.find_one({"id": restaurant_id}, {"_id": 0}),
+        db.salons.find_one({"id": restaurant_id}, {"_id": 0}),
+        db.home_services.find_one({"id": restaurant_id}, {"_id": 0}),
+        db.legal.find_one({"id": restaurant_id}, {"_id": 0}),
     )
+    restaurant = next((r for r in results if r), None)
     if not restaurant:
         return HTMLResponse("<h2>Menu not found</h2>", status_code=404)
 
@@ -1403,7 +1487,9 @@ async def get_available_slots_endpoint(
     """Return computed available slots for the dashboard Availability tab."""
     await ensure_restaurant_access(restaurant_id, user)
     from appointment_service import get_available_slots
-    config = await db.restaurant_configs.find_one(
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    config = await get_config_collection(business_type).find_one(
         {"restaurant_id": restaurant_id}, {"_id": 0}
     ) or {}
     services = await db.services.find(
@@ -1528,7 +1614,18 @@ async def google_calendar_callback(
         tokens["expires_at"] = expires_at
         
         restaurant_id = state
-        await db.restaurant_configs.update_one(
+        _biz = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1})
+        if not _biz:
+            import asyncio as _asyncio
+            _results = await _asyncio.gather(
+                db.clinics.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+                db.salons.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+                db.home_services.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+                db.legal.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+            )
+            _biz = next((r for r in _results if r), None)
+        _business_type = _biz.get("business_type", "restaurant") if _biz else "restaurant"
+        await get_config_collection(_business_type).update_one(
             {"restaurant_id": restaurant_id},
             {"$set": {
                 "google_calendar_tokens": tokens,
@@ -1559,8 +1656,9 @@ async def get_calendar_status(
 ):
     """Check if Google Calendar is connected."""
     await ensure_restaurant_access(restaurant_id, user)
-    
-    config = await db.restaurant_configs.find_one(
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    config = await get_config_collection(business_type).find_one(
         {"restaurant_id": restaurant_id},
         {"_id": 0, "google_calendar_tokens": 1, "google_calendar_id": 1}
     )
@@ -1587,11 +1685,12 @@ async def get_calendar_availability(
     """Get available appointment slots for a given date."""
     await ensure_restaurant_access(restaurant_id, user)
     
-    config = await db.restaurant_configs.find_one(
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    config = await get_config_collection(business_type).find_one(
         {"restaurant_id": restaurant_id},
         {"_id": 0}
     )
-    
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
     
@@ -1689,12 +1788,14 @@ async def book_appointment(
     if not customer_name:
         raise HTTPException(status_code=400, detail="Customer name cannot be empty")
     
-    config = await db.restaurant_configs.find_one(
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    config = await get_config_collection(business_type).find_one(
         {"restaurant_id": restaurant_id},
         {"_id": 0}
     )
     
-    restaurant = await db.restaurants.find_one(
+    restaurant = await get_business_collection(business_type).find_one(
         {"id": restaurant_id},
         {"_id": 0}
     )
@@ -1817,8 +1918,9 @@ async def disconnect_calendar(
 ):
     """Disconnect Google Calendar integration."""
     await ensure_restaurant_access(restaurant_id, user)
-    
-    await db.restaurant_configs.update_one(
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    await get_config_collection(business_type).update_one(
         {"restaurant_id": restaurant_id},
         {"$set": {
             "google_calendar_tokens": None,
@@ -1994,8 +2096,9 @@ async def confirm_menu(
     await ensure_restaurant_access(restaurant_id, user)
     
     # Check business type
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
-    business_type = config.get("business_type", "restaurant") if config else "restaurant"
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     
     if business_type in ("clinic", "salon", "home_services", "legal"):
         # Save to services collection instead of menu_items
@@ -2037,7 +2140,10 @@ async def confirm_menu(
 async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(data.restaurant_id, user)
 
-    existing = await db.restaurants.find_one({"id": data.restaurant_id}, {"_id": 0})
+    membership = await db.memberships.find_one({"restaurant_id": data.restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    _biz_coll = get_business_collection(business_type)
+    existing = await _biz_coll.find_one({"id": data.restaurant_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
@@ -2074,11 +2180,10 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
         except Exception as e:
             logger.warning(f"Could not auto-provision Twilio number: {e}")
 
-    result = await db.restaurants.update_one({"id": data.restaurant_id}, {"$set": update_fields})
+    result = await _biz_coll.update_one({"id": data.restaurant_id}, {"$set": update_fields})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-
-    restaurant = await db.restaurants.find_one({"id": data.restaurant_id}, {"_id": 0})
+    restaurant = await _biz_coll.find_one({"id": data.restaurant_id}, {"_id": 0})
     return restaurant
 
 
@@ -2093,10 +2198,11 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
     if not demo_mode_enabled():
         raise HTTPException(status_code=403, detail="Demo mode is disabled")
 
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-
     menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
 
     caller_names = [
@@ -2132,7 +2238,7 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
     restaurant_name = restaurant.get("name", "the restaurant")
     item_names = [i["name"] for i in items_for_order]
 
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     system_prompt = None
     if config and is_gemini_available():
         system_prompt = build_system_prompt(
@@ -2255,7 +2361,9 @@ async def seed_demo_data(restaurant_id: str = Query(...), user: Dict[str, Any] =
     if not demo_mode_enabled():
         raise HTTPException(status_code=403, detail="Demo mode is disabled")
 
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
@@ -2400,7 +2508,15 @@ async def startup_seed():
         logger.info("Demo seed disabled")
         return
 
-    count = await db.restaurants.count_documents({})
+    import asyncio as _asyncio
+    counts = await _asyncio.gather(
+        db.restaurants.count_documents({}),
+        db.clinics.count_documents({}),
+        db.salons.count_documents({}),
+        db.home_services.count_documents({}),
+        db.legal.count_documents({}),
+    )
+    count = sum(counts)
     if count == 0:
         logger.info("Seeding demo restaurant...")
         demo_restaurant = Restaurant(
@@ -2420,7 +2536,7 @@ async def startup_seed():
             status="active",
             onboarding_step=7,
         )
-        await db.restaurants.insert_one(demo_restaurant.model_dump())
+        await db.restaurants.insert_one(demo_restaurant.model_dump())  # demo is always restaurant type
 
         config = RestaurantConfig(
             restaurant_id="demo-restaurant-001",
@@ -2512,7 +2628,9 @@ async def twilio_provision_number(data: TwilioProvisionRequest, user: Dict[str, 
         voice_method="POST",
     )
 
-    await db.restaurants.update_one(
+    _membership = await db.memberships.find_one({"restaurant_id": data.restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    _business_type = _membership.get("business_type", "restaurant") if _membership else "restaurant"
+    await get_business_collection(_business_type).update_one(
         {"id": data.restaurant_id},
         {"$set": {
             "phone_number": purchased.phone_number,
@@ -2544,7 +2662,9 @@ async def twilio_assign_existing_number(data: TwilioAssignNumberRequest, user: D
         voice_method="POST",
     )
 
-    await db.restaurants.update_one(
+    _membership2 = await db.memberships.find_one({"restaurant_id": data.restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    _business_type2 = _membership2.get("business_type", "restaurant") if _membership2 else "restaurant"
+    await get_business_collection(_business_type2).update_one(
         {"id": data.restaurant_id},
         {"$set": {
             "phone_number": updated.phone_number,
@@ -2564,12 +2684,13 @@ async def send_menu_sms_endpoint(
     request: Request,
     user: Dict[str, Any] = Depends(get_current_user)
 ):
-    restaurant = await db.restaurants.find_one(
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant = await get_business_collection(business_type).find_one(
         {"id": restaurant_id}, {"_id": 0}
     )
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-
     body = await request.json()
     caller_number = body.get("caller_number")
     if not caller_number:
@@ -2606,7 +2727,15 @@ async def twilio_incoming_call(request: Request):
 
     logger.info(f"Incoming call: {caller_number} -> {called_number} (SID: {call_sid})")
 
-    restaurant = await db.restaurants.find_one({"phone_number": called_number}, {"_id": 0})
+    import asyncio as _asyncio
+    _phone_results = await _asyncio.gather(
+        db.restaurants.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.clinics.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.salons.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.home_services.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.legal.find_one({"phone_number": called_number}, {"_id": 0}),
+    )
+    restaurant = next((r for r in _phone_results if r), None)
     if not restaurant or not restaurant.get("is_active"):
         return Response(
             content='<?xml version="1.0"?><Response><Say>Sorry, this number is not currently active. Goodbye.</Say></Response>',
@@ -2615,8 +2744,8 @@ async def twilio_incoming_call(request: Request):
 
     # Pre-fetch all pipeline data NOW so WebSocket handler starts instantly
     restaurant_id = restaurant["id"]
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
-    business_type = config.get("business_type", "restaurant") if config else "restaurant"
+    business_type = restaurant.get("business_type", "restaurant")
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
 
     # Enrich menu items with resolved modifier groups for AI prompt
@@ -2812,10 +2941,15 @@ async def admin_cost_analytics(
 
     # Enrich with restaurant names
     restaurant_ids = [r["_id"] for r in results if r["_id"]]
-    restaurants = await db.restaurants.find(
-        {"id": {"$in": restaurant_ids}},
-        {"_id": 0, "id": 1, "name": 1}
-    ).to_list(500)
+    import asyncio as _asyncio
+    _name_results = await _asyncio.gather(
+        db.restaurants.find({"id": {"$in": restaurant_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500),
+        db.clinics.find({"id": {"$in": restaurant_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500),
+        db.salons.find({"id": {"$in": restaurant_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500),
+        db.home_services.find({"id": {"$in": restaurant_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500),
+        db.legal.find({"id": {"$in": restaurant_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500),
+    )
+    restaurants = [r for res in _name_results for r in res]
     name_map = {r["id"]: r["name"] for r in restaurants}
 
     # Overall totals
@@ -3045,7 +3179,9 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
             metadata={"restaurant_id": restaurant["id"]},
         )
         customer_id = customer["id"]
-        await db.restaurants.update_one(
+        _m = await db.memberships.find_one({"restaurant_id": restaurant["id"], "user_id": user["id"]}, {"_id": 0})
+        _bt = _m.get("business_type", "restaurant") if _m else "restaurant"
+        await get_business_collection(_bt).update_one(
             {"id": restaurant["id"]},
             {"$set": {"stripe_customer_id": customer_id, "billing_status": "pending"}}
         )
@@ -3084,34 +3220,37 @@ async def stripe_webhook(request: Request):
         subscription_id = data.get("subscription")
         customer_id = data.get("customer")
         if restaurant_id:
-            await db.restaurants.update_one(
-                {"id": restaurant_id},
-                {"$set": {
-                    "stripe_customer_id": customer_id,
-                    "stripe_subscription_id": subscription_id,
-                    "billing_status": "active",
-                    "plan": "GROWTH",
-                }}
-            )
+            for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+                await _coll.update_one(
+                    {"id": restaurant_id},
+                    {"$set": {
+                        "stripe_customer_id": customer_id,
+                        "stripe_subscription_id": subscription_id,
+                        "billing_status": "active",
+                        "plan": "GROWTH",
+                    }}
+                )
 
     elif event_type in ("customer.subscription.updated", "customer.subscription.created"):
         subscription_id = data.get("id")
         customer_id = data.get("customer")
         status = data.get("status")
-        await db.restaurants.update_one(
-            {"stripe_customer_id": customer_id},
-            {"$set": {
-                "stripe_subscription_id": subscription_id,
-                "billing_status": status,
-            }}
-        )
+        for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+            await _coll.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {
+                    "stripe_subscription_id": subscription_id,
+                    "billing_status": status,
+                }}
+            )
 
     elif event_type == "customer.subscription.deleted":
         customer_id = data.get("customer")
-        await db.restaurants.update_one(
-            {"stripe_customer_id": customer_id},
-            {"$set": {"billing_status": "canceled"}}
-        )
+        for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+            await _coll.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {"billing_status": "canceled"}}
+            )
 
     return JSONResponse({"received": True})
 
@@ -3146,7 +3285,8 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
         }},
         upsert=True,
     )
-    await db.restaurants.update_one({"id": state}, {"$set": {"square_connected": True}})
+    for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+        await _coll.update_one({"id": state}, {"$set": {"square_connected": True}})
     return {"connected": True, "restaurant_id": state}
 
 
@@ -3243,11 +3383,11 @@ async def run_test_scenario(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     await ensure_restaurant_access(restaurant_id, user)
-
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-
     scenario = get_scenario_by_id(scenario_id)
     if not scenario:
         raise HTTPException(status_code=400, detail="Invalid scenario ID")
@@ -3256,10 +3396,18 @@ async def run_test_scenario(
         {"restaurant_id": restaurant_id, "available": True}, {"_id": 0}
     ).to_list(100)
 
-    config = await db.restaurant_configs.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
-
-    # Get business type for horizontal platform support
-    business_type = config.get("business_type", "restaurant") if config else "restaurant"
+    _biz_doc = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1})
+    if not _biz_doc:
+        import asyncio as _asyncio
+        _biz_results = await _asyncio.gather(
+            db.clinics.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+            db.salons.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+            db.home_services.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+            db.legal.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1}),
+        )
+        _biz_doc = next((r for r in _biz_results if r), None)
+    business_type = _biz_doc.get("business_type", "restaurant") if _biz_doc else "restaurant"
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     
     # For appointment businesses, get services instead of menu items
     services = []
