@@ -2098,22 +2098,20 @@ async def get_analytics_summary(restaurant_id: str, user: Dict[str, Any] = Depen
 
 
 @api_router.get("/restaurants/{restaurant_id}/analytics/export")
-async def export_analytics(restaurant_id: str, period: str = Query("weekly"), user: Dict[str, Any] = Depends(get_current_user)):
+async def export_analytics(restaurant_id: str, start_date: str = Query(None), end_date: str = Query(None), user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
     import csv, io
 
     now = datetime.now(timezone.utc)
-    if period == "weekly":
+    try:
+        since = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc) if start_date else now - timedelta(days=7)
+        until = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc) if end_date else now
+    except ValueError:
         since = now - timedelta(days=7)
-    elif period == "monthly":
-        since = now - timedelta(days=30)
-    elif period == "yearly":
-        since = now - timedelta(days=365)
-    else:
-        since = now - timedelta(days=7)
+        until = now
 
     calls = await db.call_records.find(
-        {"restaurant_id": restaurant_id, "started_at": {"$gte": since.isoformat()}},
+        {"restaurant_id": restaurant_id, "started_at": {"$gte": since.isoformat(), "$lte": until.isoformat()}},
         {"_id": 0}
     ).to_list(10000)
 
@@ -2133,7 +2131,7 @@ async def export_analytics(restaurant_id: str, period: str = Query("weekly"), us
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=duuutah_{period}_{now.strftime('%Y%m%d')}.csv"}
+        headers={"Content-Disposition": f"attachment; filename=duuutah_export_{since.strftime('%Y%m%d')}_to_{until.strftime('%Y%m%d')}.csv"}
     )
 
 # ============================================================

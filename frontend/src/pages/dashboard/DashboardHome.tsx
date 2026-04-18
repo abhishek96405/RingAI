@@ -53,15 +53,20 @@ const DashboardHome = () => {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
   const [exporting, setExporting] = useState(false);
+  const [exportStart, setExportStart] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [exportEnd, setExportEnd] = useState(() => new Date().toISOString().slice(0, 10));
 
-  const handleExport = async (exportPeriod: string) => {
+  const handleExport = async () => {
     try {
       setExporting(true);
-      const res = await exportAnalytics(exportPeriod);
+      const res = await exportAnalytics(exportStart, exportEnd);
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `duuutah_${exportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `duuutah_export_${exportStart}_to_${exportEnd}.csv`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch {
@@ -125,12 +130,13 @@ const DashboardHome = () => {
             <button onClick={() => setPeriod("weekly")} className={`px-3 py-1.5 text-sm ${period === "weekly" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>Weekly</button>
             <button onClick={() => setPeriod("monthly")} className={`px-3 py-1.5 text-sm ${period === "monthly" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>Monthly</button>
           </div>
-          <div className="flex items-center gap-1">
-            {["weekly", "monthly", "yearly"].map(p => (
-              <Button key={p} variant="outline" size="sm" className="rounded-xl" disabled={exporting} onClick={() => handleExport(p)}>
-                <Download className="w-3.5 h-3.5 mr-1" />{p.charAt(0).toUpperCase() + p.slice(1)}
-              </Button>
-            ))}
+          <div className="flex items-center gap-2">
+            <input type="date" value={exportStart} onChange={e => setExportStart(e.target.value)} className="text-sm border border-border rounded-xl px-2 py-1.5 bg-card text-foreground" />
+            <span className="text-sm text-muted-foreground">to</span>
+            <input type="date" value={exportEnd} onChange={e => setExportEnd(e.target.value)} className="text-sm border border-border rounded-xl px-2 py-1.5 bg-card text-foreground" />
+            <Button variant="outline" size="sm" className="rounded-xl" disabled={exporting} onClick={handleExport}>
+              <Download className="w-3.5 h-3.5 mr-1" />Export
+            </Button>
           </div>
         </div>
       </div>

@@ -132,8 +132,8 @@ export const reanalyseCall = (callId: string) => api.post(`/calls/${callId}/anal
 export const getAnalyticsSummary = (id?: string | null) =>
   api.get(`/restaurants/${requireRestaurantId(id)}/analytics/summary`);
 
-export const exportAnalytics = (period: string, id?: string | null) =>
-  api.get(`/restaurants/${requireRestaurantId(id)}/analytics/export?period=${period}`, { responseType: "blob" });
+export const exportAnalytics = (startDate: string, endDate: string, id?: string | null) =>
+  api.get(`/restaurants/${requireRestaurantId(id)}/analytics/export?start_date=${startDate}&end_date=${endDate}`, { responseType: "blob" });
 
 export const getStatus = () => api.get(`/status`);
 export const getTestModeStatus = () => api.get(`/test-mode/status`);
