@@ -131,9 +131,6 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         if self._fn_in_progress:
             logger.debug("VAD interruption suppressed — function call in progress")
             return
-        if self._greeting_in_progress:
-            logger.debug("VAD interruption suppressed — greeting in progress")
-            return
         await super()._handle_interruption()
 
     async def _run_function_call(self, tool_call, llm_context):
@@ -1317,14 +1314,20 @@ async def create_call_pipeline(
             nonlocal _greeting_sent
             if not _greeting_sent:
                 _greeting_sent = True
-                logger.info(f"[{call_sid}] Client connected - greeting in 800ms")
-                await asyncio.sleep(0.8)
-
-                from pipecat.processors.aggregators.llm_response_universal import LLMMessagesAppendFrame
-                await task.queue_frame(LLMMessagesAppendFrame(
-                    messages=[{"role": "user", "content": "BEGIN_CALL"}],
-                    run_llm=True,
-                ))
+                logger.info(f"[{call_sid}] Client connected — waiting for Gemini session")
+                for _ in range(40):
+                    if gemini_live._session is not None:
+                        break
+                    await asyncio.sleep(0.1)
+                if gemini_live._session is None:
+                    logger.warning(f"[{call_sid}] Gemini session not ready — greeting skipped")
+                    return
+                await asyncio.sleep(0.3)
+                try:
+                    await gemini_live._session.send_realtime_input(text="__BEGIN_CALL__")
+                    logger.info(f"[{call_sid}] BEGIN_CALL sent via send_realtime_input")
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] BEGIN_CALL failed: {e}")
 
                 
         # ------------------------------------------------------------------
