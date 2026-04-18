@@ -3127,6 +3127,7 @@ async def twilio_media_stream(websocket: WebSocket):
                     restaurant_id=restaurant_id,
                     twilio_call_sid=call_sid,
                     caller_number=active_call.get("caller_number", ""),
+                    caller_name=record_data.get("caller_name") if session else None,
                     started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
                     ended_at=datetime.now(timezone.utc).isoformat(),
                     duration_seconds=len(transcript) * 8,
@@ -3150,6 +3151,7 @@ async def twilio_media_stream(websocket: WebSocket):
                         restaurant_id=restaurant_id,
                         call_sid=call_sid,
                         caller_number=active_call.get("caller_number", ""),
+                        caller_name=record_data.get("caller_name") if session else None,
                         status=status,
                         order_total=order_total,
                     )

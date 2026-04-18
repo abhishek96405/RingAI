@@ -531,6 +531,7 @@ class CallSession:
             "call_sid":           self.call_sid,
             "restaurant_id":      self.restaurant_id,
             "caller_number":      self.caller_number,
+            "caller_name":        self.order.customer_name if self.order and self.order.customer_name else None,
             "started_at":         self.started_at,
             "ended_at":           datetime.now(timezone.utc).isoformat(),
             "status":             "ESCALATED" if self._escalated else "COMPLETED",
