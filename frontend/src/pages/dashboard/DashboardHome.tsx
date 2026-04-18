@@ -8,6 +8,8 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Too
 import { ArrowUpRight, DollarSign, Phone, PhoneCall, ShieldCheck, Star } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { exportAnalytics } from "@/lib/api";
+import { Download } from "lucide-react";
 
 function StatCard({ icon: Icon, label, value, subtext, iconColor }: any) {
   return (
@@ -49,6 +51,25 @@ function CustomTooltip({ active, payload, label }: any) {
 const DashboardHome = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async (exportPeriod: string) => {
+    try {
+      setExporting(true);
+      const res = await exportAnalytics(exportPeriod);
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `duuutah_${exportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -99,9 +120,19 @@ const DashboardHome = () => {
           <h1 className="text-2xl font-display font-bold">Dashboard</h1>
           <p className="text-sm text-muted-foreground">Overview of your AI phone agent performance</p>
         </div>
-        <Button asChild className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
-          <Link to="/dashboard/calls">View All Calls</Link>
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex rounded-xl border border-border overflow-hidden">
+            <button onClick={() => setPeriod("weekly")} className={`px-3 py-1.5 text-sm ${period === "weekly" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>Weekly</button>
+            <button onClick={() => setPeriod("monthly")} className={`px-3 py-1.5 text-sm ${period === "monthly" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>Monthly</button>
+          </div>
+          <div className="flex items-center gap-1">
+            {["weekly", "monthly", "yearly"].map(p => (
+              <Button key={p} variant="outline" size="sm" className="rounded-xl" disabled={exporting} onClick={() => handleExport(p)}>
+                <Download className="w-3.5 h-3.5 mr-1" />{p.charAt(0).toUpperCase() + p.slice(1)}
+              </Button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {data && data.total_calls === 0 && (
@@ -112,8 +143,8 @@ const DashboardHome = () => {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Phone} label="Total Calls This Week" value={data?.calls_this_week || 0} iconColor="bg-primary/10 text-primary" />
-        <StatCard icon={DollarSign} label="Revenue This Week" value={`$${((data?.revenue_this_week || 0) / 100).toFixed(0)}`} iconColor="bg-success/10 text-success" />
+        <StatCard icon={Phone} label={`Total Calls This ${period === "weekly" ? "Week" : "Month"}`} value={period === "weekly" ? data?.calls_this_week || 0 : data?.calls_this_month || 0} iconColor="bg-primary/10 text-primary" />
+        <StatCard icon={DollarSign} label={`Revenue This ${period === "weekly" ? "Week" : "Month"}`} value={`$${((period === "weekly" ? data?.revenue_this_week || 0 : data?.revenue_this_month || 0) / 100).toFixed(0)}`} iconColor="bg-success/10 text-success" />
         <StatCard icon={Star} label="Avg Quality Score" value={`${data?.avg_quality_score || 0}/100`} subtext="Based on AI analysis" iconColor="bg-warning/10 text-warning" />
         <StatCard icon={ShieldCheck} label="AI Containment Rate" value={`${data?.ai_containment_rate || 0}%`} subtext={`${data?.escalated_calls || 0} escalated`} iconColor="bg-primary/10 text-primary" />
       </div>
@@ -122,10 +153,10 @@ const DashboardHome = () => {
         <div className="lg:col-span-2 premium-card p-6">
           <div className="mb-6">
             <h3 className="font-display font-bold text-lg">Call Volume & Revenue</h3>
-            <p className="text-sm text-muted-foreground">Last 7 days</p>
+            <p className="text-sm text-muted-foreground">Last {period === "weekly" ? "7" : "30"} days</p>
           </div>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={data?.daily_call_data || []} barGap={4}>
+            <BarChart data={period === "weekly" ? data?.daily_call_data || [] : data?.monthly_call_data || []} barGap={4}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
               <YAxis yAxisId="left" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />

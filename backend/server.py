@@ -2014,6 +2014,24 @@ async def get_analytics_summary(restaurant_id: str, user: Dict[str, Any] = Depen
     calls_this_week = len(week_calls)
     revenue_this_week = sum(c.get("order_total", 0) for c in week_calls if c.get("order_total"))
 
+    month_ago = now - timedelta(days=30)
+    month_calls = [c for c in all_calls if c.get("started_at", "") >= month_ago.isoformat()]
+    calls_this_month = len(month_calls)
+    revenue_this_month = sum(c.get("order_total", 0) for c in month_calls if c.get("order_total"))
+
+    monthly_data = []
+    for i in range(29, -1, -1):
+        day = now - timedelta(days=i)
+        day_str = day.strftime("%Y-%m-%d")
+        day_calls = [c for c in all_calls if c.get("started_at", "")[:10] == day_str]
+        monthly_data.append({
+            "date": day_str,
+            "label": day.strftime("%b %d"),
+            "calls": len(day_calls),
+            "revenue": sum(c.get("order_total", 0) for c in day_calls if c.get("order_total")) / 100,
+            "orders": sum(1 for c in day_calls if c.get("order_json")),
+        })
+
     daily_data = []
     for i in range(6, -1, -1):
         day = now - timedelta(days=i)
@@ -2069,12 +2087,54 @@ async def get_analytics_summary(restaurant_id: str, user: Dict[str, Any] = Depen
         "calls_today": calls_today,
         "calls_this_week": calls_this_week,
         "revenue_this_week": revenue_this_week,
+        "calls_this_month": calls_this_month,
+        "revenue_this_month": revenue_this_month,
+        "monthly_call_data": monthly_data,
         "daily_call_data": daily_data,
         "hourly_distribution": hourly_data,
         "top_items": top_items,
         "recent_calls": recent_calls,
     }
 
+
+@api_router.get("/restaurants/{restaurant_id}/analytics/export")
+async def export_analytics(restaurant_id: str, period: str = Query("weekly"), user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    import csv, io
+
+    now = datetime.now(timezone.utc)
+    if period == "weekly":
+        since = now - timedelta(days=7)
+    elif period == "monthly":
+        since = now - timedelta(days=30)
+    elif period == "yearly":
+        since = now - timedelta(days=365)
+    else:
+        since = now - timedelta(days=7)
+
+    calls = await db.call_records.find(
+        {"restaurant_id": restaurant_id, "started_at": {"$gte": since.isoformat()}},
+        {"_id": 0}
+    ).to_list(10000)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Caller", "Status", "Duration (s)", "Order Total ($)", "Quality Score"])
+    for c in sorted(calls, key=lambda x: x.get("started_at", ""), reverse=True):
+        writer.writerow([
+            c.get("started_at", "")[:19],
+            c.get("caller_name") or c.get("caller_number", ""),
+            c.get("status", ""),
+            c.get("duration_seconds", ""),
+            round(c.get("order_total", 0) / 100, 2) if c.get("order_total") else "",
+            c.get("quality_score", ""),
+        ])
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=duuutah_{period}_{now.strftime('%Y%m%d')}.csv"}
+    )
 
 # ============================================================
 # ONBOARDING ENDPOINTS
@@ -3534,6 +3594,25 @@ async def run_test_scenario(
         "ai_powered": is_gemini_available(),
     }
 
+
+# ============================================================
+# CLOUDFLARE SECURITY MIDDLEWARE
+# ============================================================
+CF_SECRET_TOKEN = os.environ.get("CF_SECRET_TOKEN", "")
+CF_BYPASS_PREFIXES = ["/twilio", "/call", "/health"]
+
+@app.middleware("http")
+async def cloudflare_security_middleware(request: Request, call_next):
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    request.state.client_ip = cf_ip if cf_ip else request.client.host
+
+    if CF_SECRET_TOKEN:
+        path = request.url.path
+        if not any(path.startswith(p) for p in CF_BYPASS_PREFIXES):
+            if request.headers.get("CF-Secret-Token", "") != CF_SECRET_TOKEN:
+                return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+    return await call_next(request)
 
 # ============================================================
 # CORS MIDDLEWARE
