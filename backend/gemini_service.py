@@ -892,11 +892,24 @@ def build_system_prompt(
                 lines.append(f"  {day.capitalize()}: {h.get('open','?')} – {h.get('close','?')}")
         hours_block = "\n".join(lines)
 
-    greeting_line = (
-        f"Hi! I'm an AI assistant for {restaurant_name}. Are you calling for pickup or delivery?"
-        if delivery_enabled else
-        f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?"
-    )
+    if customer_profile and customer_profile.get("last_name"):
+        _cname = customer_profile["last_name"]
+        _last = ""
+        if customer_profile.get("last_order") and isinstance(customer_profile["last_order"], dict):
+            _items = customer_profile["last_order"].get("items", [])
+            if _items:
+                _last = ", ".join(f"{i.get('quantity',1)}x {i.get('name','')}" for i in _items)
+        greeting_line = (
+            f"Welcome back, {_cname}! Great to hear from you. Last time you had {_last} — want the same again?"
+            if _last else
+            f"Welcome back, {_cname}! Great to hear from you. What can I get for you today?"
+        )
+    else:
+        greeting_line = (
+            f"Hi! I'm an AI assistant for {restaurant_name}. Are you calling for pickup or delivery?"
+            if delivery_enabled else
+            f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?"
+        )
 
     step1_block = (
         """STEP 1: The greeting already asked pickup or delivery.
