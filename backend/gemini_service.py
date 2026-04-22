@@ -784,6 +784,7 @@ def build_system_prompt(
     operating_hours: Optional[Dict] = None,
     restaurant_timezone: str = "UTC",
     restaurant_address: Optional[str] = None,
+    customer_profile: dict = None,
 ) -> str:
     menu_index = MenuIndex(menu_items)
     menu_examples = generate_menu_examples(menu_index)
@@ -911,6 +912,32 @@ def build_system_prompt(
   NEVER interrupt a customer who is mid-sentence or listing items."""
     )
 
+    if customer_profile:
+        last_order_items = ""
+        if customer_profile.get("last_order") and isinstance(customer_profile["last_order"], dict):
+            items = customer_profile["last_order"].get("items", [])
+            if items:
+                last_order_items = ", ".join(f"{i.get('quantity', 1)}x {i.get('name', '')}" for i in items)
+        customer_block = f"""
+═══════════════════════════
+RETURNING CUSTOMER
+═══════════════════════════
+This caller has ordered before. Use this to personalize the experience.
+- Customer name: {customer_profile.get("last_name") or "unknown"}
+- Visit count: {customer_profile.get("visit_count", 1)}
+- Last order: {last_order_items or "not available"}
+
+GREETING BEHAVIOR FOR RETURNING CUSTOMER:
+- If name is known: greet them by name — "Welcome back, {customer_profile.get("last_name", "")}! Great to hear from you again."
+- If last order is available: after greeting, offer reorder — "Last time you had {last_order_items} — want the same again?"
+- If they say yes to reorder: add all items, confirm, proceed to STEP 3 (name already known — skip asking for name, use {customer_profile.get("last_name", "")})
+- If they say no: proceed normally from STEP 1
+- NEVER reveal their phone number or any personal data
+═══════════════════════════
+"""
+    else:
+        customer_block = ""
+
     return f"""You are a friendly, warm phone assistant for {restaurant_name}, a {cuisine_type} restaurant.
 You are NOT a robot. You sound like a real person who loves food and genuinely enjoys helping customers.
 
@@ -949,6 +976,7 @@ RESPONSE SPEED:
 - Be conversational and warm — not robotic or terse
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{customer_block}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GREETING:
 When you receive the signal __BEGIN_CALL__, immediately greet the caller with:
@@ -1519,6 +1547,7 @@ async def send_menu_sms(
 
 def get_system_prompt(
     business_type: str,
+    customer_profile: dict = None,
     **kwargs
 ) -> str:
     """
@@ -1529,7 +1558,7 @@ def get_system_prompt(
     """
     if business_type in ("restaurant",):
         restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
-        return build_system_prompt(**restaurant_kwargs)
+        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
 
     elif business_type in ("clinic", "salon", "home_services", "legal"):
         try:
@@ -1544,13 +1573,13 @@ def get_system_prompt(
                 "restaurant_timezone": kwargs.get("restaurant_timezone", "UTC"),
                 "disclosure_text": kwargs.get("disclosure_text", "Hi! How can I help you today?"),
                 "cached_availability": kwargs.get("cached_availability"),
+                "customer_profile": customer_profile,
             }
             return build_appointment_prompt(**appointment_kwargs)
         except ImportError as e:
             logger.error(f"Could not import appointment_service: {e}")
             restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
-            return build_system_prompt(**restaurant_kwargs)
-
+            return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
     else:
-        restaurant_kwargs = {k: v for k, v in kwargs.items() if k != "services"}
-        return build_system_prompt(**restaurant_kwargs)
+        restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability", "customer_profile")}
+        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)

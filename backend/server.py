@@ -2803,8 +2803,11 @@ async def twilio_incoming_call(request: Request):
     # Pre-fetch all pipeline data NOW so WebSocket handler starts instantly
     restaurant_id = restaurant["id"]
     business_type = restaurant.get("business_type", "restaurant")
-    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
-    menu_items = await db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500)
+    config, menu_items, customer_profile = await _asyncio.gather(
+        get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}),
+        db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
+        db.customer_profiles.find_one({"phone_number": caller_number, "restaurant_id": restaurant_id}, {"_id": 0}),
+    )
 
     # Enrich menu items with resolved modifier groups for AI prompt
     if business_type == "restaurant" or config is None:
@@ -2864,6 +2867,7 @@ async def twilio_incoming_call(request: Request):
     from gemini_service import get_system_prompt
     system_prompt = get_system_prompt(
         business_type=business_type,
+        customer_profile=customer_profile,
         restaurant_name=restaurant.get("name", "the restaurant"),
         cuisine_type=restaurant.get("cuisine_type", ""),
         persona=config.get("persona", "friendly") if config else "friendly",
@@ -3143,6 +3147,24 @@ async def twilio_media_stream(websocket: WebSocket):
                 await db.call_records.insert_one(call.model_dump())
                 await db.active_calls.delete_one({"call_sid": call_sid})
                 logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
+
+                # CRM: upsert customer profile
+                customer_name = None
+                if session and session.order and session.order.customer_name:
+                    customer_name = session.order.customer_name
+                if caller_number := active_call.get("caller_number"):
+                    await db.customer_profiles.update_one(
+                        {"phone_number": caller_number, "restaurant_id": restaurant_id},
+                        {"$set": {
+                            "phone_number": caller_number,
+                            "restaurant_id": restaurant_id,
+                            "last_name": customer_name,
+                            "last_order": order_data,
+                            "last_call_at": datetime.now(timezone.utc).isoformat(),
+                        }, "$inc": {"visit_count": 1}},
+                        upsert=True,
+                    )
+                    logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
                 
                 # Send WebSocket notification for completed call
                 try:

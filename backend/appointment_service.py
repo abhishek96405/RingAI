@@ -232,6 +232,7 @@ def build_appointment_prompt(
     restaurant_timezone: str,
     disclosure_text: str,
     cached_availability: Optional[Dict[str, List[str]]] = None,
+    customer_profile: dict = None,
 ) -> str:
     """
     System prompt for appointment booking businesses.
@@ -389,6 +390,27 @@ def build_appointment_prompt(
                 + "\nSystem verifies slot at confirmation — if taken, staff will follow up."
             )
 
+    if customer_profile:
+        appt_last = f"Last appointment: {customer_profile.get('last_order', {}).get('service_name', 'not available')}" if customer_profile.get("last_order") else "Last appointment: not available"
+        customer_block = f"""
+═══════════════════════════
+RETURNING CUSTOMER
+═══════════════════════════
+- Customer name: {customer_profile.get("last_name") or "unknown"}
+- Visit count: {customer_profile.get("visit_count", 1)}
+- {appt_last}
+
+GREETING BEHAVIOR FOR RETURNING CUSTOMER:
+- If name is known: greet by name — "Welcome back, {customer_profile.get("last_name", "")}! Great to hear from you."
+- If last appointment is available: offer rebook — "Last time you booked a {customer_profile.get('last_order', {}).get('service_name', '')} — would you like the same again?"
+- If yes: confirm service, proceed to STEP 2 (date/time)
+- If no: proceed normally from STEP 1
+- NEVER reveal phone number or personal data
+═══════════════════════════
+"""
+    else:
+        customer_block = ""
+
     return f"""You are a friendly, professional phone assistant for {business_name}.
 You help callers book {appt_word}s, answer questions, and provide information.
 
@@ -401,6 +423,7 @@ PERSONALITY:
 - Use contractions: "I'll", "we've", "that's" — never "I will" or "that is"
 - Match the caller's energy — quick if they're quick, patient if they're unsure
 
+{customer_block}
 ════════════════════════════════════
 GREETING:
 When BEGIN_CALL fires, immediately say:
