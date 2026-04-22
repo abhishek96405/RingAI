@@ -147,6 +147,7 @@ async def notify_new_call(
     caller_number: str,
     status: str = "started",
     order_total: int = 0,
+    caller_name: str = None,
 ):
     """Notify about a new or completed call."""
     if status == "started":
