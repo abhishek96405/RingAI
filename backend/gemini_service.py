@@ -931,21 +931,19 @@ def build_system_prompt(
             items = customer_profile["last_order"].get("items", [])
             if items:
                 last_order_items = ", ".join(f"{i.get('quantity', 1)}x {i.get('name', '')}" for i in items)
+_cname = customer_profile.get('last_name') or 'this customer'
+        _visits = customer_profile.get('visit_count', 1)
+        _last = last_order_items or 'not available'
         customer_block = f"""
 ═══════════════════════════
 RETURNING CUSTOMER
 ═══════════════════════════
-This caller has ordered before. Use this to personalize the experience.
-- Customer name: {customer_profile.get("last_name") or "unknown"}
-- Visit count: {customer_profile.get("visit_count", 1)}
-- Last order: {last_order_items or "not available"}
-
-GREETING BEHAVIOR FOR RETURNING CUSTOMER:
-- If name is known: greet them by name — "Welcome back, {customer_profile.get("last_name", "")}! Great to hear from you again."
-- If last order is available: after greeting, offer reorder — "Last time you had {last_order_items} — want the same again?"
-- If they say yes to reorder: add all items, confirm, proceed to STEP 3 (name already known — skip asking for name, use {customer_profile.get("last_name", "")})
-- If they say no: proceed normally from STEP 1
-- NEVER reveal their phone number or any personal data
+- Name: {_cname}
+- Visits: {_visits}
+- Last order: {_last}
+- On BEGIN_CALL: greet by name and offer reorder if last order is available.
+- If reorder yes: add items, skip asking for name (already know it).
+- If reorder no: proceed normally.
 ═══════════════════════════
 """
     else:
