@@ -23,7 +23,7 @@ import base64
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -585,6 +585,46 @@ async def _send_to_clover(order: LiveOrder) -> Dict[str, Any]:
         logger.error(f"Clover dispatch error: {e}", exc_info=True)
         return {"success": False, "order_id": "", "method": "clover"}
 
+
+async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[int]:
+    """Get number of active open orders from POS. Returns None if unavailable."""
+    clover_token = os.environ.get("CLOVER_API_TOKEN", "")
+    clover_mid = os.environ.get("CLOVER_MERCHANT_ID", "")
+    clover_env = os.environ.get("CLOVER_ENV", "sandbox")
+    square_token = os.environ.get("SQUARE_ACCESS_TOKEN", "")
+
+    try:
+        if clover_token and clover_mid:
+            base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    f"{base_url}/v3/merchants/{clover_mid}/orders",
+                    headers={"Authorization": f"Bearer {clover_token}"},
+                    params={"filter": "paymentState=OPEN", "limit": 100},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    count = len(data.get("elements", []))
+                    logger.info(f"Clover queue depth: {count} open orders")
+                    return count
+
+        if square_token:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    "https://connect.squareup.com/v2/orders/search",
+                    headers={"Authorization": f"Bearer {square_token}", "Content-Type": "application/json"},
+                    json={"query": {"filter": {"state_filter": {"states": ["OPEN"]}}}, "limit": 100},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    count = len(data.get("orders", []))
+                    logger.info(f"Square queue depth: {count} open orders")
+                    return count
+
+    except Exception as e:
+        logger.warning(f"Queue depth fetch failed (non-fatal): {e}")
+
+    return None
 
 async def _send_to_kitchen_webhook(order: LiveOrder, url: str) -> Dict[str, Any]:
     payload = {
@@ -1441,6 +1481,8 @@ async def send_order_sms(
     restaurant_name: str,
     prep_time_minutes: int = 20,
     payment_link: Optional[str] = None,
+    restaurant: Optional[Dict] = None,
+    config: Optional[Dict] = None,
 ) -> bool:
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
     auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
@@ -1465,11 +1507,34 @@ async def send_order_sms(
 
     total = f"${order.total / 100:.2f}"
 
+    # Calculate real ETA from POS if available
+    eta_minutes = prep_time_minutes
+    if restaurant is not None:
+        try:
+            queue_depth = await get_kitchen_queue_depth(restaurant, config or {})
+            if queue_depth is not None:
+                complexity_factor = (config or {}).get("complexity_factor", 2)
+                eta_minutes = prep_time_minutes + (queue_depth * complexity_factor)
+                logger.info(f"Dynamic ETA: {eta_minutes} min (base={prep_time_minutes}, queue={queue_depth}, factor={complexity_factor})")
+        except Exception as e:
+            logger.warning(f"ETA calculation failed, using base prep time: {e}")
+
+    import pytz
+    from datetime import datetime as _dt
+    try:
+        tz_name = restaurant.get("timezone", "UTC") if restaurant else "UTC"
+        tz = pytz.timezone(tz_name)
+        pickup_time = _dt.now(tz) + timedelta(minutes=eta_minutes)
+        pickup_str = pickup_time.strftime("%I:%M %p")
+        eta_line = f"\nEstimated {order_type.lower()} time: {pickup_str} (~{eta_minutes} min)"
+    except Exception:
+        eta_line = f"\nReady in ~{eta_minutes} min ({order_type})"
+
     body = (
         f"{name_line}Your {restaurant_name} order:\n\n"
         + "\n".join(lines)
         + f"\n\nTotal: {total}"
-        + f"\nReady in ~{prep_time_minutes} min ({order_type})"
+        + eta_line
     )
 
     if payment_link:

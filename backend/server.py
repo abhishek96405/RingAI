@@ -3210,6 +3210,8 @@ async def twilio_media_stream(websocket: WebSocket):
                         restaurant_name=restaurant.get("name", "the restaurant"),
                         prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
                         payment_link=payment_link,
+                        restaurant=restaurant,
+                        config=config,
                     )
                     if session:
                         session._sms_count += 1
