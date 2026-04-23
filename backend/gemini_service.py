@@ -894,16 +894,7 @@ def build_system_prompt(
 
     if customer_profile and customer_profile.get("last_name"):
         _cname = customer_profile["last_name"]
-        _last = ""
-        if customer_profile.get("last_order") and isinstance(customer_profile["last_order"], dict):
-            _items = customer_profile["last_order"].get("items", [])
-            if _items:
-                _last = ", ".join(f"{i.get('quantity',1)}x {i.get('name','')}" for i in _items)
-        greeting_line = (
-            f"Welcome back, {_cname}! Great to hear from you. Last time you had {_last} — want the same again?"
-            if _last else
-            f"Welcome back, {_cname}! Great to hear from you. What can I get for you today?"
-        )
+        greeting_line = f"Welcome back, {_cname}! What can I get for you today?"
     else:
         greeting_line = (
             f"Hi! I'm an AI assistant for {restaurant_name}. Are you calling for pickup or delivery?"
@@ -926,24 +917,17 @@ def build_system_prompt(
     )
 
     if customer_profile:
-        last_order_items = ""
-        if customer_profile.get("last_order") and isinstance(customer_profile["last_order"], dict):
-            items = customer_profile["last_order"].get("items", [])
-            if items:
-                last_order_items = ", ".join(f"{i.get('quantity', 1)}x {i.get('name', '')}" for i in items)
+        
         _cname = customer_profile.get('last_name') or 'this customer'
         _visits = customer_profile.get('visit_count', 1)
-        _last = last_order_items or 'not available'
         customer_block = f"""
 ═══════════════════════════
 RETURNING CUSTOMER
 ═══════════════════════════
 - Name: {_cname}
 - Visits: {_visits}
-- Last order: {_last}
-- On BEGIN_CALL: greet by name and offer reorder if last order is available.
-- If reorder yes: add items, skip asking for name (already know it).
-- If reorder no: proceed normally.
+- On BEGIN_CALL: greet by name — already done via greeting.
+- Name is already known — skip asking for name in STEP 3, use {_cname}.
 ═══════════════════════════
 """
     else:

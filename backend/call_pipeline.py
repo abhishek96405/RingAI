@@ -1220,8 +1220,18 @@ async def create_call_pipeline(
         idle_processor = UserIdleProcessor(callback=_idle_placeholder, timeout=60.0)
 
         # Official Pipecat transcript aggregators for Gemini Live
+        from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
+        from pipecat.turns.user_turn_strategies import UserTurnStrategies
+        from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
         context = LLMContext()
-        context_pair = LLMContextAggregatorPair(context)
+        context_pair = LLMContextAggregatorPair(
+            context,
+            user_params=LLMUserAggregatorParams(
+                user_turn_strategies=UserTurnStrategies(
+                    stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.6)]
+                )
+            )
+        )
         user_aggregator = context_pair.user()
         assistant_aggregator = context_pair.assistant()
 
