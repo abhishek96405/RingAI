@@ -596,16 +596,17 @@ async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[in
     try:
         if clover_token and clover_mid:
             base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
+            import time as _time
+            window_ms = int((_time.time() - (restaurant.get("avg_prep_time_minutes", 20) * 60)) * 1000)
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{base_url}/v3/merchants/{clover_mid}/orders",
+                    f"{base_url}/v3/merchants/{clover_mid}/orders?filter=createdTime>={window_ms}&limit=100",
                     headers={"Authorization": f"Bearer {clover_token}"},
-                    params={"filter": "paymentState=OPEN", "limit": 100},
                 )
                 if resp.status_code == 200:
                     data = resp.json()
                     count = len(data.get("elements", []))
-                    logger.info(f"Clover queue depth: {count} open orders")
+                    logger.info(f"Clover queue depth: {count} orders in last {restaurant.get('avg_prep_time_minutes', 20)} min")
                     return count
 
         if square_token:
