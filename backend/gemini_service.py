@@ -931,7 +931,7 @@ def build_system_prompt(
             items = customer_profile["last_order"].get("items", [])
             if items:
                 last_order_items = ", ".join(f"{i.get('quantity', 1)}x {i.get('name', '')}" for i in items)
-_cname = customer_profile.get('last_name') or 'this customer'
+        _cname = customer_profile.get('last_name') or 'this customer'
         _visits = customer_profile.get('visit_count', 1)
         _last = last_order_items or 'not available'
         customer_block = f"""
