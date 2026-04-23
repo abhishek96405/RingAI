@@ -2808,6 +2808,7 @@ async def twilio_incoming_call(request: Request):
         db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
         db.customer_profiles.find_one({"phone_number": caller_number, "restaurant_id": restaurant_id}, {"_id": 0}),
     )
+    logger.info(f"[{call_sid}] CRM lookup: caller={caller_number}, profile={'FOUND: ' + customer_profile.get('last_name', 'no name') if customer_profile else 'NOT FOUND'}")
 
     # Enrich menu items with resolved modifier groups for AI prompt
     if business_type == "restaurant" or config is None:
