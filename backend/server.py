@@ -3154,15 +3154,18 @@ async def twilio_media_stream(websocket: WebSocket):
                 if session and session.order and session.order.customer_name:
                     customer_name = session.order.customer_name
                 if caller_number := active_call.get("caller_number"):
+                    _profile_update = {
+                        "phone_number": caller_number,
+                        "restaurant_id": restaurant_id,
+                        "last_call_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    if customer_name:
+                        _profile_update["last_name"] = customer_name
+                    if order_data:
+                        _profile_update["last_order"] = order_data
                     await db.customer_profiles.update_one(
                         {"phone_number": caller_number, "restaurant_id": restaurant_id},
-                        {"$set": {
-                            "phone_number": caller_number,
-                            "restaurant_id": restaurant_id,
-                            "last_name": customer_name,
-                            "last_order": order_data,
-                            "last_call_at": datetime.now(timezone.utc).isoformat(),
-                        }, "$inc": {"visit_count": 1}},
+                        {"$set": _profile_update, "$inc": {"visit_count": 1}},
                         upsert=True,
                     )
                     logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
