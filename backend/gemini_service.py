@@ -288,6 +288,7 @@ class LiveOrder:
     items: List[OrderItem] = field(default_factory=list)
     order_type: str = "pickup"
     customer_name: str = ""
+    save_name_consent: Optional[bool] = None
     delivery_address: str = ""
     special_instructions: str = ""
     confirmed_at: Optional[str] = None
@@ -1005,7 +1006,7 @@ def build_system_prompt(
     )
 
     _consent = customer_profile.get("name_consent") if customer_profile else None
-    if customer_profile and _consent is True:
+    if customer_profile and customer_profile.get("last_name") and _consent is not False:
         _cname = customer_profile.get('last_name') or 'this customer'
         _visits = customer_profile.get('visit_count', 1)
         customer_block = f"""
