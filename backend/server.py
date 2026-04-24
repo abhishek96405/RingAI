@@ -3249,7 +3249,7 @@ async def twilio_media_stream(websocket: WebSocket):
                             {"$set": _profile_update, "$inc": {"visit_count": 1}},
                             upsert=True,
                         )
-                    logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
+                        logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
                 
                 # Send WebSocket notification for completed call
                 try:
