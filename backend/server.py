@@ -70,6 +70,14 @@ def setup_signal_handlers():
     logging.getLogger(__name__).info("✅ Graceful shutdown handlers registered")
 
 
+SENSITIVE_FIELDS = {"clover_api_token", "clover_merchant_id", "square_access_token"}
+
+def strip_sensitive_fields(doc: dict) -> dict:
+    """Remove sensitive POS credentials from restaurant documents before returning to client."""
+    if not doc:
+        return doc
+    return {k: v for k, v in doc.items() if k not in SENSITIVE_FIELDS}
+
 def serialize_mongo_doc(value):
     if isinstance(value, ObjectId):
         return str(value)
@@ -797,7 +805,7 @@ async def ensure_restaurant_access(restaurant_id: str, user: Dict[str, Any]) -> 
     restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-    return restaurant
+    return strip_sensitive_fields(restaurant)
 
 
 async def get_bootstrap_payload(user: Dict[str, Any], preferred_restaurant_id: Optional[str] = None) -> Dict[str, Any]:
@@ -815,7 +823,7 @@ async def get_bootstrap_payload(user: Dict[str, Any], preferred_restaurant_id: O
             db.legal.find({"id": {"$in": restaurant_ids}}, {"_id": 0}).to_list(100),
         )
         for r in results:
-            restaurants.extend(r)
+            restaurants.extend([strip_sensitive_fields(doc) for doc in r])
 
     active_restaurant = None
     if restaurants:
@@ -908,9 +916,7 @@ async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depen
     await get_business_collection(business_type).insert_one(doc)
     membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner", business_type=business_type)
     await db.memberships.insert_one(membership.model_dump())
-    return restaurant
-
-
+    return strip_sensitive_fields(restaurant.model_dump())
 @api_router.get("/restaurants")
 async def list_restaurants(user: Dict[str, Any] = Depends(get_current_user)):
     payload = await get_bootstrap_payload(user)
@@ -948,9 +954,7 @@ async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Di
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
     restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
-    return restaurant
-
-
+    return strip_sensitive_fields(restaurant)
 # ============================================================
 # RESTAURANT CONFIG ENDPOINTS
 # ============================================================
@@ -2299,12 +2303,9 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
     restaurant = await _biz_coll.find_one({"id": data.restaurant_id}, {"_id": 0})
-    return restaurant
-
-
+    return strip_sensitive_fields(restaurant)
 # ============================================================
 # DEMO/SIMULATION ENDPOINTS
-# ============================================================
 
 @api_router.post("/demo/simulate-call")
 async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
