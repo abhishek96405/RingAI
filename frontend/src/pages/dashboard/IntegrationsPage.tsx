@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
   const [posType, setPosType] = useState("clover");
+  const [posEnv, setPosEnv] = useState("sandbox");
   const [cloverToken, setCloverToken] = useState("");
   const [cloverMid, setCloverMid] = useState("");
   const [squareToken, setSquareToken] = useState("");
@@ -22,6 +23,7 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
       setSaving(true);
       await savePOSCredentials({
         pos_type: posType,
+        pos_env: posEnv,
         clover_api_token: cloverToken || undefined,
         clover_merchant_id: cloverMid || undefined,
         square_access_token: squareToken || undefined,
@@ -44,9 +46,16 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
       <div className="space-y-2">
         <Label>POS System</Label>
         <select value={posType} onChange={e => setPosType(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
-          <option value="clover">Clover</option>
-          <option value="square">Square</option>
+        <option value="clover">Clover</option>
+        <option value="square">Square</option>
+      </select>
+      <div className="space-y-2">
+        <Label>Environment</Label>
+        <select value={posEnv} onChange={e => setPosEnv(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
+          <option value="sandbox">Sandbox (Testing)</option>
+          <option value="production">Production</option>
         </select>
+      </div>
       </div>
       {posType === "clover" && (
         <>

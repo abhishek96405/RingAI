@@ -321,6 +321,7 @@ class RestaurantBase(BaseModel):
 
     # POS integration
     pos_type: Optional[str] = None  # "clover", "square", or None
+    pos_env: Optional[str] = "sandbox"  # "sandbox" or "production"
     last_pos_sync: Optional[str] = None
     clover_api_token: Optional[str] = None
     clover_merchant_id: Optional[str] = None
@@ -369,6 +370,7 @@ class RestaurantUpdate(BaseModel):
     square_connected: Optional[bool] = None
     onboarding_completed_at: Optional[str] = None
     pos_type: Optional[str] = None
+    pos_env: Optional[str] = None
     last_pos_sync: Optional[str] = None
     clover_api_token: Optional[str] = None
     clover_merchant_id: Optional[str] = None

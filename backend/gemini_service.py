@@ -498,11 +498,11 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
 
 async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
     """Try Clover POS → Square POS → kitchen webhook → DB fallback. Always returns a result."""
-    clover_token = os.environ.get("CLOVER_API_TOKEN", "")
-    clover_mid = os.environ.get("CLOVER_MERCHANT_ID", "")
+    clover_token = restaurant.get("clover_api_token", "")
+    clover_mid = restaurant.get("clover_merchant_id", "")
     logger.info(f"Clover env check — token={'SET' if clover_token else 'MISSING'}, merchant={'SET' if clover_mid else 'MISSING'}")
     if clover_token and clover_mid:
-        result = await _send_to_clover(order)
+        result = await _send_to_clover(order, restaurant)
         if result["success"]:
             return result
 
@@ -522,11 +522,11 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
     return {"success": True, "order_id": order_id, "method": "database"}
 
 
-async def _send_to_clover(order: LiveOrder) -> Dict[str, Any]:
+async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str, Any]:
     """Create an order in Clover POS via REST API."""
-    api_token    = os.environ.get("CLOVER_API_TOKEN", "")
-    merchant_id  = os.environ.get("CLOVER_MERCHANT_ID", "")
-    clover_env   = os.environ.get("CLOVER_ENV", "sandbox")
+    api_token    = (restaurant or {}).get("clover_api_token", "")
+    merchant_id  = (restaurant or {}).get("clover_merchant_id", "")
+    clover_env = (restaurant or {}).get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
 
     base_url = (
         "https://sandbox.dev.clover.com"
@@ -656,7 +656,7 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[
     location = restaurant.get("square_location_id")
     if not token or not location:
         return {"success": False, "order_id": "", "method": "square"}
-    env = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    env = restaurant.get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
     base = "https://connect.squareupsandbox.com" if env == "sandbox" else "https://connect.squareup.com"
     body = {
         "idempotency_key": order.call_sid,

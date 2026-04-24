@@ -68,7 +68,7 @@ async def sync_menu_from_clover(restaurant_id: str, db, restaurant: Dict = None)
     import os
     api_token = (restaurant or {}).get("clover_api_token", "")
     merchant_id = (restaurant or {}).get("clover_merchant_id", "")
-    clover_env = os.environ.get("CLOVER_ENV", "sandbox")
+    clover_env = (restaurant or {}).get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
 
     if not api_token or not merchant_id:
         return {"success": False, "error": "Clover credentials not configured"}
