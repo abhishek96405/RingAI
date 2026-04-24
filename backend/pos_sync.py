@@ -63,11 +63,11 @@ def _map_square_item(item: Dict, restaurant_id: str) -> Dict:
     }
 
 
-async def sync_menu_from_clover(restaurant_id: str, db) -> Dict[str, Any]:
+async def sync_menu_from_clover(restaurant_id: str, db, restaurant: Dict = None) -> Dict[str, Any]:
     """Fetch Clover inventory and upsert into menu_items."""
     import os
-    api_token = os.environ.get("CLOVER_API_TOKEN", "")
-    merchant_id = os.environ.get("CLOVER_MERCHANT_ID", "")
+    api_token = (restaurant or {}).get("clover_api_token") or os.environ.get("CLOVER_API_TOKEN", "")
+    merchant_id = (restaurant or {}).get("clover_merchant_id") or os.environ.get("CLOVER_MERCHANT_ID", "")
     clover_env = os.environ.get("CLOVER_ENV", "sandbox")
 
     if not api_token or not merchant_id:
@@ -117,10 +117,10 @@ async def sync_menu_from_clover(restaurant_id: str, db) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-async def sync_menu_from_square(restaurant_id: str, db) -> Dict[str, Any]:
+async def sync_menu_from_square(restaurant_id: str, db, restaurant: Dict = None) -> Dict[str, Any]:
     """Fetch Square catalog and upsert into menu_items."""
     import os
-    access_token = os.environ.get("SQUARE_ACCESS_TOKEN", "")
+    access_token = (restaurant or {}).get("square_access_token") or os.environ.get("SQUARE_ACCESS_TOKEN", "")
 
     if not access_token:
         return {"success": False, "error": "Square credentials not configured"}
@@ -171,8 +171,8 @@ async def sync_menu_from_pos(restaurant_id: str, restaurant: Dict, db) -> Dict[s
     """Route to correct POS sync based on restaurant pos_type."""
     pos_type = restaurant.get("pos_type")
     if pos_type == "clover":
-        return await sync_menu_from_clover(restaurant_id, db)
+        return await sync_menu_from_clover(restaurant_id, db, restaurant)
     elif pos_type == "square":
-        return await sync_menu_from_square(restaurant_id, db)
+        return await sync_menu_from_square(restaurant_id, db, restaurant)
     else:
         return {"success": False, "error": "No POS configured for this restaurant"}

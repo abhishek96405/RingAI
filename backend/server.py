@@ -314,6 +314,9 @@ class RestaurantBase(BaseModel):
     # POS integration
     pos_type: Optional[str] = None  # "clover", "square", or None
     last_pos_sync: Optional[str] = None
+    clover_api_token: Optional[str] = None
+    clover_merchant_id: Optional[str] = None
+    square_access_token: Optional[str] = None
     # lifecycle
     status: str = "draft"
     onboarding_step: int = 1
@@ -359,6 +362,9 @@ class RestaurantUpdate(BaseModel):
     onboarding_completed_at: Optional[str] = None
     pos_type: Optional[str] = None
     last_pos_sync: Optional[str] = None
+    clover_api_token: Optional[str] = None
+    clover_merchant_id: Optional[str] = None
+    square_access_token: Optional[str] = None
 
 
 class Restaurant(RestaurantBase):
@@ -2139,6 +2145,31 @@ async def export_analytics(restaurant_id: str, start_date: str = Query(None), en
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=duuutah_export_{since.strftime('%Y%m%d')}_to_{until.strftime('%Y%m%d')}.csv"}
     )
+
+# ============================================================
+# POS INTEGRATION ENDPOINTS
+# ============================================================
+class POSCredentials(BaseModel):
+    pos_type: str
+    clover_api_token: Optional[str] = None
+    clover_merchant_id: Optional[str] = None
+    square_access_token: Optional[str] = None
+
+@api_router.post("/restaurants/{restaurant_id}/pos/credentials")
+async def save_pos_credentials(restaurant_id: str, data: POSCredentials, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    coll = get_business_collection(business_type)
+    update = {"pos_type": data.pos_type}
+    if data.clover_api_token:
+        update["clover_api_token"] = data.clover_api_token
+    if data.clover_merchant_id:
+        update["clover_merchant_id"] = data.clover_merchant_id
+    if data.square_access_token:
+        update["square_access_token"] = data.square_access_token
+    await coll.update_one({"id": restaurant_id}, {"$set": update})
+    return {"success": True}
 
 # ============================================================
 # POS SYNC ENDPOINT

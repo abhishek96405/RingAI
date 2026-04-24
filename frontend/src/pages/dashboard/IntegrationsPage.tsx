@@ -1,13 +1,77 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube, CalendarDays } from "lucide-react";
+import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube, CalendarDays, Store } from "lucide-react";
+import { savePOSCredentials } from "@/lib/api";
 import { toast } from "sonner";
+
+function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
+  const [posType, setPosType] = useState("clover");
+  const [cloverToken, setCloverToken] = useState("");
+  const [cloverMid, setCloverMid] = useState("");
+  const [squareToken, setSquareToken] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      await savePOSCredentials({
+        pos_type: posType,
+        clover_api_token: cloverToken || undefined,
+        clover_merchant_id: cloverMid || undefined,
+        square_access_token: squareToken || undefined,
+      }, restaurantId);
+      toast.success("POS credentials saved");
+    } catch {
+      toast.error("Failed to save POS credentials");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="premium-card p-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <Store className="w-5 h-5 text-primary" />
+        <h3 className="font-display font-bold text-lg">POS Integration</h3>
+      </div>
+      <p className="text-sm text-muted-foreground">Connect your Point of Sale system to sync your menu automatically.</p>
+      <div className="space-y-2">
+        <Label>POS System</Label>
+        <select value={posType} onChange={e => setPosType(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
+          <option value="clover">Clover</option>
+          <option value="square">Square</option>
+        </select>
+      </div>
+      {posType === "clover" && (
+        <>
+          <div className="space-y-2">
+            <Label>Clover API Token</Label>
+            <Input value={cloverToken} onChange={e => setCloverToken(e.target.value)} placeholder="Enter Clover API token" type="password" className="rounded-xl" />
+          </div>
+          <div className="space-y-2">
+            <Label>Clover Merchant ID</Label>
+            <Input value={cloverMid} onChange={e => setCloverMid(e.target.value)} placeholder="Enter Clover Merchant ID" className="rounded-xl" />
+          </div>
+        </>
+      )}
+      {posType === "square" && (
+        <div className="space-y-2">
+          <Label>Square Access Token</Label>
+          <Input value={squareToken} onChange={e => setSquareToken(e.target.value)} placeholder="Enter Square Access Token" type="password" className="rounded-xl" />
+        </div>
+      )}
+      <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+        {saving ? "Saving..." : "Save POS Credentials"}
+      </Button>
+    </Card>
+  );
+}
 
 const IntegrationsPage = () => {
   const { activeRestaurant } = useAppSession();
@@ -158,6 +222,8 @@ const IntegrationsPage = () => {
           </Button>
         )}
       </Card>
+
+      <POSCredentialsCard restaurantId={activeRestaurant?.id || getRestaurantId() || ""} />
 
       <Card className="premium-card p-6">
         <h3 className="font-display font-bold text-lg mb-2">Required Environment Variables</h3>

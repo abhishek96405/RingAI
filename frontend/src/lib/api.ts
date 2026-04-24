@@ -135,6 +135,9 @@ export const getAnalyticsSummary = (id?: string | null) =>
 export const syncMenuFromPOS = (id?: string | null) =>
   api.post(`/restaurants/${requireRestaurantId(id)}/pos/sync`);
 
+export const savePOSCredentials = (data: any, id?: string | null) =>
+  api.post(`/restaurants/${requireRestaurantId(id)}/pos/credentials`, data);
+
 export const exportAnalytics = (startDate: string, endDate: string, id?: string | null) =>
   api.get(`/restaurants/${requireRestaurantId(id)}/analytics/export?start_date=${startDate}&end_date=${endDate}`, { responseType: "blob" });
 
