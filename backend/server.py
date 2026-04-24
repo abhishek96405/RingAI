@@ -162,6 +162,7 @@ from gemini_service import (
     build_system_prompt,
     send_order_sms,
     send_menu_sms,
+    calculate_is_open,
 )
 from call_pipeline import (
     is_pipeline_available,
@@ -2925,7 +2926,7 @@ async def twilio_incoming_call(request: Request):
             logger.warning(f"[{call_sid}] Availability pre-fetch failed (non-fatal): {_e}")
 
     # Use system prompt router for correct prompt by business type
-    from gemini_service import get_system_prompt, calculate_is_open
+    from gemini_service import get_system_prompt
     system_prompt = get_system_prompt(
         business_type=business_type,
         customer_profile=customer_profile,
