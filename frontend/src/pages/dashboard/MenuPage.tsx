@@ -13,10 +13,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   createMenuItem, deleteMenuItem, getMenuItems, toggleMenuItem, updateMenuItem,
   getModifierGroups, createModifierGroup, updateModifierGroup, deleteModifierGroup,
-  updateItemModifierAssignments
+  updateItemModifierAssignments, syncMenuFromPOS
 } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
-import { DollarSign, Edit2, Plus, Search, Trash2, UtensilsCrossed, X, Settings2, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
+import { DollarSign, Edit2, Plus, Search, Trash2, UtensilsCrossed, X, Settings2, ChevronDown, ChevronUp, GripVertical, RefreshCw } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -342,6 +342,8 @@ const MenuPage = () => {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -374,6 +376,24 @@ const MenuPage = () => {
       // non-fatal
     }
   }, [restaurantId]);
+
+  const handlePOSSync = async () => {
+    try {
+      setSyncing(true);
+      const res = await syncMenuFromPOS(restaurantId);
+      if (res.data?.success) {
+        toast.success(`Synced ${res.data.synced} items from ${res.data.source}`);
+        setLastSync(new Date().toLocaleTimeString());
+        await fetchItems();
+      } else {
+        toast.error(res.data?.error || "Sync failed");
+      }
+    } catch {
+      toast.error("POS sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
   useEffect(() => { fetchModifierGroups(); }, [fetchModifierGroups]);
@@ -542,9 +562,16 @@ const MenuPage = () => {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="items" className="mt-0">
-            <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
-              <Plus className="w-4 h-4 mr-2" /> Add Item
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={handlePOSSync} disabled={syncing} variant="outline" className="rounded-xl">
+                <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+                {syncing ? "Syncing..." : "Sync from POS"}
+              </Button>
+              {lastSync && <span className="text-xs text-muted-foreground">Last synced: {lastSync}</span>}
+              <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+                <Plus className="w-4 h-4 mr-2" /> Add Item
+              </Button>
+            </div>
           </TabsContent>
         </div>
 

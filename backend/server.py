@@ -165,6 +165,7 @@ from call_pipeline import (
 )
 
 from auth_helpers import verify_clerk_token
+from pos_sync import sync_menu_from_pos
 
 from test_mode import (
     get_test_mode_status,
@@ -310,6 +311,9 @@ class RestaurantBase(BaseModel):
     avg_prep_time_minutes: int = 20
     reservation_party_limit: int = 8
 
+    # POS integration
+    pos_type: Optional[str] = None  # "clover", "square", or None
+    last_pos_sync: Optional[str] = None
     # lifecycle
     status: str = "draft"
     onboarding_step: int = 1
@@ -353,6 +357,8 @@ class RestaurantUpdate(BaseModel):
     twilio_number_sid: Optional[str] = None
     square_connected: Optional[bool] = None
     onboarding_completed_at: Optional[str] = None
+    pos_type: Optional[str] = None
+    last_pos_sync: Optional[str] = None
 
 
 class Restaurant(RestaurantBase):
@@ -2133,6 +2139,26 @@ async def export_analytics(restaurant_id: str, start_date: str = Query(None), en
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=duuutah_export_{since.strftime('%Y%m%d')}_to_{until.strftime('%Y%m%d')}.csv"}
     )
+
+# ============================================================
+# POS SYNC ENDPOINT
+# ============================================================
+@api_router.post("/restaurants/{restaurant_id}/pos/sync")
+async def pos_sync_menu(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    coll = get_business_collection(business_type)
+    restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    result = await sync_menu_from_pos(restaurant_id, restaurant, db)
+    if result.get("success"):
+        await coll.update_one(
+            {"id": restaurant_id},
+            {"$set": {"last_pos_sync": datetime.now(timezone.utc).isoformat()}}
+        )
+    return result
 
 # ============================================================
 # ONBOARDING ENDPOINTS
