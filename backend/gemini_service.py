@@ -416,6 +416,7 @@ JSON:"""
         state=OrderState.CONFIRMED,
         order_type=data.get("order_type", "pickup"),
         customer_name=data.get("customer_name", ""),
+        save_name_consent=data.get("save_name_consent"),
         delivery_address=data.get("delivery_address", ""),
         special_instructions=data.get("special_instructions", ""),
         confirmed_at=datetime.now(timezone.utc).isoformat(),
@@ -973,7 +974,13 @@ def build_system_prompt(
                 lines.append(f"  {day.capitalize()}: {h.get('open','?')} – {h.get('close','?')}")
         hours_block = "\n".join(lines)
 
-    if customer_profile and customer_profile.get("last_name"):
+    if not is_open:
+        if customer_profile and customer_profile.get("last_name"):
+            _cname = customer_profile["last_name"]
+            greeting_line = f"Hi {_cname}! Thanks for calling {restaurant_name}. We're currently closed right now but I can answer any questions about our menu or hours."
+        else:
+            greeting_line = f"Hi! Thanks for calling {restaurant_name}. We're currently closed right now but I can answer any questions about our menu or hours."
+    elif customer_profile and customer_profile.get("last_name"):
         _cname = customer_profile["last_name"]
         greeting_line = f"Welcome back, {_cname}! What can I get for you today?"
     else:
@@ -997,8 +1004,8 @@ def build_system_prompt(
   NEVER interrupt a customer who is mid-sentence or listing items."""
     )
 
-    if customer_profile:
-        
+    _consent = customer_profile.get("name_consent") if customer_profile else None
+    if customer_profile and _consent is True:
         _cname = customer_profile.get('last_name') or 'this customer'
         _visits = customer_profile.get('visit_count', 1)
         customer_block = f"""
@@ -1007,12 +1014,20 @@ RETURNING CUSTOMER
 ═══════════════════════════
 - Name: {_cname}
 - Visits: {_visits}
-- On BEGIN_CALL: greet by name — already done via greeting.
 - Name is already known — skip asking for name in STEP 3, use {_cname}.
 ═══════════════════════════
 """
+        step3_block = f'STEP 3: Name already known ({_cname}). Skip asking for name.'
+    elif customer_profile and _consent is False:
+        customer_block = ""
+        step3_block = """STEP 3: Ask for customer name: "Could I get a name for the order?"
+  Wait for the name before doing anything else.
+  Do NOT ask if they want their name saved."""
     else:
         customer_block = ""
+        step3_block = """STEP 3: Ask for customer name: "Could I get a name for the order?"
+  Wait for the name. Then ask: "Would you like me to remember your name for next time?"
+  Accept their answer — do not push."""
 
     return f"""You are a friendly, warm phone assistant for {restaurant_name}, a {cuisine_type} restaurant.
 You are NOT a robot. You sound like a real person who loves food and genuinely enjoys helping customers.
@@ -1139,8 +1154,7 @@ STEP 2: Take the order. Acknowledge each item briefly — "Got it", "Added", "Pe
 
 {upsell_section}
 
-STEP 3: Ask for customer name: "Could I get a name for the order?"
-  Wait for the name before doing anything else.
+{step3_block}
 
 STEP 4: MANDATORY READBACK — never skip this:
   Read back ALL items confirmed during this call — not just the most recent ones.
@@ -1188,7 +1202,20 @@ BUSINESS RULES
 CURRENT TIME: {current_time_str}
 OPERATING HOURS:
 {hours_block if hours_block else "  Hours not available"}
-CURRENT STATUS: The restaurant is currently {open_status}. Do not second-guess this — if OPEN, take orders. If CLOSED, inform the customer and state the next opening time.
+CURRENT STATUS: The restaurant is currently {open_status}.
+{"" if is_open else """
+═══════════════════════════
+CLOSED — STRICT RULES
+═══════════════════════════
+- Do NOT take any orders under any circumstance
+- Do NOT confirm any orders
+- Do NOT offer to schedule or save orders for later
+- Do NOT follow the ORDER PROTOCOL above — it does not apply when closed
+- Inform the customer of the next opening time from the operating hours above
+- Answer questions about the menu, hours, location, or other FAQs
+- If customer insists on ordering: politely repeat that you cannot take orders while closed
+- End the call politely after helping with questions
+"""}
 
 ═══════════════════════════
 ESCALATION — TRANSFER IMMEDIATELY WHEN:
