@@ -320,7 +320,7 @@ class CallSession:
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
-        
+        self.is_open = True  # Set by create_call_pipeline after hours check
         self.db = None  # Set by create_call_pipeline
 
         # Set by create_call_pipeline after task is created
@@ -359,6 +359,9 @@ class CallSession:
 
     async def _handle_order_confirmed(self):
         """Handle restaurant orders — dispatch order then hang up."""
+        if not self.is_open:
+            logger.warning(f"[{self.call_sid}] ORDER_CONFIRMED blocked — restaurant is CLOSED")
+            return
         self._hangup_scheduled = True
         if not self._order_dispatched:
             await self.dispatch_order_if_ready()

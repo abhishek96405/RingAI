@@ -2925,7 +2925,7 @@ async def twilio_incoming_call(request: Request):
             logger.warning(f"[{call_sid}] Availability pre-fetch failed (non-fatal): {_e}")
 
     # Use system prompt router for correct prompt by business type
-    from gemini_service import get_system_prompt
+    from gemini_service import get_system_prompt, calculate_is_open
     system_prompt = get_system_prompt(
         business_type=business_type,
         customer_profile=customer_profile,
@@ -3163,6 +3163,12 @@ async def twilio_media_stream(websocket: WebSocket):
             menu_items=menu_items,
             services=services,
         )
+        session.is_open = calculate_is_open(
+            operating_hours=config.get("operating_hours") if config else None,
+            restaurant_timezone=restaurant.get("timezone", "UTC"),
+        )
+        if not session.is_open:
+            logger.info(f"[{call_sid}] Restaurant is CLOSED — order dispatch blocked")
 
         async def on_call_complete(call_sid, restaurant_id, transcript, session=None):
             """Save full call record including extracted order and quality eval."""

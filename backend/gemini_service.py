@@ -809,6 +809,46 @@ You: "Yes, we have {wrong_item} for $X.XX." ← HALLUCINATION — never confirm 
 # System Prompt Builder (hardened)
 # ---------------------------------------------------------------------------
 
+def calculate_is_open(operating_hours: Optional[Dict], restaurant_timezone: str = "UTC") -> bool:
+    """Calculate if the restaurant is currently open based on operating hours and timezone."""
+    try:
+        import pytz
+        tz = pytz.timezone(restaurant_timezone)
+        local_now = datetime.now(tz)
+        current_day = local_now.strftime("%A").lower()
+        current_minutes = local_now.hour * 60 + local_now.minute
+        if not operating_hours:
+            return True
+        day_hours = operating_hours.get(current_day, {})
+        if day_hours.get("closed"):
+            return False
+        def time_to_minutes(t):
+            if not t or not isinstance(t, str):
+                return None
+            t = t.strip()
+            try:
+                from datetime import datetime as dt
+                parsed = dt.strptime(t, "%H:%M")
+                return parsed.hour * 60 + parsed.minute
+            except ValueError:
+                pass
+            try:
+                from datetime import datetime as dt
+                parsed = dt.strptime(t, "%I:%M %p")
+                return parsed.hour * 60 + parsed.minute
+            except ValueError:
+                pass
+            return None
+        open_min = time_to_minutes(day_hours.get("open", ""))
+        close_min = time_to_minutes(day_hours.get("close", ""))
+        if open_min is None or close_min is None:
+            return True
+        if close_min <= open_min:
+            return current_minutes >= open_min or current_minutes <= close_min
+        return open_min <= current_minutes <= close_min
+    except Exception:
+        return True
+
 def build_system_prompt(
     restaurant_name: str,
     cuisine_type: str,
