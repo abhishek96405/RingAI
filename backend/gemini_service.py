@@ -588,10 +588,10 @@ async def _send_to_clover(order: LiveOrder) -> Dict[str, Any]:
 
 async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[int]:
     """Get number of active open orders from POS. Returns None if unavailable."""
-    clover_token = os.environ.get("CLOVER_API_TOKEN", "")
-    clover_mid = os.environ.get("CLOVER_MERCHANT_ID", "")
+    clover_token = restaurant.get("clover_api_token", "")
+    clover_mid = restaurant.get("clover_merchant_id", "")
     clover_env = os.environ.get("CLOVER_ENV", "sandbox")
-    square_token = os.environ.get("SQUARE_ACCESS_TOKEN", "")
+    square_token = restaurant.get("square_access_token", "")
 
     try:
         if clover_token and clover_mid:
