@@ -103,6 +103,14 @@ except Exception as _tools_err:
     logging.getLogger(__name__).warning(f"Tool definition failed: {_tools_err}")
 
 
+# Stub base class when pipecat is not available
+if not _PIPECAT_AVAILABLE:
+    class _PipecatStubBase:
+        def __init__(self, **kwargs):
+            pass
+    GeminiLiveLLMService = _PipecatStubBase
+
+
 class RingAIGeminiLive(GeminiLiveLLMService):
     """Subclass capturing AI transcript for Gemini 3.1 Flash Live.
 
@@ -314,6 +322,7 @@ class CallSession:
         self._escalated         = False
         self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
         self._booking_dispatched = False  # For appointment businesses
+        self._reservation_dispatched = False  # For restaurant reservations
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._twilio_duration_seconds = None  # exact duration from Twilio status callback
@@ -396,6 +405,54 @@ class CallSession:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
         self._hangup_scheduled = False
         await self._schedule_hangup(reason="appointment_confirmed")
+
+    async def _handle_reservation_confirmed(self):
+        """Handle restaurant reservation — extract details and dispatch reservation."""
+        logger.info(f"[{self.call_sid}] Processing RESERVATION_CONFIRMED")
+        try:
+            from reservation_service import extract_reservation_from_transcript, dispatch_reservation
+            
+            # Extract reservation details from transcript
+            reservation_data = await extract_reservation_from_transcript(
+                transcript=self.transcript,
+                menu_index=None,  # Not needed for reservations
+            )
+            
+            if reservation_data:
+                reservation_data["customer_phone"] = self.order.caller_number
+                reservation_data["call_id"] = self.call_sid
+                
+                result = await dispatch_reservation(
+                    reservation_data=reservation_data,
+                    restaurant=self.restaurant,
+                    config=self.config,
+                    db=self.db,
+                )
+                
+                if result.get("success"):
+                    logger.info(f"[{self.call_sid}] Reservation dispatched: {result.get('reservation_id')}")
+                else:
+                    logger.warning(f"[{self.call_sid}] Reservation dispatch failed")
+            else:
+                logger.warning(f"[{self.call_sid}] Could not extract reservation details from transcript")
+                
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] Reservation handling error: {e}", exc_info=True)
+        
+        # Call on_call_complete if configured
+        if self._on_call_complete:
+            try:
+                await self._on_call_complete(
+                    call_sid=self.call_sid,
+                    restaurant_id=self.restaurant_id,
+                    transcript=self.transcript,
+                    session=self,
+                )
+            except Exception as e:
+                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+        
+        # Schedule hangup after reservation confirmed
+        await self._schedule_hangup(reason="reservation_confirmed")
 
     # ------------------------------------------------------------------
     # Schedule hangup — calls on_call_complete FIRST, then terminates
@@ -985,6 +1042,25 @@ async def create_call_pipeline(
                     logger.info(f"[{call_sid}] APPOINTMENT_CONFIRMED signal detected")
                     session.order.transition(OrderState.CONFIRMED, "signal")
                     asyncio.create_task(session._handle_appointment_confirmed())
+
+            # ── RESERVATION_CONFIRMED signal (restaurant reservations) ──
+            reservation_confirmed_phrases = [
+                "reservation_confirmed",
+                "your reservation is confirmed",
+                "reservation is confirmed",
+                "i have a table for",
+                "table is booked",
+                "table has been reserved",
+                "your table is reserved",
+            ]
+            if (
+                session.business_type == "restaurant"
+                and not session._reservation_dispatched
+                and any(p in text_lower for p in reservation_confirmed_phrases)
+            ):
+                logger.info(f"[{call_sid}] RESERVATION_CONFIRMED signal detected")
+                session._reservation_dispatched = True
+                asyncio.create_task(session._handle_reservation_confirmed())
 
             # ── CALL_END signal — farewell phrases trigger a 30s hangup timer ──
             call_end_phrases = [

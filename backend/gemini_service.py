@@ -188,9 +188,17 @@ class MenuIndex:
     def __init__(self, menu_items: List[Dict[str, Any]]):
         self.items = {item["id"]: item for item in menu_items if item.get("available", True)}
         self.name_index: Dict[str, str] = {}
+        self.alias_index: Dict[str, str] = {}  # alias → item_id mapping
+        
         for item in menu_items:
             if item.get("available", True):
+                # Index by name
                 self.name_index[item["name"].lower().strip()] = item["id"]
+                
+                # Index by aliases (auto-learned)
+                for alias in item.get("aliases", []):
+                    self.alias_index[alias.lower().strip()] = item["id"]
+        
         self.word_index: Dict[str, List[str]] = {}
         for item in menu_items:
             if item.get("available", True):
@@ -200,11 +208,26 @@ class MenuIndex:
 
     def find(self, name: str) -> Optional[Dict[str, Any]]:
         key = name.lower().strip()
+        
+        # 1. Exact name match
         if key in self.name_index:
             return self.items.get(self.name_index[key])
+        
+        # 2. Alias match (auto-learned)
+        if key in self.alias_index:
+            return self.items.get(self.alias_index[key])
+        
+        # 3. Partial name match
         for item_name, item_id in self.name_index.items():
             if key in item_name or item_name in key:
                 return self.items.get(item_id)
+        
+        # 4. Partial alias match
+        for alias, item_id in self.alias_index.items():
+            if key in alias or alias in key:
+                return self.items.get(item_id)
+        
+        # 5. Word-based fuzzy match
         words = [w for w in key.split() if len(w) > 3]
         candidates: Dict[str, int] = {}
         for word in words:
@@ -499,28 +522,60 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
 # ---------------------------------------------------------------------------
 
 async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
-    """Try Clover POS → Square POS → kitchen webhook → DB fallback. Always returns a result."""
-    clover_token = restaurant.get("clover_api_token", "")
-    clover_mid = restaurant.get("clover_merchant_id", "")
-    logger.info(f"Clover env check — token={'SET' if clover_token else 'MISSING'}, merchant={'SET' if clover_mid else 'MISSING'}")
-    if clover_token and clover_mid:
-        result = await _send_to_clover(order, restaurant)
+    """
+    Dispatch order to POS based on pos_type configuration.
+    Routes: pos_type → specific POS → webhook fallback → DB fallback
+    """
+    pos_type = restaurant.get("pos_type", "").lower()
+    
+    # Route by pos_type FIRST (not by credential presence)
+    if pos_type == "toast":
+        from toast_integration import send_order_to_toast
+        result = await send_order_to_toast(order, restaurant)
         if result["success"]:
             return result
+        logger.warning(f"Toast dispatch failed, falling back")
+    
+    elif pos_type == "clover":
+        clover_token = restaurant.get("clover_api_token", "")
+        clover_mid = restaurant.get("clover_merchant_id", "")
+        if clover_token and clover_mid:
+            result = await _send_to_clover(order, restaurant)
+            if result["success"]:
+                return result
+            logger.warning(f"Clover dispatch failed, falling back")
+    
+    elif pos_type == "square":
+        if restaurant.get("square_access_token"):
+            result = await _send_to_square(order, restaurant)
+            if result["success"]:
+                return result
+            logger.warning(f"Square dispatch failed, falling back")
+    
+    # Legacy fallback: try by credential presence if pos_type not set
+    if not pos_type:
+        clover_token = restaurant.get("clover_api_token", "")
+        clover_mid = restaurant.get("clover_merchant_id", "")
+        if clover_token and clover_mid:
+            result = await _send_to_clover(order, restaurant)
+            if result["success"]:
+                return result
 
-    if restaurant.get("square_connected"):
-        result = await _send_to_square(order, restaurant)
-        if result["success"]:
-            return result
+        if restaurant.get("square_connected") or restaurant.get("square_access_token"):
+            result = await _send_to_square(order, restaurant)
+            if result["success"]:
+                return result
 
+    # Webhook fallback
     webhook_url = os.environ.get("KITCHEN_WEBHOOK_URL", "")
     if webhook_url:
         result = await _send_to_kitchen_webhook(order, webhook_url)
         if result["success"]:
             return result
 
+    # DB-only fallback
     order_id = f"RNG-{order.call_sid[-8:].upper()}"
-    logger.info(f"Order {order_id} saved to DB only")
+    logger.info(f"Order {order_id} saved to DB only (pos_type={pos_type})")
     return {"success": True, "order_id": order_id, "method": "database"}
 
 
@@ -589,40 +644,76 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
 
 
 async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[int]:
-    """Get number of active open orders from POS. Returns None if unavailable."""
-    clover_token = restaurant.get("clover_api_token", "")
-    clover_mid = restaurant.get("clover_merchant_id", "")
-    clover_env = os.environ.get("CLOVER_ENV", "sandbox")
-    square_token = restaurant.get("square_access_token", "")
-
+    """Get number of active open orders from POS. Routes by pos_type."""
+    pos_type = restaurant.get("pos_type", "").lower()
+    
     try:
-        if clover_token and clover_mid:
-            base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
-            import time as _time
-            window_ms = int((_time.time() - (restaurant.get("avg_prep_time_minutes", 20) * 60)) * 1000)
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    f"{base_url}/v3/merchants/{clover_mid}/orders?filter=createdTime>={window_ms}&limit=100",
-                    headers={"Authorization": f"Bearer {clover_token}"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    count = len(data.get("elements", []))
-                    logger.info(f"Clover queue depth: {count} orders in last {restaurant.get('avg_prep_time_minutes', 20)} min")
-                    return count
-
-        if square_token:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    "https://connect.squareup.com/v2/orders/search",
-                    headers={"Authorization": f"Bearer {square_token}", "Content-Type": "application/json"},
-                    json={"query": {"filter": {"state_filter": {"states": ["OPEN"]}}}, "limit": 100},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    count = len(data.get("orders", []))
-                    logger.info(f"Square queue depth: {count} open orders")
-                    return count
+        # Route by pos_type
+        if pos_type == "toast":
+            from toast_integration import get_toast_queue_depth
+            return await get_toast_queue_depth(restaurant, config)
+        
+        elif pos_type == "clover":
+            clover_token = restaurant.get("clover_api_token", "")
+            clover_mid = restaurant.get("clover_merchant_id", "")
+            clover_env = restaurant.get("pos_env", "sandbox")
+            if clover_token and clover_mid:
+                base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
+                import time as _time
+                window_ms = int((_time.time() - (restaurant.get("avg_prep_time_minutes", 20) * 60)) * 1000)
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(
+                        f"{base_url}/v3/merchants/{clover_mid}/orders?filter=createdTime>={window_ms}&limit=100",
+                        headers={"Authorization": f"Bearer {clover_token}"},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        count = len(data.get("elements", []))
+                        logger.info(f"Clover queue depth: {count} orders")
+                        return count
+        
+        elif pos_type == "square":
+            square_token = restaurant.get("square_access_token", "")
+            if square_token:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.post(
+                        "https://connect.squareup.com/v2/orders/search",
+                        headers={"Authorization": f"Bearer {square_token}", "Content-Type": "application/json"},
+                        json={"query": {"filter": {"state_filter": {"states": ["OPEN"]}}}, "limit": 100},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        count = len(data.get("orders", []))
+                        logger.info(f"Square queue depth: {count} open orders")
+                        return count
+        
+        # Legacy fallback by credential presence
+        else:
+            clover_token = restaurant.get("clover_api_token", "")
+            clover_mid = restaurant.get("clover_merchant_id", "")
+            if clover_token and clover_mid:
+                clover_env = restaurant.get("pos_env", "sandbox")
+                base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
+                import time as _time
+                window_ms = int((_time.time() - (restaurant.get("avg_prep_time_minutes", 20) * 60)) * 1000)
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(
+                        f"{base_url}/v3/merchants/{clover_mid}/orders?filter=createdTime>={window_ms}&limit=100",
+                        headers={"Authorization": f"Bearer {clover_token}"},
+                    )
+                    if resp.status_code == 200:
+                        return len(resp.json().get("elements", []))
+            
+            square_token = restaurant.get("square_access_token", "")
+            if square_token:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.post(
+                        "https://connect.squareup.com/v2/orders/search",
+                        headers={"Authorization": f"Bearer {square_token}", "Content-Type": "application/json"},
+                        json={"query": {"filter": {"state_filter": {"states": ["OPEN"]}}}, "limit": 100},
+                    )
+                    if resp.status_code == 200:
+                        return len(resp.json().get("orders", []))
 
     except Exception as e:
         logger.warning(f"Queue depth fetch failed (non-fatal): {e}")
@@ -868,6 +959,9 @@ def build_system_prompt(
     restaurant_timezone: str = "UTC",
     restaurant_address: Optional[str] = None,
     customer_profile: dict = None,
+    reservations_enabled: bool = False,
+    reservation_settings: Optional[Dict] = None,
+    available_reservation_slots: Optional[List[Dict]] = None,
 ) -> str:
     menu_index = MenuIndex(menu_items)
     menu_examples = generate_menu_examples(menu_index)
@@ -1029,6 +1123,116 @@ RETURNING CUSTOMER
         step3_block = """STEP 3: Ask for customer name: "Could I get a name for the order?"
   Wait for the name. Then ask: "Would you like me to remember your name for next time?"
   Accept their answer — do not push."""
+
+    # Build closed hours block separately to avoid nested triple-quote issues
+    closed_hours_block = ""
+    if not is_open:
+        closed_hours_block = """
+═══════════════════════════
+CLOSED — STRICT RULES
+═══════════════════════════
+- Do NOT take any orders under any circumstance
+- Do NOT confirm any orders
+- Do NOT offer to schedule or save orders for later
+- Do NOT follow the ORDER PROTOCOL above — it does not apply when closed
+- Inform the customer of the next opening time from the operating hours above
+- Answer questions about the menu, hours, location, or other FAQs
+- If customer insists on ordering: politely repeat that you cannot take orders while closed
+- End the call politely after helping with questions
+"""
+
+    # Multilingual support block
+    multilingual_block = """
+═══════════════════════════
+MULTILINGUAL SUPPORT
+═══════════════════════════
+SUPPORTED LANGUAGES: English, Spanish, Mandarin, Hindi, Urdu, Punjabi, Korean, 
+Japanese, French, German, Portuguese, Vietnamese, Tagalog, Arabic, Russian
+
+LANGUAGE DETECTION AND RESPONSE:
+- If the customer speaks in any language listed above, RESPOND IN THE SAME LANGUAGE.
+- Maintain the same warmth, personality, and conversational style in all languages.
+- Use natural, colloquial phrases — not formal translations.
+- Keep all ORDER PROTOCOL steps and MENU rules — just in their language.
+- If customer switches languages mid-call, switch with them.
+
+EDGE CASES:
+- If unsure of the language: respond in English naturally — do NOT ask about language preference
+- If language is not in the supported list: "I can help in English — shall we continue?"
+- Accented English: respond in English but be patient with pronunciation variations.
+- Code-switching (mixing languages): match their style, respond in the dominant language.
+"""
+
+    # Reservation system block (only if enabled)
+    reservation_block = ""
+    if reservations_enabled:
+        max_party = reservation_settings.get("max_party_size", 8) if reservation_settings else 8
+        advance_days = reservation_settings.get("advance_booking_days", 30) if reservation_settings else 30
+        
+        # Format available slots by day
+        if available_reservation_slots:
+            from collections import OrderedDict
+            days = OrderedDict()
+            for s in available_reservation_slots:
+                day_label = s.get("day_label", "Unknown")
+                if day_label not in days:
+                    days[day_label] = []
+                status = s.get("display_time", s.get("time", ""))
+                if not s.get("available", True):
+                    status += " (FULL)"
+                else:
+                    remaining = s.get("remaining_capacity", "?")
+                    status += f" ({remaining} left)"
+                days[day_label].append(status)
+            availability_lines = []
+            for day_label, times in days.items():
+                availability_lines.append(f"  {day_label}: {', '.join(times)}")
+            availability_text = "\n".join(availability_lines)
+        else:
+            availability_text = "  No availability data loaded — ask customer for preferred date/time"
+        
+        reservation_block = f"""
+═══════════════════════════
+RESERVATION SYSTEM
+═══════════════════════════
+This restaurant accepts table reservations via phone.
+
+RESERVATION PROTOCOL:
+When customer asks for a reservation (e.g., "book a table", "make a reservation", "table for 4"):
+
+STEP R1: Ask party size
+  "How many guests will be joining you?"
+
+STEP R2: Ask date and time
+  "What date and time works best for you?"
+  Check the RESERVATION AVAILABILITY below before confirming any slot.
+  If requested slot shows FULL: "That time is fully booked — I have openings at [nearby available time]. Would that work?"
+  If requested date is not in the availability list: "I can book up to {advance_days} days ahead. Would you like a date within that range?"
+
+STEP R3: Get customer name (skip if returning customer with name known)
+  "And a name for the reservation?"
+
+STEP R4: Any special requests
+  "Any special requests? Birthday, high chair, outdoor seating?"
+  Accept or skip — do not push.
+
+STEP R5: Confirm the reservation
+  "Perfect! I have a table for [party_size] on [date] at [time] under [name]. 
+   We'll send you a confirmation text. Anything else I can help with?"
+
+After confirming, signal: RESERVATION_CONFIRMED
+
+RESERVATION AVAILABILITY (next 7 days):
+{availability_text}
+
+RESERVATION RULES:
+- Maximum party size: {max_party} guests
+- Can book up to {advance_days} days in advance
+- For parties larger than {max_party}: "For larger groups, please call during business hours to speak with a manager."
+- Always repeat the full details before confirming
+- If customer wants BOTH an order AND a reservation: handle order first, then reservation
+- Do NOT offer to schedule future orders — only reservations
+"""
 
     return f"""You are a friendly, warm phone assistant for {restaurant_name}, a {cuisine_type} restaurant.
 You are NOT a robot. You sound like a real person who loves food and genuinely enjoys helping customers.
@@ -1204,20 +1408,9 @@ CURRENT TIME: {current_time_str}
 OPERATING HOURS:
 {hours_block if hours_block else "  Hours not available"}
 CURRENT STATUS: The restaurant is currently {open_status}.
-{"" if is_open else """
-═══════════════════════════
-CLOSED — STRICT RULES
-═══════════════════════════
-- Do NOT take any orders under any circumstance
-- Do NOT confirm any orders
-- Do NOT offer to schedule or save orders for later
-- Do NOT follow the ORDER PROTOCOL above — it does not apply when closed
-- Inform the customer of the next opening time from the operating hours above
-- Answer questions about the menu, hours, location, or other FAQs
-- If customer insists on ordering: politely repeat that you cannot take orders while closed
-- End the call politely after helping with questions
-"""}
-
+{closed_hours_block}
+{multilingual_block}
+{reservation_block}
 ═══════════════════════════
 ESCALATION — TRANSFER IMMEDIATELY WHEN:
 ═══════════════════════════
@@ -1439,11 +1632,13 @@ ANALYSIS_SYSTEM_PROMPT = """You are a call quality analyst. Analyze the transcri
 IMPORTANT: Return ONLY valid JSON, no markdown, no explanations.
 
 Required JSON format:
-{"quality_score":85,"order_accuracy":"accurate","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"Brief summary"}
+{"quality_score":85,"order_accuracy":"accurate","detected_language":"en","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"Brief summary"}
 
 Rules:
 - quality_score: integer 1-100
 - order_accuracy: "accurate", "minor_issues", or "inaccurate"
+- detected_language: ISO 639-1 code (en, es, zh, hi, ur, pa, ko, ja, fr, de, pt, vi, tl, ar, ru)
+  Detect from the CUSTOMER's speech, not the AI's. Default to "en" if unclear or mixed.
 - issues/highlights: short strings, max 5 items each
 - summary: one sentence, max 100 characters
 
@@ -1504,6 +1699,7 @@ async def analyse_call_transcript(
 
         result["quality_score"] = max(1, min(100, int(result.get("quality_score", 85))))
         result["order_accuracy"] = result.get("order_accuracy", "accurate")
+        result["detected_language"] = result.get("detected_language", "en")
         result.setdefault("issues", [])
         result.setdefault("highlights", [])
         result.setdefault("menu_suggestions", [])
@@ -1526,6 +1722,7 @@ def _mock_call_analysis(transcript, order_json):
     return {
         "quality_score": random.randint(78, 99),
         "order_accuracy": "accurate",
+        "detected_language": "en",
         "issues": random.sample(
             ["Minor pause before confirming order", "Could have offered drinks", "Slight delay in greeting"],
             random.randint(0, 1),
@@ -1552,6 +1749,7 @@ async def send_order_sms(
     payment_link: Optional[str] = None,
     restaurant: Optional[Dict] = None,
     config: Optional[Dict] = None,
+    menu_items: Optional[List[Dict]] = None,
 ) -> bool:
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
     auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
@@ -1576,17 +1774,28 @@ async def send_order_sms(
 
     total = f"${order.total / 100:.2f}"
 
-    # Calculate real ETA from POS if available
+    # Calculate dynamic ETA using item-level prep times
     eta_minutes = prep_time_minutes
     if restaurant is not None:
         try:
-            queue_depth = await get_kitchen_queue_depth(restaurant, config or {})
-            if queue_depth is not None:
-                complexity_factor = (config or {}).get("complexity_factor", 2)
-                eta_minutes = prep_time_minutes + (queue_depth * complexity_factor)
-                logger.info(f"Dynamic ETA: {eta_minutes} min (base={prep_time_minutes}, queue={queue_depth}, factor={complexity_factor})")
+            from eta_service import calculate_dynamic_eta
+            
+            # Build order items for ETA calculation
+            order_items_for_eta = [
+                {"menu_item_id": item.menu_item_id, "name": item.name, "quantity": item.quantity}
+                for item in order.items
+            ]
+            
+            eta_result = await calculate_dynamic_eta(
+                order_items=order_items_for_eta,
+                restaurant=restaurant,
+                config=config or {},
+                menu_items=menu_items or [],
+            )
+            eta_minutes = eta_result.get("eta_minutes", prep_time_minutes)
+            logger.info(f"Dynamic ETA: {eta_minutes} min (factors: {eta_result.get('factors', {})})")
         except Exception as e:
-            logger.warning(f"ETA calculation failed, using base prep time: {e}")
+            logger.warning(f"Dynamic ETA calculation failed, using base prep time: {e}")
 
     import pytz
     from datetime import datetime as _dt
@@ -1606,8 +1815,23 @@ async def send_order_sms(
         + eta_line
     )
 
+    # Add payment link if prepayment is enabled
     if payment_link:
-        body += f"\n\nPay now: {payment_link}"
+        body += f"\n\nPay now to skip the line:\n{payment_link}"
+    elif restaurant and restaurant.get("prepayment_enabled"):
+        # Generate payment link on the fly
+        try:
+            from payment_service import create_payment_link
+            generated_link = await create_payment_link(
+                order_total=order.total,
+                order_id=order.call_sid,
+                restaurant_name=restaurant_name,
+                customer_name=order.customer_name or "Customer",
+            )
+            if generated_link:
+                body += f"\n\nPay now to skip the line:\n{generated_link}"
+        except Exception as e:
+            logger.warning(f"Payment link generation failed: {e}")
 
     try:
         credentials = base64.b64encode(
@@ -1621,10 +1845,10 @@ async def send_order_sms(
                 headers={"Authorization": f"Basic {credentials}"},
             )
             if resp.status_code in (200, 201):
-                logger.info(f"SMS sent to {caller_number}")
+                logger.info(f"SMS sent to {caller_number[-4:]}")
                 return True
             else:
-                logger.error(f"SMS failed: {resp.status_code} {resp.text}")
+                logger.error(f"SMS failed: {resp.status_code}")
                 return False
     except Exception as e:
         logger.error(f"SMS error: {e}")

@@ -1,0 +1,418 @@
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CalendarIcon, Users, Clock, X, Plus, Phone, Mail } from "lucide-react";
+import { api, getRestaurantId } from "@/lib/api";
+import { format } from "date-fns";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+
+interface Reservation {
+  id: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string;
+  party_size: number;
+  reservation_date: string;
+  reservation_time: string;
+  special_requests?: string;
+  status: string;
+  created_at: string;
+}
+
+interface TimeSlot {
+  time: string;
+  display_time: string;
+  available: boolean;
+  remaining_capacity: number;
+}
+
+const statusColors: Record<string, string> = {
+  confirmed: "bg-green-500",
+  pending: "bg-yellow-500",
+  cancelled: "bg-red-500",
+  no_show: "bg-gray-500",
+  completed: "bg-blue-500",
+};
+
+export const ReservationsPage = () => {
+  const [searchParams] = useSearchParams();
+  const restaurantId = searchParams.get("restaurant_id") || getRestaurantId() || "";
+
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [slots, setSlots] = useState<TimeSlot[]>([]);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  // New reservation form
+  const [formData, setFormData] = useState({
+    customer_name: "",
+    customer_phone: "",
+    customer_email: "",
+    party_size: 2,
+    reservation_time: "",
+    special_requests: "",
+  });
+
+  const fetchReservations = async () => {
+    try {
+      setLoading(true);
+      const dateStr = format(selectedDate, "yyyy-MM-dd");
+      const params: Record<string, unknown> = { date: dateStr };
+      if (statusFilter !== "all") {
+        params.status = statusFilter;
+      }
+      const res = await api.get(`/restaurants/${restaurantId}/reservations`, { params });
+      setReservations(res.data.reservations || []);
+    } catch (err) {
+      console.error("Failed to fetch reservations", err);
+      toast.error("Failed to load reservations");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSlots = async () => {
+    try {
+      const dateStr = format(selectedDate, "yyyy-MM-dd");
+      const res = await api.get(`/restaurants/${restaurantId}/reservation-slots`, {
+        params: { date: dateStr },
+      });
+      setSlots(res.data.slots || []);
+    } catch (err) {
+      console.error("Failed to fetch slots", err);
+    }
+  };
+
+  useEffect(() => {
+    if (restaurantId) {
+      fetchReservations();
+      fetchSlots();
+    }
+  }, [restaurantId, selectedDate, statusFilter]);
+
+  const handleCreate = async () => {
+    if (!formData.customer_name || !formData.customer_phone || !formData.reservation_time) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    try {
+      await api.post(`/restaurants/${restaurantId}/reservations`, {
+        ...formData,
+        reservation_date: format(selectedDate, "yyyy-MM-dd"),
+      });
+      toast.success("Reservation created!");
+      setIsCreateOpen(false);
+      setFormData({
+        customer_name: "",
+        customer_phone: "",
+        customer_email: "",
+        party_size: 2,
+        reservation_time: "",
+        special_requests: "",
+      });
+      fetchReservations();
+      fetchSlots();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to create reservation");
+    }
+  };
+
+  const handleCancel = async (id: string) => {
+    try {
+      await api.patch(`/reservations/${id}/cancel`);
+      toast.success("Reservation cancelled");
+      fetchReservations();
+      fetchSlots();
+    } catch (err) {
+      toast.error("Failed to cancel reservation");
+    }
+  };
+
+  const handleConfirm = async (id: string) => {
+    try {
+      await api.patch(`/reservations/${id}/confirm`);
+      toast.success("Reservation confirmed");
+      fetchReservations();
+    } catch (err) {
+      toast.error("Failed to confirm reservation");
+    }
+  };
+
+  const formatTime = (time: string) => {
+    try {
+      const [hours, minutes] = time.split(":");
+      const h = parseInt(hours);
+      const ampm = h >= 12 ? "PM" : "AM";
+      const displayH = h > 12 ? h - 12 : h === 0 ? 12 : h;
+      return `${displayH}:${minutes} ${ampm}`;
+    } catch {
+      return time;
+    }
+  };
+
+  return (
+    <div className="p-6 space-y-6" data-testid="reservations-page">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Reservations</h1>
+          <p className="text-muted-foreground">
+            Manage table reservations for {format(selectedDate, "MMMM d, yyyy")}
+          </p>
+        </div>
+        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <DialogTrigger asChild>
+            <Button data-testid="create-reservation-btn">
+              <Plus className="w-4 h-4 mr-2" /> New Reservation
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Create Reservation</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 mt-4">
+              <div>
+                <Label htmlFor="customer_name">Customer Name *</Label>
+                <Input
+                  id="customer_name"
+                  data-testid="reservation-customer-name"
+                  value={formData.customer_name}
+                  onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
+                  placeholder="John Doe"
+                />
+              </div>
+              <div>
+                <Label htmlFor="customer_phone">Phone *</Label>
+                <Input
+                  id="customer_phone"
+                  data-testid="reservation-customer-phone"
+                  value={formData.customer_phone}
+                  onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
+                  placeholder="+1 555-123-4567"
+                />
+              </div>
+              <div>
+                <Label htmlFor="customer_email">Email</Label>
+                <Input
+                  id="customer_email"
+                  data-testid="reservation-customer-email"
+                  type="email"
+                  value={formData.customer_email}
+                  onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
+                  placeholder="john@example.com"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="party_size">Party Size</Label>
+                  <Select
+                    value={formData.party_size.toString()}
+                    onValueChange={(v) => setFormData({ ...formData, party_size: parseInt(v) })}
+                  >
+                    <SelectTrigger data-testid="reservation-party-size">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                        <SelectItem key={n} value={n.toString()}>
+                          {n} {n === 1 ? "guest" : "guests"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="reservation_time">Time *</Label>
+                  <Select
+                    value={formData.reservation_time}
+                    onValueChange={(v) => setFormData({ ...formData, reservation_time: v })}
+                  >
+                    <SelectTrigger data-testid="reservation-time">
+                      <SelectValue placeholder="Select time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {slots.filter((s) => s.available).map((slot) => (
+                        <SelectItem key={slot.time} value={slot.time}>
+                          {slot.display_time} ({slot.remaining_capacity} left)
+                        </SelectItem>
+                      ))}
+                      {slots.filter((s) => s.available).length === 0 && (
+                        <div className="p-2 text-sm text-muted-foreground">No available slots</div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="special_requests">Special Requests</Label>
+                <Input
+                  id="special_requests"
+                  data-testid="reservation-special-requests"
+                  value={formData.special_requests}
+                  onChange={(e) => setFormData({ ...formData, special_requests: e.target.value })}
+                  placeholder="Birthday, allergies, etc."
+                />
+              </div>
+              <Button onClick={handleCreate} className="w-full" data-testid="submit-reservation-btn">
+                Create Reservation
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Calendar */}
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle className="text-lg">Select Date</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Calendar
+              mode="single"
+              selected={selectedDate}
+              onSelect={(d) => d && setSelectedDate(d)}
+              className="rounded-md border"
+            />
+            <div className="mt-4">
+              <Label>Filter by Status</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger data-testid="status-filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Reservations List */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <CalendarIcon className="w-5 h-5" />
+              Reservations for {format(selectedDate, "MMM d")}
+              <Badge variant="outline">{reservations.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading...</div>
+            ) : reservations.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No reservations for this date
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {reservations.map((res) => (
+                  <div
+                    key={res.id}
+                    data-testid={`reservation-${res.id}`}
+                    className="p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{res.customer_name}</span>
+                          <Badge className={cn("text-white", statusColors[res.status])}>
+                            {res.status}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatTime(res.reservation_time)}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3 h-3" />
+                            {res.party_size} guests
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Phone className="w-3 h-3" />
+                            {res.customer_phone}
+                          </span>
+                        </div>
+                        {res.special_requests && (
+                          <p className="text-sm text-muted-foreground italic">
+                            "{res.special_requests}"
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        {res.status === "pending" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleConfirm(res.id)}
+                            data-testid={`confirm-${res.id}`}
+                          >
+                            Confirm
+                          </Button>
+                        )}
+                        {(res.status === "confirmed" || res.status === "pending") && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => handleCancel(res.id)}
+                            data-testid={`cancel-${res.id}`}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Available Slots Overview */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Available Time Slots</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {slots.map((slot) => (
+              <Badge
+                key={slot.time}
+                variant={slot.available ? "outline" : "secondary"}
+                className={cn(
+                  "px-3 py-1",
+                  slot.available ? "border-green-500 text-green-700" : "opacity-50"
+                )}
+              >
+                {slot.display_time}
+                {slot.available && ` (${slot.remaining_capacity})`}
+              </Badge>
+            ))}
+            {slots.length === 0 && (
+              <span className="text-muted-foreground">No slots configured</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default ReservationsPage;

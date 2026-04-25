@@ -70,7 +70,11 @@ def setup_signal_handlers():
     logging.getLogger(__name__).info("✅ Graceful shutdown handlers registered")
 
 
-SENSITIVE_FIELDS = {"clover_api_token", "clover_merchant_id", "square_access_token"}
+SENSITIVE_FIELDS = {
+    "clover_api_token", "clover_merchant_id", "square_access_token", "square_location_id",
+    "toast_client_id", "toast_client_secret", "toast_restaurant_guid",
+    "google_calendar_tokens", "stripe_customer_id", "stripe_subscription_id",
+}
 
 def strip_sensitive_fields(doc: dict) -> dict:
     """Remove sensitive POS credentials from restaurant documents before returning to client."""
@@ -176,17 +180,115 @@ from call_pipeline import (
 from auth_helpers import verify_clerk_token
 from pos_sync import sync_menu_from_pos
 
-from test_mode import (
-    get_test_mode_status,
-    get_test_scenarios,
-    get_scenario_by_id,
-    is_sandbox_mode,
-    SAMPLE_CUSTOMER_SCENARIOS,
+# New imports for security, rate limiting, and features
+from security_middleware import (
+    SecurityHeadersMiddleware,
+    RequestSizeLimitMiddleware,
+    verify_twilio_request,
+    sanitize_mongo_query,
+    sanitize_string_input,
+    redact_for_logging,
+    safe_log_error,
+    get_secure_cors_origins,
 )
+from rate_limiting import (
+    limiter,
+    rate_limit_exceeded_handler,
+    LIMIT_AUTH,
+    LIMIT_RESTAURANT_READ,
+    LIMIT_RESTAURANT_WRITE,
+    LIMIT_TWILIO,
+    LIMIT_MENU_READ,
+    LIMIT_MENU_BULK,
+    LIMIT_ANALYTICS,
+    LIMIT_POS_CREDENTIALS,
+    check_ws_connection_limit,
+    register_ws_connection,
+    unregister_ws_connection,
+)
+from encryption_utils import (
+    encrypt_sensitive_fields,
+    decrypt_sensitive_fields,
+    ENCRYPTED_CREDENTIAL_FIELDS,
+    mask_for_display,
+)
+from toast_integration import (
+    sync_menu_from_toast,
+    send_order_to_toast,
+    get_toast_queue_depth,
+    test_toast_connection,
+    clear_toast_token_cache,
+)
+from reservation_service import (
+    ReservationStatus,
+    create_reservation_doc,
+    get_reservation_settings,
+    get_reservation_slots,
+    check_reservation_availability,
+    extract_reservation_from_transcript,
+    dispatch_reservation,
+    build_reservation_prompt_block,
+)
+from eta_service import (
+    calculate_dynamic_eta,
+    format_eta_for_speech,
+    get_item_prep_time,
+)
+
+try:
+    from payment_service import send_order_confirmation_sms
+    _PAYMENT_SERVICE_AVAILABLE = True
+except ImportError:
+    _PAYMENT_SERVICE_AVAILABLE = False
+    logging.getLogger(__name__).warning("payment_service not available — SMS payment links disabled")
+
+try:
+    from auto_learning_service import AutoLearningService, get_learning_service
+    _LEARNING_SERVICE_AVAILABLE = True
+except ImportError:
+    _LEARNING_SERVICE_AVAILABLE = False
+    logging.getLogger(__name__).warning("auto_learning_service not available — AI learning disabled")
+
+from slowapi.errors import RateLimitExceeded
+
+try:
+    from test_mode import (
+        get_test_mode_status,
+        get_test_scenarios,
+        get_scenario_by_id,
+        is_sandbox_mode,
+        SAMPLE_CUSTOMER_SCENARIOS,
+    )
+    _TEST_MODE_AVAILABLE = True
+except ImportError:
+    _TEST_MODE_AVAILABLE = False
+    logging.getLogger(__name__).warning("test_mode not available")
 
 # Create the main app
 app = FastAPI(title="RingAI API", version="1.0.0")
 api_router = APIRouter(prefix="/api")
+
+# Add rate limiting state to app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# CORS middleware MUST be added FIRST (Starlette LIFO means it runs LAST in request, FIRST in response)
+# This ensures preflight OPTIONS requests are handled before other middleware
+cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",") if os.environ.get("CORS_ORIGINS") else ["*"]
+cors_origin_regex = os.environ.get("CORS_ORIGIN_REGEX")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex if cors_origin_regex else None,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add security middleware (runs after CORS)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
 
 @app.on_event("startup")
 async def migrate_businesses_to_typed_collections():
@@ -321,12 +423,19 @@ class RestaurantBase(BaseModel):
     reservation_party_limit: int = 8
 
     # POS integration
-    pos_type: Optional[str] = None  # "clover", "square", or None
+    pos_type: Optional[str] = None  # "clover", "square", "toast", or None
     pos_env: Optional[str] = "sandbox"  # "sandbox" or "production"
     last_pos_sync: Optional[str] = None
     clover_api_token: Optional[str] = None
     clover_merchant_id: Optional[str] = None
     square_access_token: Optional[str] = None
+    square_location_id: Optional[str] = None
+    # Toast POS credentials
+    toast_client_id: Optional[str] = None
+    toast_client_secret: Optional[str] = None
+    toast_restaurant_guid: Optional[str] = None
+    # SMS payment link option
+    prepayment_enabled: bool = False
     # lifecycle
     status: str = "draft"
     onboarding_step: int = 1
@@ -376,6 +485,13 @@ class RestaurantUpdate(BaseModel):
     clover_api_token: Optional[str] = None
     clover_merchant_id: Optional[str] = None
     square_access_token: Optional[str] = None
+    square_location_id: Optional[str] = None
+    # Toast POS credentials
+    toast_client_id: Optional[str] = None
+    toast_client_secret: Optional[str] = None
+    toast_restaurant_guid: Optional[str] = None
+    # SMS payment link option
+    prepayment_enabled: Optional[bool] = None
 
 
 class Restaurant(RestaurantBase):
@@ -489,6 +605,15 @@ class RestaurantConfig(BaseModel):
     slot_capacity: int = 1            # max concurrent bookings per slot
     slot_interval_minutes: int = 30   # minutes between slot start times
 
+    # Reservation settings (restaurants)
+    reservation_max_party_size: int = 8
+    reservation_min_party_size: int = 1
+    reservation_advance_booking_days: int = 30
+    reservation_slot_duration_minutes: int = 90
+    reservation_capacity_per_slot: int = 10
+    reservation_blackout_dates: List[str] = []  # ["2025-12-25", "2026-01-01"]
+    reservation_special_hours: Dict[str, Any] = {}  # {"2025-12-24": {"open": "16:00", "close": "20:00"}}
+
 
 class RestaurantConfigUpdate(BaseModel):
     business_type: Optional[str] = None
@@ -517,6 +642,15 @@ class RestaurantConfigUpdate(BaseModel):
 
     slot_capacity: Optional[int] = None
     slot_interval_minutes: Optional[int] = None
+
+    # Reservation settings (restaurants)
+    reservation_max_party_size: Optional[int] = None
+    reservation_min_party_size: Optional[int] = None
+    reservation_advance_booking_days: Optional[int] = None
+    reservation_slot_duration_minutes: Optional[int] = None
+    reservation_capacity_per_slot: Optional[int] = None
+    reservation_blackout_dates: Optional[List[str]] = None
+    reservation_special_hours: Optional[Dict[str, Any]] = None
 
 
 # ============================================================
@@ -587,6 +721,8 @@ class MenuItemBase(BaseModel):
     allergens: List[str] = []
     image_url: Optional[str] = None
     special_instructions_enabled: bool = True
+    prep_time_minutes: Optional[int] = None  # Item-level prep time for dynamic ETA
+    aliases: List[str] = []  # Auto-learned alternative names (e.g., "coke" → "Coca-Cola")
 
 
 class MenuItemCreate(MenuItemBase):
@@ -603,6 +739,7 @@ class MenuItemUpdate(BaseModel):
     modifier_group_assignments: Optional[List[MenuItemModifierAssignment]] = None
     allergens: Optional[List[str]] = None
     special_instructions_enabled: Optional[bool] = None
+    prep_time_minutes: Optional[int] = None  # Item-level prep time
 
 
 class MenuItem(MenuItemBase):
@@ -1584,6 +1721,308 @@ async def process_reminders(user: Dict[str, Any] = Depends(get_current_user)):
 
 
 # ============================================================
+# RESTAURANT RESERVATION ENDPOINTS
+# ============================================================
+
+@api_router.get("/restaurants/{restaurant_id}/reservations")
+@limiter.limit(LIMIT_RESTAURANT_READ)
+async def list_reservations(
+    request: Request,
+    restaurant_id: str,
+    status: Optional[str] = None,
+    date: Optional[str] = None,  # YYYY-MM-DD
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """List reservations for a restaurant."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    query = {"restaurant_id": restaurant_id}
+    if status:
+        query["status"] = status
+    if date:
+        query["reservation_date"] = date
+    
+    total = await db.reservations.count_documents(query)
+    reservations = await (
+        db.reservations.find(query, {"_id": 0})
+        .sort([("reservation_date", 1), ("reservation_time", 1)])
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
+    )
+    
+    return {
+        "reservations": reservations,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@api_router.get("/reservations/{reservation_id}")
+async def get_reservation(reservation_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Get a single reservation."""
+    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    await ensure_restaurant_access(reservation["restaurant_id"], user)
+    return reservation
+
+
+class ReservationCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    customer_email: Optional[str] = None
+    party_size: int
+    reservation_date: str  # YYYY-MM-DD
+    reservation_time: str  # HH:MM
+    special_requests: Optional[str] = None
+
+
+@api_router.post("/restaurants/{restaurant_id}/reservations")
+@limiter.limit(LIMIT_RESTAURANT_WRITE)
+async def create_reservation(
+    request: Request,
+    restaurant_id: str,
+    data: ReservationCreate,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Create a new reservation."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}) or {}
+    
+    # Check availability
+    availability = await check_reservation_availability(
+        restaurant_id=restaurant_id,
+        date_str=data.reservation_date,
+        time_str=data.reservation_time,
+        party_size=data.party_size,
+        config=config,
+        operating_hours=config.get("operating_hours", {}),
+        db=db,
+        restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+    )
+    
+    if not availability.get("available"):
+        raise HTTPException(
+            status_code=400,
+            detail=availability.get("reason", "Slot not available"),
+        )
+    
+    # Create reservation
+    doc = create_reservation_doc(
+        restaurant_id=restaurant_id,
+        customer_name=sanitize_string_input(data.customer_name, 100),
+        customer_phone=sanitize_string_input(data.customer_phone, 20),
+        customer_email=sanitize_string_input(data.customer_email, 100) if data.customer_email else None,
+        party_size=data.party_size,
+        reservation_date=data.reservation_date,
+        reservation_time=data.reservation_time,
+        special_requests=sanitize_string_input(data.special_requests, 500) if data.special_requests else None,
+    )
+    
+    await db.reservations.insert_one(doc)
+    
+    return {"reservation": doc, "message": "Reservation created successfully"}
+
+
+@api_router.patch("/reservations/{reservation_id}/cancel")
+async def cancel_reservation(reservation_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Cancel a reservation."""
+    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    await ensure_restaurant_access(reservation["restaurant_id"], user)
+    
+    await db.reservations.update_one(
+        {"id": reservation_id},
+        {"$set": {
+            "status": ReservationStatus.CANCELLED,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    
+    return {"message": "Reservation cancelled", "id": reservation_id}
+
+
+@api_router.patch("/reservations/{reservation_id}/confirm")
+async def confirm_reservation(reservation_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Confirm a pending reservation."""
+    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    await ensure_restaurant_access(reservation["restaurant_id"], user)
+    
+    await db.reservations.update_one(
+        {"id": reservation_id},
+        {"$set": {
+            "status": ReservationStatus.CONFIRMED,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    
+    return {"message": "Reservation confirmed", "id": reservation_id}
+
+
+@api_router.get("/restaurants/{restaurant_id}/reservation-slots")
+@limiter.limit(LIMIT_RESTAURANT_READ)
+async def get_reservation_slots_endpoint(
+    request: Request,
+    restaurant_id: str,
+    date: str = Query(..., description="Date in YYYY-MM-DD format"),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get available reservation slots for a specific date."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
+    config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}) or {}
+    
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    
+    slots = await get_reservation_slots(
+        restaurant_id=restaurant_id,
+        date_str=date,
+        config=config,
+        operating_hours=config.get("operating_hours", {}),
+        db=db,
+        restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+    )
+    
+    return {"date": date, "slots": slots}
+
+
+
+
+
+# ============================================================
+# AUTO-LEARNING ENDPOINTS
+# ============================================================
+
+@api_router.get("/restaurants/{restaurant_id}/learning/stats")
+async def get_learning_stats(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get auto-learning statistics for a restaurant."""
+    await ensure_restaurant_access(restaurant_id, user)
+    learning_service = get_learning_service(db)
+    stats = await learning_service.get_learning_stats(restaurant_id)
+    return stats
+
+
+@api_router.get("/restaurants/{restaurant_id}/learning/flagged-calls")
+async def get_flagged_calls(
+    restaurant_id: str,
+    limit: int = Query(10, ge=1, le=50),
+    include_reviewed: bool = Query(False),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get calls flagged for owner review (low quality scores)."""
+    await ensure_restaurant_access(restaurant_id, user)
+    learning_service = get_learning_service(db)
+    calls = await learning_service.get_flagged_calls(
+        restaurant_id, limit, include_reviewed
+    )
+    return {"flagged_calls": calls, "count": len(calls)}
+
+
+@api_router.get("/restaurants/{restaurant_id}/learning/aliases")
+async def get_learned_aliases(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get all auto-learned menu aliases."""
+    await ensure_restaurant_access(restaurant_id, user)
+    learning_service = get_learning_service(db)
+    aliases = await learning_service.get_learned_aliases(restaurant_id)
+    return {"aliases": aliases, "count": len(aliases)}
+
+
+@api_router.get("/restaurants/{restaurant_id}/learning/suggestions")
+async def get_pending_suggestions(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get pending suggestions (aliases not yet applied, rules to review)."""
+    await ensure_restaurant_access(restaurant_id, user)
+    learning_service = get_learning_service(db)
+    suggestions = await learning_service.get_pending_suggestions(restaurant_id)
+    return suggestions
+
+
+class CallReviewAction(BaseModel):
+    action: str  # "correct", "incorrect", "ignore"
+    notes: Optional[str] = None
+
+
+@api_router.post("/learning/flagged-calls/{call_id}/review")
+async def review_flagged_call(
+    call_id: str,
+    review: CallReviewAction,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Mark a flagged call as reviewed."""
+    # Verify access to the call's restaurant
+    flagged = await db.flagged_calls.find_one({"call_id": call_id})
+    if not flagged:
+        raise HTTPException(status_code=404, detail="Flagged call not found")
+    
+    await ensure_restaurant_access(flagged["restaurant_id"], user)
+    
+    learning_service = get_learning_service(db)
+    await learning_service.mark_call_reviewed(
+        call_id, review.action, review.notes
+    )
+    return {"message": "Call marked as reviewed", "action": review.action}
+
+
+@api_router.post("/restaurants/{restaurant_id}/learning/apply-alias")
+async def manually_apply_alias(
+    restaurant_id: str,
+    alias: str = Query(..., description="The alias term (e.g., 'coke')"),
+    target: str = Query(..., description="The target menu item name"),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Manually apply a menu alias (owner override)."""
+    await ensure_restaurant_access(restaurant_id, user)
+    
+    # Find the target menu item
+    menu_item = await db.menu_items.find_one({
+        "restaurant_id": restaurant_id,
+        "name": {"$regex": f"^{target}$", "$options": "i"}
+    })
+    
+    if menu_item:
+        await db.menu_items.update_one(
+            {"_id": menu_item["_id"]},
+            {"$addToSet": {"aliases": alias.lower()}}
+        )
+        return {"success": True, "message": f"Alias '{alias}' added to '{menu_item['name']}'"}
+    else:
+        # Store as global alias
+        await db.menu_aliases.update_one(
+            {"restaurant_id": restaurant_id, "alias": alias.lower()},
+            {"$set": {"target": target, "manual": True, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+        return {"success": True, "message": f"Global alias '{alias}' → '{target}' created"}
+
+
+
+# ============================================================
 # GOOGLE CALENDAR INTEGRATION ENDPOINTS
 # ============================================================
 
@@ -2157,32 +2596,61 @@ async def export_analytics(restaurant_id: str, start_date: str = Query(None), en
 # POS INTEGRATION ENDPOINTS
 # ============================================================
 class POSCredentials(BaseModel):
-    pos_type: str
+    pos_type: str  # "clover", "square", or "toast"
     clover_api_token: Optional[str] = None
     clover_merchant_id: Optional[str] = None
     square_access_token: Optional[str] = None
+    square_location_id: Optional[str] = None
+    toast_client_id: Optional[str] = None
+    toast_client_secret: Optional[str] = None
+    toast_restaurant_guid: Optional[str] = None
 
 @api_router.post("/restaurants/{restaurant_id}/pos/credentials")
-async def save_pos_credentials(restaurant_id: str, data: POSCredentials, user: Dict[str, Any] = Depends(get_current_user)):
+@limiter.limit(LIMIT_POS_CREDENTIALS)
+async def save_pos_credentials(request: Request, restaurant_id: str, data: POSCredentials, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
     coll = get_business_collection(business_type)
+    
     update = {"pos_type": data.pos_type}
+    
+    # Encrypt credentials before storage
     if data.clover_api_token:
-        update["clover_api_token"] = data.clover_api_token
+        from encryption_utils import encrypt_value
+        update["clover_api_token"] = encrypt_value(data.clover_api_token)
     if data.clover_merchant_id:
-        update["clover_merchant_id"] = data.clover_merchant_id
+        from encryption_utils import encrypt_value
+        update["clover_merchant_id"] = encrypt_value(data.clover_merchant_id)
     if data.square_access_token:
-        update["square_access_token"] = data.square_access_token
+        from encryption_utils import encrypt_value
+        update["square_access_token"] = encrypt_value(data.square_access_token)
+    if data.square_location_id:
+        from encryption_utils import encrypt_value
+        update["square_location_id"] = encrypt_value(data.square_location_id)
+    if data.toast_client_id:
+        from encryption_utils import encrypt_value
+        update["toast_client_id"] = encrypt_value(data.toast_client_id)
+    if data.toast_client_secret:
+        from encryption_utils import encrypt_value
+        update["toast_client_secret"] = encrypt_value(data.toast_client_secret)
+    if data.toast_restaurant_guid:
+        from encryption_utils import encrypt_value
+        update["toast_restaurant_guid"] = encrypt_value(data.toast_restaurant_guid)
+    
     await coll.update_one({"id": restaurant_id}, {"$set": update})
+    
+    # Clear cached tokens when credentials change
+    clear_toast_token_cache(restaurant_id)
+    
     return {"success": True}
 
 # ============================================================
 # POS SYNC ENDPOINT
 # ============================================================
 @api_router.post("/restaurants/{restaurant_id}/pos/sync")
-async def pos_sync_menu(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+@limiter.limit(LIMIT_MENU_BULK)
+async def pos_sync_menu(request: Request, restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     await ensure_restaurant_access(restaurant_id, user)
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
@@ -2190,13 +2658,63 @@ async def pos_sync_menu(restaurant_id: str, user: Dict[str, Any] = Depends(get_c
     restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-    result = await sync_menu_from_pos(restaurant_id, restaurant, db)
+    
+    # Decrypt POS credentials before use
+    try:
+        from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
+        restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
+    except Exception:
+        pass
+    
+    pos_type = restaurant.get("pos_type", "")
+    
+    # Route to correct POS sync function
+    if pos_type == "toast":
+        result = await sync_menu_from_toast(restaurant_id, db, restaurant)
+    else:
+        result = await sync_menu_from_pos(restaurant_id, restaurant, db)
+    
     if result.get("success"):
         await coll.update_one(
             {"id": restaurant_id},
             {"$set": {"last_pos_sync": datetime.now(timezone.utc).isoformat()}}
         )
     return result
+
+# ============================================================
+# POS TEST CONNECTION ENDPOINT
+# ============================================================
+@api_router.post("/restaurants/{restaurant_id}/pos/test")
+@limiter.limit(LIMIT_POS_CREDENTIALS)
+async def test_pos_connection(request: Request, restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Test POS connection with current credentials."""
+    await ensure_restaurant_access(restaurant_id, user)
+    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    coll = get_business_collection(business_type)
+    restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    
+    pos_type = restaurant.get("pos_type", "")
+    
+    if pos_type == "toast":
+        from encryption_utils import decrypt_value
+        result = await test_toast_connection(
+            client_id=decrypt_value(restaurant.get("toast_client_id", "")),
+            client_secret=decrypt_value(restaurant.get("toast_client_secret", "")),
+            restaurant_guid=decrypt_value(restaurant.get("toast_restaurant_guid", "")),
+            env=restaurant.get("pos_env", "sandbox"),
+        )
+        return result
+    elif pos_type == "clover":
+        # Placeholder for Clover test
+        return {"success": True, "message": "Clover connection test not yet implemented"}
+    elif pos_type == "square":
+        # Placeholder for Square test
+        return {"success": True, "message": "Square connection test not yet implemented"}
+    else:
+        return {"success": False, "error": "No POS type configured"}
 
 # ============================================================
 # ONBOARDING ENDPOINTS
@@ -2360,6 +2878,42 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
     config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     system_prompt = None
     if config and is_gemini_available():
+        # Get reservation settings if enabled
+        reservations_enabled = restaurant.get("reservations_enabled", config.get("reservations_enabled", False))
+        reservation_settings = None
+        available_slots = None
+        
+        if reservations_enabled:
+            reservation_settings = {
+                "max_party_size": config.get("reservation_max_party_size", 8),
+                "advance_booking_days": config.get("reservation_advance_booking_days", 30),
+            }
+            # Get next 7 days of available slots
+            try:
+                from reservation_service import get_reservation_slots
+                from datetime import date, timedelta
+                import pytz
+                tz = pytz.timezone(restaurant.get("timezone", "America/Chicago"))
+                local_today = datetime.now(tz).date()
+                all_slots = []
+                for day_offset in range(7):
+                    d = local_today + timedelta(days=day_offset)
+                    day_slots = await get_reservation_slots(
+                        restaurant_id=restaurant_id,
+                        date_str=d.isoformat(),
+                        config=config,
+                        operating_hours=config.get("operating_hours", {}),
+                        db=db,
+                        restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+                    )
+                    for s in day_slots:
+                        s["date"] = d.isoformat()
+                        s["day_label"] = d.strftime("%A %b %d")
+                    all_slots.extend(day_slots)
+                available_slots = all_slots
+            except Exception as e:
+                logger.warning(f"Could not get reservation slots: {e}")
+        
         system_prompt = build_system_prompt(
             restaurant_name=restaurant_name,
             cuisine_type=restaurant.get("cuisine_type", ""),
@@ -2373,6 +2927,9 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
             delivery_minimum=config.get("delivery_minimum", 1500),
             restaurant_timezone=restaurant.get("timezone", "UTC"),
             restaurant_address=restaurant.get("address"),
+            reservations_enabled=reservations_enabled,
+            reservation_settings=reservation_settings,
+            available_reservation_slots=available_slots,
         )
 
     transcript = []
@@ -2826,17 +3383,17 @@ async def send_menu_sms_endpoint(
 
 
 @api_router.post("/twilio/incoming")
+@limiter.limit(LIMIT_TWILIO)
 async def twilio_incoming_call(request: Request):
     # ── Security: validate request is genuinely from Twilio ──
     backend_url = get_backend_public_url()
     if "localhost" not in backend_url and "127.0.0.1" not in backend_url:
-        sig = request.headers.get("X-Twilio-Signature", "")
-        full_url = str(request.url)
-        form_dict = dict(await request.form())
-        if not validate_twilio_request(full_url, form_dict, sig):
-            logger.warning(f"Rejected forged Twilio request from {request.client.host}")
+        # Use enhanced Twilio validation
+        is_valid = await verify_twilio_request(request)
+        if not is_valid:
+            logger.warning(f"Rejected forged Twilio request from {request.client.host if request.client else 'unknown'}")
             return Response(status_code=403, content="Forbidden")
-        form = form_dict
+        form = dict(await request.form())
     else:
         form = await request.form()
 
@@ -2927,6 +3484,43 @@ async def twilio_incoming_call(request: Request):
 
     # Use system prompt router for correct prompt by business type
     from gemini_service import get_system_prompt
+    
+    # Pre-fetch reservation availability for restaurants
+    reservations_enabled = restaurant.get("reservations_enabled", config.get("reservations_enabled", False) if config else False)
+    reservation_settings = None
+    available_reservation_slots = None
+    
+    if reservations_enabled and business_type == "restaurant":
+        reservation_settings = {
+            "max_party_size": config.get("reservation_max_party_size", 8) if config else 8,
+            "advance_booking_days": config.get("reservation_advance_booking_days", 30) if config else 30,
+        }
+        try:
+            from reservation_service import get_reservation_slots
+            from datetime import date, timedelta
+            import pytz
+            tz = pytz.timezone(restaurant.get("timezone", "America/Chicago"))
+            local_today = datetime.now(tz).date()
+            all_slots = []
+            for day_offset in range(7):
+                d = local_today + timedelta(days=day_offset)
+                day_slots = await get_reservation_slots(
+                    restaurant_id=restaurant_id,
+                    date_str=d.isoformat(),
+                    config=config or {},
+                    operating_hours=config.get("operating_hours", {}) if config else {},
+                    db=db,
+                    restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+                )
+                for s in day_slots:
+                    s["date"] = d.isoformat()
+                    s["day_label"] = d.strftime("%A %b %d")
+                all_slots.extend(day_slots)
+            available_reservation_slots = all_slots
+            logger.info(f"[{call_sid}] Reservation slots pre-fetched: {len(available_reservation_slots)} slots (7 days)")
+        except Exception as e:
+            logger.warning(f"[{call_sid}] Reservation slots pre-fetch failed: {e}")
+    
     system_prompt = get_system_prompt(
         business_type=business_type,
         customer_profile=customer_profile,
@@ -2947,6 +3541,9 @@ async def twilio_incoming_call(request: Request):
         restaurant_address=restaurant.get("address"),
         services=services,
         cached_availability=cached_availability,
+        reservations_enabled=reservations_enabled,
+        reservation_settings=reservation_settings,
+        available_reservation_slots=available_reservation_slots,
     )
 
     await db.active_calls.update_one(
@@ -3152,6 +3749,13 @@ async def twilio_media_stream(websocket: WebSocket):
         restaurant = active_call.get("restaurant", {})
         config = active_call.get("config", {})
         menu_items = active_call.get("menu_items", [])
+
+        # ── Decrypt POS credentials before entering the pipeline ──
+        try:
+            from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
+            restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
+        except Exception:
+            pass  # If encryption module unavailable, credentials are plaintext — proceed normally
 
         # ── Create isolated call session for order tracking ──
         services = active_call.get("services", [])
@@ -3528,6 +4132,24 @@ async def reanalyse_call(call_id: str, user: Dict[str, Any] = Depends(get_curren
         {"id": call_id},
         {"$set": {"analysis_json": analysis, "quality_score": analysis.get("quality_score")}},
     )
+    
+    # Feed analysis to auto-learning service
+    try:
+        learning_service = get_learning_service(db)
+        order_completed = call.get("order_json") is not None
+        order_total = call.get("order_json", {}).get("total", 0) if order_completed else 0
+        
+        learning_result = await learning_service.process_call_analysis(
+            restaurant_id=call.get("restaurant_id", ""),
+            call_id=call_id,
+            analysis=analysis,
+            order_completed=order_completed,
+            order_total=order_total,
+        )
+        analysis["learning_actions"] = learning_result
+    except Exception as e:
+        logger.warning(f"Auto-learning processing failed: {e}")
+    
     return {"message": "Analysis complete", "analysis": analysis}
 
 
@@ -3676,6 +4298,19 @@ async def run_test_scenario(
     } if order_items else None
 
     analysis = await analyse_call_transcript(transcript, order_json, menu_items)
+    
+    # Feed to auto-learning
+    try:
+        learning_service = get_learning_service(db)
+        await learning_service.process_call_analysis(
+            restaurant_id=restaurant_id,
+            call_id=f"test_{uuid.uuid4().hex[:8]}",
+            analysis=analysis,
+            order_completed=order_json is not None,
+            order_total=total,
+        )
+    except Exception as e:
+        logger.warning(f"Auto-learning failed for test call: {e}")
 
     now = datetime.now(timezone.utc)
     call = CallRecord(
@@ -3724,23 +4359,7 @@ async def cloudflare_security_middleware(request: Request, call_next):
     return await call_next(request)
 
 # ============================================================
-# CORS MIDDLEWARE
-# ============================================================
-
-cors_origins = get_cors_origins()
-cors_origin_regex = os.environ.get("CORS_ORIGIN_REGEX")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=cors_origins,
-    allow_origin_regex=cors_origin_regex if cors_origin_regex else None,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ============================================================
-# INCLUDE ROUTER
+# INCLUDE ROUTER (CORS already added at startup for correct middleware order)
 # ============================================================
 
 app.include_router(api_router)

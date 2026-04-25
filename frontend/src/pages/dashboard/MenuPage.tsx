@@ -25,6 +25,7 @@ const defaultItem = {
   description: "",
   category: "Appetizers",
   price: 0,
+  prep_time_minutes: 0,
   available: true,
   allergens: [] as string[],
   modifiers: [] as any[],
@@ -680,6 +681,17 @@ const MenuPage = () => {
                     onChange={(e) => setFormData((p: any) => ({ ...p, price: Math.round(parseFloat(e.target.value || "0") * 100) }))}
                     className="h-9"
                   />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Prep Time (min)</Label>
+                  <Input
+                    type="number" min={0} step={1}
+                    value={formData.prep_time_minutes || 0}
+                    onChange={(e) => setFormData((p: any) => ({ ...p, prep_time_minutes: parseInt(e.target.value || "0") || 0 }))}
+                    placeholder="0 = default"
+                    className="h-9"
+                  />
+                  <p className="text-xs text-muted-foreground">Leave at 0 to use restaurant default. Set for slow items like Biryani (25 min).</p>
                 </div>
               </div>
 

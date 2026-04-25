@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube, CalendarDays, Store } from "lucide-react";
-import { savePOSCredentials } from "@/lib/api";
+import { CheckCircle2, CreditCard, Key, Phone, ShieldAlert, Sparkles, TestTube, CalendarDays, Store, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
@@ -16,7 +15,29 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
   const [cloverToken, setCloverToken] = useState("");
   const [cloverMid, setCloverMid] = useState("");
   const [squareToken, setSquareToken] = useState("");
+  const [squareLocationId, setSquareLocationId] = useState("");
+  const [toastClientId, setToastClientId] = useState("");
+  const [toastClientSecret, setToastClientSecret] = useState("");
+  const [toastRestaurantGuid, setToastRestaurantGuid] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
+
+  const handleTest = async () => {
+    try {
+      setTesting(true);
+      setTestResult(null);
+      const res = await testPOSConnection(restaurantId);
+      setTestResult(res.data);
+      if (res.data.success) toast.success("POS connection successful!");
+      else toast.error(res.data.error || "Connection failed");
+    } catch {
+      setTestResult({ success: false, message: "Connection test failed" });
+      toast.error("Connection test failed");
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleSave = async () => {
     try {
@@ -27,6 +48,10 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
         clover_api_token: cloverToken || undefined,
         clover_merchant_id: cloverMid || undefined,
         square_access_token: squareToken || undefined,
+        square_location_id: squareLocationId || undefined,
+        toast_client_id: toastClientId || undefined,
+        toast_client_secret: toastClientSecret || undefined,
+        toast_restaurant_guid: toastRestaurantGuid || undefined,
       }, restaurantId);
       toast.success("POS credentials saved");
     } catch {
@@ -45,39 +70,81 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
       <p className="text-sm text-muted-foreground">Connect your Point of Sale system to sync your menu automatically.</p>
       <div className="space-y-2">
         <Label>POS System</Label>
-        <select value={posType} onChange={e => setPosType(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
-        <option value="clover">Clover</option>
-        <option value="square">Square</option>
-      </select>
+        <select value={posType} onChange={e => { setPosType(e.target.value); setTestResult(null); }} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
+          <option value="clover">Clover</option>
+          <option value="square">Square</option>
+          <option value="toast">Toast</option>
+        </select>
+      </div>
       <div className="space-y-2">
         <Label>Environment</Label>
         <select value={posEnv} onChange={e => setPosEnv(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
           <option value="sandbox">Sandbox (Testing)</option>
-          <option value="production">Production</option>
+          <option value="production">Production (Live)</option>
         </select>
+        <p className="text-xs text-muted-foreground">Use Sandbox for testing. Switch to Production only when you have live POS credentials.</p>
       </div>
-      </div>
+
       {posType === "clover" && (
         <>
           <div className="space-y-2">
-            <Label>Clover API Token</Label>
+            <Label>API Token</Label>
             <Input value={cloverToken} onChange={e => setCloverToken(e.target.value)} placeholder="Enter Clover API token" type="password" className="rounded-xl" />
           </div>
           <div className="space-y-2">
-            <Label>Clover Merchant ID</Label>
-            <Input value={cloverMid} onChange={e => setCloverMid(e.target.value)} placeholder="Enter Clover Merchant ID" className="rounded-xl" />
+            <Label>Merchant ID</Label>
+            <Input value={cloverMid} onChange={e => setCloverMid(e.target.value)} placeholder="e.g. BP79YX4YNBJW1" className="rounded-xl" />
           </div>
+          <p className="text-xs text-muted-foreground">Find these in your Clover Developer Dashboard → App Settings → API Credentials.</p>
         </>
       )}
+
       {posType === "square" && (
-        <div className="space-y-2">
-          <Label>Square Access Token</Label>
-          <Input value={squareToken} onChange={e => setSquareToken(e.target.value)} placeholder="Enter Square Access Token" type="password" className="rounded-xl" />
+        <>
+          <div className="space-y-2">
+            <Label>Access Token</Label>
+            <Input value={squareToken} onChange={e => setSquareToken(e.target.value)} placeholder="Enter Square Access Token" type="password" className="rounded-xl" />
+          </div>
+          <div className="space-y-2">
+            <Label>Location ID</Label>
+            <Input value={squareLocationId} onChange={e => setSquareLocationId(e.target.value)} placeholder="Enter Square Location ID" className="rounded-xl" />
+          </div>
+          <p className="text-xs text-muted-foreground">Find these in your Square Developer Dashboard → Applications → Credentials.</p>
+        </>
+      )}
+
+      {posType === "toast" && (
+        <>
+          <div className="space-y-2">
+            <Label>Client ID</Label>
+            <Input value={toastClientId} onChange={e => setToastClientId(e.target.value)} placeholder="Enter Toast Client ID" className="rounded-xl" />
+          </div>
+          <div className="space-y-2">
+            <Label>Client Secret</Label>
+            <Input value={toastClientSecret} onChange={e => setToastClientSecret(e.target.value)} placeholder="Enter Toast Client Secret" type="password" className="rounded-xl" />
+          </div>
+          <div className="space-y-2">
+            <Label>Restaurant GUID</Label>
+            <Input value={toastRestaurantGuid} onChange={e => setToastRestaurantGuid(e.target.value)} placeholder="Enter Toast Restaurant GUID" className="rounded-xl" />
+          </div>
+          <p className="text-xs text-muted-foreground">Find Client ID and Secret in Toast Developer Portal → Credentials. Restaurant GUID is in Toast Web → Admin → General.</p>
+        </>
+      )}
+
+      {testResult && (
+        <div className={`text-sm p-2 rounded-lg ${testResult.success ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+          {testResult.success ? "✓ Connection successful" : `✗ ${testResult.message || "Connection failed"}`}
         </div>
       )}
-      <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
-        {saving ? "Saving..." : "Save POS Credentials"}
-      </Button>
+
+      <div className="flex gap-2">
+        <Button variant="outline" onClick={handleTest} disabled={testing} className="rounded-xl flex-1">
+          {testing ? <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Testing...</> : "Test Connection"}
+        </Button>
+        <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90 flex-1">
+          {saving ? "Saving..." : "Save Credentials"}
+        </Button>
+      </div>
     </Card>
   );
 }

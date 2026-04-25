@@ -271,4 +271,38 @@ export const getCalendarAvailability = (restaurantId: string | null | undefined,
   api.get(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/availability`, {
     params: { date, service_id: serviceId },
   });
+
+// ── Reservations ──
+export const getReservations = (restaurantId?: string | null, params?: Record<string, unknown>) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/reservations`, { params });
+
+export const updateReservation = (restaurantId: string | null | undefined, reservationId: string, data: unknown) =>
+  api.patch(`/restaurants/${requireRestaurantId(restaurantId)}/reservations/${reservationId}`, data);
+
+export const deleteReservation = (restaurantId: string | null | undefined, reservationId: string) =>
+  api.delete(`/restaurants/${requireRestaurantId(restaurantId)}/reservations/${reservationId}`);
+
+export const getReservationSlots = (restaurantId: string | null | undefined, date: string) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/reservations/slots`, { params: { date } });
+
+// ── POS Test Connection ──
+export const testPOSConnection = (id?: string | null) =>
+  api.post(`/restaurants/${requireRestaurantId(id)}/pos/test`);
+
+// ── AI Learning ──
+export const getLearningStats = (restaurantId?: string | null) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/learning/stats`);
+
+export const getLearningAliases = (restaurantId?: string | null) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/learning/aliases`);
+
+export const approveLearningAlias = (restaurantId: string | null | undefined, aliasId: string) =>
+  api.post(`/restaurants/${requireRestaurantId(restaurantId)}/learning/aliases/${aliasId}/approve`);
+
+export const rejectLearningAlias = (restaurantId: string | null | undefined, aliasId: string) =>
+  api.post(`/restaurants/${requireRestaurantId(restaurantId)}/learning/aliases/${aliasId}/reject`);
+
+export const getFlaggedCalls = (restaurantId?: string | null) =>
+  api.get(`/restaurants/${requireRestaurantId(restaurantId)}/learning/flagged-calls`);
+
 export default api;
