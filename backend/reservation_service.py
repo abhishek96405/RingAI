@@ -13,6 +13,7 @@ Part of Prompt 1 - Voice-Based Reservation System
 import os
 import logging
 import json
+from datetime import datetime, timezone, timedelta
 from datetime import datetime, timezone, timedelta, date as _date
 from typing import Dict, Any, Optional, List
 import re
@@ -344,15 +345,15 @@ async def extract_reservation_from_transcript(
 Return ONLY valid JSON, no markdown, no code blocks.
 
 Required JSON format:
-{{"reservation_confirmed":true,"customer_name":"John Smith","party_size":4,"date":"2025-01-20","time":"18:30","special_requests":"window seat"}}
+{{"reservation_confirmed":true,"customer_name":"John Smith","party_size":4,"date":"2025-01-20","time":"6:30 PM","special_requests":"window seat"}}
 
 RULES:
-- reservation_confirmed: true only if the AI confirmed the booking
+- reservation_confirmed: true only if the AI explicitly confirmed the booking
 - customer_name: exactly as spoken (romanize if in another script)
 - party_size: integer number of guests
-- date: YYYY-MM-DD format
-- time: HH:MM 24-hour format
-- special_requests: any special requests mentioned, or null
+- date: YYYY-MM-DD format. Convert relative dates using today's date (today is {datetime.now().strftime("%Y-%m-%d")}). "28th" means the 28th of the current month.
+- time: use 12-hour format with AM/PM (e.g. "4:30 PM", "7:00 PM")
+- special_requests: any special requests mentioned, or empty string if none
 
 If no confirmed reservation found, return: {{"reservation_confirmed":false}}
 
@@ -368,6 +369,7 @@ JSON:"""
             max_tokens=500,
         )
         raw = resp.choices[0].message.content.strip()
+        logger.info(f"Reservation extraction raw response: {raw}")
         
         data = json.loads(_repair_json(raw))
         
@@ -379,7 +381,7 @@ JSON:"""
             "party_size": int(data.get("party_size", 2)),
             "reservation_date": data.get("date", ""),
             "reservation_time": data.get("time", ""),
-            "special_requests": data.get("special_requests"),
+            "special_requests": data.get("special_requests") or "",
         }
         
     except Exception as e:
