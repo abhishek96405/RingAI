@@ -421,6 +421,9 @@ class RestaurantBase(BaseModel):
     catering_enabled: bool = False
     avg_prep_time_minutes: int = 20
     reservation_party_limit: int = 8
+    reservation_slot_duration: int = 30
+    reservation_max_per_slot: int = 5
+    reservation_advance_booking_days: int = 7
 
     # POS integration
     pos_type: Optional[str] = None  # "clover", "square", "toast", or None
@@ -468,6 +471,9 @@ class RestaurantUpdate(BaseModel):
     catering_enabled: Optional[bool] = None
     avg_prep_time_minutes: Optional[int] = None
     reservation_party_limit: Optional[int] = None
+    reservation_slot_duration: Optional[int] = None
+    reservation_max_per_slot: Optional[int] = None
+    reservation_advance_booking_days: Optional[int] = None
 
     status: Optional[str] = None
     onboarding_step: Optional[int] = None
@@ -1899,8 +1905,8 @@ async def get_reservation_slots_endpoint(
         operating_hours=config.get("operating_hours", {}),
         db=db,
         restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+        restaurant=restaurant,
     )
-    
     return {"date": date, "slots": slots}
 
 
@@ -2905,6 +2911,7 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
                         operating_hours=config.get("operating_hours", {}),
                         db=db,
                         restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+                        restaurant=restaurant,
                     )
                     for s in day_slots:
                         s["date"] = d.isoformat()
@@ -3511,6 +3518,7 @@ async def twilio_incoming_call(request: Request):
                     operating_hours=config.get("operating_hours", {}) if config else {},
                     db=db,
                     restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+                    restaurant=restaurant,
                 )
                 for s in day_slots:
                     s["date"] = d.isoformat()

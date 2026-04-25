@@ -83,16 +83,24 @@ DEFAULT_RESERVATION_SETTINGS = {
 }
 
 
-def get_reservation_settings(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Get reservation settings from config with defaults."""
+def get_reservation_settings(config: Dict[str, Any], restaurant: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Get reservation settings from restaurant document and config with defaults."""
     settings = dict(DEFAULT_RESERVATION_SETTINGS)
-    
-    # Merge with config values
+    # Merge with config values first
     if config:
         for key in settings:
             if key in config:
                 settings[key] = config[key]
-    
+    # Restaurant document overrides config (restaurant fields are source of truth)
+    if restaurant:
+        if restaurant.get("reservation_slot_duration"):
+            settings["slot_interval_minutes"] = restaurant["reservation_slot_duration"]
+        if restaurant.get("reservation_max_per_slot"):
+            settings["capacity_per_slot"] = restaurant["reservation_max_per_slot"]
+        if restaurant.get("reservation_advance_booking_days"):
+            settings["advance_booking_days"] = restaurant["reservation_advance_booking_days"]
+        if restaurant.get("reservation_party_limit"):
+            settings["max_party_size"] = restaurant["reservation_party_limit"]
     return settings
 
 
@@ -106,7 +114,8 @@ async def get_reservation_slots(
     config: Dict[str, Any],
     operating_hours: Dict[str, Any],
     db,
-    restaurant_timezone: str = "America/Chicago"
+    restaurant_timezone: str = "America/Chicago",
+    restaurant: Dict[str, Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Get available reservation slots for a date.
@@ -119,8 +128,8 @@ async def get_reservation_slots(
     """
     import pytz
     
-    settings = get_reservation_settings(config)
-    
+    settings = get_reservation_settings(config, restaurant)
+
     if not settings.get("reservations_enabled", True):
         return []
     
@@ -224,15 +233,16 @@ async def check_reservation_availability(
     config: Dict[str, Any],
     operating_hours: Dict[str, Any],
     db,
-    restaurant_timezone: str = "America/Chicago"
+    restaurant_timezone: str = "America/Chicago",
+    restaurant: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     Check if a specific reservation slot is available.
-    
+
     Returns:
         Dict with available: bool, and either confirmation or suggested_times
     """
-    settings = get_reservation_settings(config)
+    settings = get_reservation_settings(config, restaurant)
     
     # Validate party size
     max_party = settings.get("max_party_size", 8)

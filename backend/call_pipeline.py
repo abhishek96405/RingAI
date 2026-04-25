@@ -451,7 +451,8 @@ class CallSession:
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
         
-        # Schedule hangup after reservation confirmed
+        # Schedule hangup after reservation confirmed — delay so AI finishes speaking
+        await asyncio.sleep(2.0)
         await self._schedule_hangup(reason="reservation_confirmed")
 
     # ------------------------------------------------------------------
