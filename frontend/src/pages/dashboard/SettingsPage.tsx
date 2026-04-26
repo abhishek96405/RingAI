@@ -159,17 +159,12 @@ const SettingsPage = () => {
         payload.reservation_party_limit = Number(restaurant?.reservation_party_limit || 0);
       }
 
-      await updateRestaurant(restaurantId, payload);
-
-      // Save reservation config if enabled
       if (restaurant?.reservations_enabled) {
-        await updateConfig(restaurantId, {
-          ...config,
-          reservation_max_per_slot: config?.reservation_max_per_slot,
-          reservation_slot_duration: config?.reservation_slot_duration,
-          reservation_advance_booking_days: config?.reservation_advance_booking_days,
-        });
+        payload.reservation_slot_duration = Number(restaurant?.reservation_slot_duration || 30);
+        payload.reservation_max_per_slot = Number(restaurant?.reservation_max_per_slot || 5);
+        payload.reservation_advance_booking_days = Number(restaurant?.reservation_advance_booking_days || 7);
       }
+      await updateRestaurant(restaurantId, payload);
 
       await refreshSession(restaurantId);
       toast.success(`${getBusinessLabel(businessType)} info saved!`);
@@ -342,16 +337,16 @@ const SettingsPage = () => {
                     <Label className="text-xs">Max Reservations Per Slot</Label>
                     <Input
                       type="number" min={1} max={50}
-                      value={config?.reservation_max_per_slot || 5}
-                      onChange={(e) => setConfig({ ...config, reservation_max_per_slot: parseInt(e.target.value) || 5 })}
+                      value={restaurant?.reservation_max_per_slot || 5}
+                      onChange={(e) => setRestaurant({ ...restaurant, reservation_max_per_slot: parseInt(e.target.value) || 5 })}
                       className="h-9"
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">Slot Duration (minutes)</Label>
                     <select
-                      value={config?.reservation_slot_duration || 30}
-                      onChange={(e) => setConfig({ ...config, reservation_slot_duration: parseInt(e.target.value) })}
+                      value={restaurant?.reservation_slot_duration || 30}
+                      onChange={(e) => setRestaurant({ ...restaurant, reservation_slot_duration: parseInt(e.target.value) })}
                       className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm"
                     >
                       <option value={15}>15 min</option>
@@ -364,8 +359,8 @@ const SettingsPage = () => {
                     <Label className="text-xs">Advance Booking Days</Label>
                     <Input
                       type="number" min={1} max={90}
-                      value={config?.reservation_advance_booking_days || 7}
-                      onChange={(e) => setConfig({ ...config, reservation_advance_booking_days: parseInt(e.target.value) || 7 })}
+                      value={restaurant?.reservation_advance_booking_days || 7}
+                      onChange={(e) => setRestaurant({ ...restaurant, reservation_advance_booking_days: parseInt(e.target.value) || 7 })}
                       className="h-9"
                     />
                   </div>
