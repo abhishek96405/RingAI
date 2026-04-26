@@ -953,6 +953,10 @@ def build_system_prompt(
     upsell_enabled: bool = True,
     delivery_enabled: bool = True,
     delivery_minimum: int = 1500,
+    delivery_fee: int = 0,
+    delivery_zip_codes: List[str] = None,
+    delivery_radius_miles: float = 5.0,
+    delivery_eta_offset_minutes: int = 15,
     avg_prep_time_minutes: int = 20,
     escalation_phone: Optional[str] = None,
     operating_hours: Optional[Dict] = None,
@@ -1022,11 +1026,22 @@ def build_system_prompt(
     menu_examples = generate_menu_examples(menu_index)
     rules_block = "\n".join(f"  • {r}" for r in business_rules) if business_rules else "  • (No additional rules)"
     escalation_block = "\n".join(f"  ⚠ {r}" for r in escalation_rules) if escalation_rules else "  ⚠ Customer requests a manager\n  ⚠ Food safety complaint or allergic reaction"
-    delivery_section = (
-        f"DELIVERY: Available. Minimum order: ${delivery_minimum/100:.2f}. Collect full street address."
-        if delivery_enabled else
-        "DELIVERY: Not available. Pickup only."
-    )
+    if delivery_enabled:
+        _fee_text = f"Delivery fee: ${delivery_fee/100:.2f}." if delivery_fee > 0 else "Free delivery."
+        _min_text = f"Minimum order: ${delivery_minimum/100:.2f}."
+        _zip_list = ", ".join(delivery_zip_codes) if delivery_zip_codes else "all areas"
+        delivery_section = f"""DELIVERY: Available.
+  {_min_text} {_fee_text}
+  Delivery zip codes: {_zip_list}
+  If customer gives a delivery address, check if their zip code is in the list above.
+  If NOT in the list: "I'm sorry, we don't deliver to that area. Our delivery covers zip codes {_zip_list}. Would you like to place a pickup order instead?"
+  If in the list: proceed with the order.
+  Always collect the FULL street address including apartment/unit number and zip code.
+  Delivery ETA = prep time + {delivery_eta_offset_minutes} minutes extra for delivery.
+  If customer asks about delivery fee: mention the fee amount.
+  If order is below minimum: "Our delivery minimum is ${delivery_minimum/100:.2f}. Would you like to add anything else, or switch to pickup?" """
+    else:
+        delivery_section = "DELIVERY: Not available. Pickup only."
     upsell_section = (
         """UPSELL: After the customer finishes ordering (STEP 2), suggest ONE complementary item before asking for their name.
   - Suggest ONLY ONE item — never two options, never "X or Y"

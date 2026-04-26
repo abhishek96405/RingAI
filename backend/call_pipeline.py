@@ -562,6 +562,47 @@ class CallSession:
                 )
                 return False
 
+        # Post-call delivery address validation (distance check)
+        if self.order.order_type == "delivery" and self.order.delivery_address:
+            try:
+                from delivery_utils import validate_delivery_distance
+                validation = await validate_delivery_distance(
+                    restaurant_address=self.restaurant.get("address", ""),
+                    delivery_address=self.order.delivery_address,
+                    max_radius_miles=self.restaurant.get("delivery_radius_miles", 5.0),
+                )
+                if not validation.get("within_radius"):
+                    logger.warning(
+                        f"[{self.call_sid}] Delivery address outside radius: "
+                        f"{validation.get('distance_miles', '?')} miles"
+                    )
+                    # Send apology SMS
+                    try:
+                        from twilio.rest import Client as TwilioClient
+                        import os
+                        client = TwilioClient(
+                            os.environ.get("TWILIO_ACCOUNT_SID"),
+                            os.environ.get("TWILIO_AUTH_TOKEN"),
+                        )
+                        client.messages.create(
+                            body=(
+                                f"Sorry, {self.restaurant.get('name', 'the restaurant')} "
+                                f"cannot deliver to your address — it's outside our delivery area "
+                                f"({validation.get('distance_miles', '?')} miles, max {self.restaurant.get('delivery_radius_miles', 5)} miles). "
+                                f"Please call back to place a pickup order instead."
+                            ),
+                            from_=os.environ.get("TWILIO_PHONE_NUMBER"),
+                            to=self.caller_number,
+                        )
+                    except Exception as sms_err:
+                        logger.error(f"[{self.call_sid}] Delivery rejection SMS error: {sms_err}")
+                    self._order_dispatched = False
+                    return False
+                logger.info(f"[{self.call_sid}] Delivery address validated: {validation.get('distance_miles')} miles")
+            except Exception as e:
+                logger.warning(f"[{self.call_sid}] Delivery validation skipped: {e}")
+                # Proceed anyway — don't block order if validation service fails
+
         self._order_dispatched = True
         result = await send_order_to_kitchen(self.order, self.restaurant)
         if result["success"]:

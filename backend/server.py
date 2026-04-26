@@ -416,6 +416,10 @@ class RestaurantBase(BaseModel):
     # operations
     pickup_enabled: bool = True
     delivery_enabled: bool = True
+    delivery_fee: int = 0
+    delivery_radius_miles: float = 5.0
+    delivery_zip_codes: List[str] = []
+    delivery_eta_offset_minutes: int = 15
     dine_in_enabled: bool = True
     reservations_enabled: bool = False
     catering_enabled: bool = False
@@ -466,6 +470,10 @@ class RestaurantUpdate(BaseModel):
 
     pickup_enabled: Optional[bool] = None
     delivery_enabled: Optional[bool] = None
+    delivery_fee: Optional[int] = None
+    delivery_radius_miles: Optional[float] = None
+    delivery_zip_codes: Optional[List[str]] = None
+    delivery_eta_offset_minutes: Optional[int] = None
     dine_in_enabled: Optional[bool] = None
     reservations_enabled: Optional[bool] = None
     catering_enabled: Optional[bool] = None
@@ -2932,6 +2940,10 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
             upsell_enabled=config.get("upsell_enabled", True),
             delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True)),
             delivery_minimum=config.get("delivery_minimum", 1500),
+            delivery_fee=restaurant.get("delivery_fee", 0),
+            delivery_zip_codes=restaurant.get("delivery_zip_codes", []),
+            delivery_radius_miles=restaurant.get("delivery_radius_miles", 5.0),
+            delivery_eta_offset_minutes=restaurant.get("delivery_eta_offset_minutes", 15),
             restaurant_timezone=restaurant.get("timezone", "UTC"),
             restaurant_address=restaurant.get("address"),
             reservations_enabled=reservations_enabled,
@@ -3542,6 +3554,10 @@ async def twilio_incoming_call(request: Request):
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
         delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        delivery_fee=restaurant.get("delivery_fee", 0),
+        delivery_zip_codes=restaurant.get("delivery_zip_codes", []),
+        delivery_radius_miles=restaurant.get("delivery_radius_miles", 5.0),
+        delivery_eta_offset_minutes=restaurant.get("delivery_eta_offset_minutes", 15),
         avg_prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
         escalation_phone=config.get("escalation_phone_number") if config else None,
         operating_hours=config.get("operating_hours") if config else None,
@@ -4250,6 +4266,10 @@ async def run_test_scenario(
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
         delivery_minimum=config.get("delivery_minimum", 1500),
+        delivery_fee=restaurant.get("delivery_fee", 0),
+        delivery_zip_codes=restaurant.get("delivery_zip_codes", []),
+        delivery_radius_miles=restaurant.get("delivery_radius_miles", 5.0),
+        delivery_eta_offset_minutes=restaurant.get("delivery_eta_offset_minutes", 15),
         operating_hours=config.get("operating_hours"),
         restaurant_timezone=restaurant.get("timezone", "UTC"),
         restaurant_address=restaurant.get("address"),

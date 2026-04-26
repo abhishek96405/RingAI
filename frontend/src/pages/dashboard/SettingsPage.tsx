@@ -152,6 +152,10 @@ const SettingsPage = () => {
         payload.cuisine_type = restaurant?.cuisine_type;
         payload.pickup_enabled = restaurant?.pickup_enabled;
         payload.delivery_enabled = restaurant?.delivery_enabled;
+        payload.delivery_fee = Number(restaurant?.delivery_fee || 0);
+        payload.delivery_radius_miles = Number(restaurant?.delivery_radius_miles || 5);
+        payload.delivery_zip_codes = restaurant?.delivery_zip_codes || [];
+        payload.delivery_eta_offset_minutes = Number(restaurant?.delivery_eta_offset_minutes || 15);
         payload.dine_in_enabled = restaurant?.dine_in_enabled;
         payload.reservations_enabled = restaurant?.reservations_enabled;
         payload.catering_enabled = restaurant?.catering_enabled;
@@ -440,17 +444,67 @@ const SettingsPage = () => {
                   <Switch checked={config?.upsell_enabled || false} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
                 </div>
               )}
-              {!isAppointmentBusiness && config?.delivery_enabled && (
-                <div className="space-y-2">
-                  <Label>Delivery Minimum ($)</Label>
-                  <Input
-                    type="number"
-                    value={((config?.delivery_minimum || 1500) / 100).toFixed(2)}
-                    onChange={(e) => setConfig({ ...config, delivery_minimum: Math.round(parseFloat(e.target.value || "0") * 100) })}
-                    step="0.01"
-                    min="0"
-                    className="h-11 rounded-xl"
-                  />
+              {!isAppointmentBusiness && restaurant?.delivery_enabled && (
+                <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
+                  <h4 className="font-medium text-sm">Delivery Settings</h4>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Delivery Minimum ($)</Label>
+                      <Input
+                        type="number"
+                        value={((config?.delivery_minimum || 1500) / 100).toFixed(2)}
+                        onChange={(e) => setConfig({ ...config, delivery_minimum: Math.round(parseFloat(e.target.value || "0") * 100) })}
+                        step="0.01"
+                        min="0"
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Delivery Fee ($)</Label>
+                      <Input
+                        type="number"
+                        value={((restaurant?.delivery_fee || 0) / 100).toFixed(2)}
+                        onChange={(e) => setRestaurant({ ...restaurant, delivery_fee: Math.round(parseFloat(e.target.value || "0") * 100) })}
+                        step="0.01"
+                        min="0"
+                        placeholder="0 = free delivery"
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Delivery Radius (miles)</Label>
+                      <Input
+                        type="number"
+                        value={restaurant?.delivery_radius_miles || 5}
+                        onChange={(e) => setRestaurant({ ...restaurant, delivery_radius_miles: parseFloat(e.target.value) || 5 })}
+                        step="0.5"
+                        min="0.5"
+                        max="50"
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Extra Delivery Time (min)</Label>
+                      <Input
+                        type="number"
+                        value={restaurant?.delivery_eta_offset_minutes || 15}
+                        onChange={(e) => setRestaurant({ ...restaurant, delivery_eta_offset_minutes: parseInt(e.target.value) || 15 })}
+                        min="0"
+                        max="60"
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Delivery Zip Codes (comma separated)</Label>
+                    <Input
+                      value={(restaurant?.delivery_zip_codes || []).join(", ")}
+                      onChange={(e) => setRestaurant({ ...restaurant, delivery_zip_codes: e.target.value.split(",").map((z: string) => z.trim()).filter(Boolean) })}
+                      placeholder="60540, 60563, 60564"
+                      className="h-9"
+                    />
+                    <p className="text-xs text-muted-foreground">AI will only accept delivery orders from these zip codes. Leave empty to accept all areas.</p>
+                  </div>
                 </div>
               )}
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
