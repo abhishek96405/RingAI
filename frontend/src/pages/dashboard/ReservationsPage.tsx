@@ -33,6 +33,8 @@ interface TimeSlot {
   display_time: string;
   available: boolean;
   remaining_capacity: number;
+  total_capacity: number;
+  blocked: boolean;
 }
 
 const statusColors: Record<string, string> = {
@@ -278,12 +280,12 @@ export const ReservationsPage = () => {
           <CardHeader>
             <CardTitle className="text-lg">Select Date</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-hidden p-3">
             <Calendar
               mode="single"
               selected={selectedDate}
               onSelect={(d) => d && setSelectedDate(d)}
-              className="rounded-md border"
+              className="rounded-md border w-full"
             />
             <div className="mt-4">
               <Label>Filter by Status</Label>
@@ -395,14 +397,22 @@ export const ReservationsPage = () => {
             {slots.map((slot) => (
               <Badge
                 key={slot.time}
-                variant={slot.available ? "outline" : "secondary"}
+                variant="outline"
                 className={cn(
                   "px-3 py-1",
-                  slot.available ? "border-green-500 text-green-700" : "opacity-50"
+                  slot.blocked
+                    ? "border-red-300 text-red-400 opacity-60 line-through"
+                    : slot.available
+                    ? "border-green-500 text-green-700"
+                    : "border-gray-300 text-gray-400 opacity-50"
                 )}
               >
                 {slot.display_time}
-                {slot.available && ` (${slot.remaining_capacity})`}
+                {slot.blocked
+                  ? " (blocked)"
+                  : slot.available
+                  ? ` (${slot.remaining_capacity}/${slot.total_capacity})`
+                  : " (full)"}
               </Badge>
             ))}
             {slots.length === 0 && (

@@ -183,45 +183,66 @@ async def get_reservation_slots(
         "reservation_date": date_str,
         "status": {"$in": [ReservationStatus.CONFIRMED, ReservationStatus.PENDING]}
     }, {"_id": 0}).to_list(100)
-    
     # Count reservations per slot
     slot_counts: Dict[str, int] = {}
     for res in existing:
         slot_time = res.get("reservation_time", "")
         slot_counts[slot_time] = slot_counts.get(slot_time, 0) + 1
-    
+    # Get blocked slots for this date
+    blocked_slot_times = set()
+    try:
+        blocked_docs = await db.blocked_slots.find({
+            "restaurant_id": restaurant_id,
+            "date": date_str,
+        }, {"_id": 0}).to_list(100)
+        for b in blocked_docs:
+            blocked_slot_times.add(b.get("time", ""))
+    except Exception:
+        pass
+    # Calculate current time in restaurant timezone for past-slot filtering
+    import pytz
+    now_minutes = None
+    try:
+        tz = pytz.timezone(restaurant_timezone)
+        local_now = datetime.now(tz)
+        local_today = local_now.strftime("%Y-%m-%d")
+        if date_str == local_today:
+            now_minutes = local_now.hour * 60 + local_now.minute
+    except Exception:
+        pass
     # Generate slots
     slots = []
     interval = settings.get("slot_interval_minutes", 30)
     capacity = settings.get("capacity_per_slot", 10)
-    
     current = open_minutes
     while current <= close_minutes:
         hour = current // 60
         minute = current % 60
         slot_time = f"{hour:02d}:{minute:02d}"
-        
+        # Skip past slots for today
+        if now_minutes is not None and current <= now_minutes:
+            current += interval
+            continue
         # Format for display
         display_hour = hour if hour <= 12 else hour - 12
         if display_hour == 0:
             display_hour = 12
         ampm = "AM" if hour < 12 else "PM"
         display_time = f"{display_hour}:{minute:02d} {ampm}"
-        
+        # Check if blocked by owner
+        is_blocked = slot_time in blocked_slot_times
         # Check capacity
         booked = slot_counts.get(slot_time, 0)
         remaining = max(0, capacity - booked)
-        
         slots.append({
             "time": slot_time,
             "display_time": display_time,
-            "available": remaining > 0,
-            "remaining_capacity": remaining,
+            "available": not is_blocked and remaining > 0,
+            "remaining_capacity": 0 if is_blocked else remaining,
             "total_capacity": capacity,
+            "blocked": is_blocked,
         })
-        
         current += interval
-    
     return slots
 
 

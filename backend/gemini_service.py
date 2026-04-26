@@ -1178,11 +1178,14 @@ EDGE CASES:
                 if day_label not in days:
                     days[day_label] = []
                 status = s.get("display_time", s.get("time", ""))
-                if not s.get("available", True):
+                if s.get("blocked"):
+                    status += " (BLOCKED)"
+                elif not s.get("available", True):
                     status += " (FULL)"
                 else:
                     remaining = s.get("remaining_capacity", "?")
-                    status += f" ({remaining} left)"
+                    total = s.get("total_capacity", "?")
+                    status += f" ({remaining}/{total})"
                 days[day_label].append(status)
             availability_lines = []
             for day_label, times in days.items():
