@@ -118,8 +118,17 @@ const SettingsPage = () => {
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
       const [restRes, configRes] = await Promise.all([getRestaurant(restaurantId), getConfig(restaurantId)]);
-      setRestaurant(restRes.data);
-      setConfig({ ...configRes.data, operating_hours: { ...defaultHours, ...(configRes.data?.operating_hours || {}) } });
+      const restaurantData = restRes.data;
+      const configData = configRes.data;
+      // Backfill fields that may only exist in config for older restaurants
+      if (restaurantData.delivery_enabled === undefined && configData?.delivery_enabled !== undefined) {
+        restaurantData.delivery_enabled = configData.delivery_enabled;
+      }
+      if (restaurantData.pickup_enabled === undefined && configData?.pickup_enabled !== undefined) {
+        restaurantData.pickup_enabled = configData.pickup_enabled;
+      }
+      setRestaurant(restaurantData);
+      setConfig({ ...configData, operating_hours: { ...defaultHours, ...(configData?.operating_hours || {}) } });
       setBusinessType(configRes.data?.business_type || "restaurant");
     } catch {
       toast.error("Failed to load settings");
