@@ -124,6 +124,7 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         super().__init__(**kwargs)
         self._on_ai_transcript = on_ai_transcript
         self._ai_text_buffer: List[str] = []
+        self._user_text_buffer: List[str] = []
         self._last_captured_from_model_turn = False
         # Guards VAD interruption during critical function call window
         self._fn_in_progress = False
@@ -200,7 +201,16 @@ class RingAIGeminiLive(GeminiLiveLLMService):
             )
         await super()._handle_msg_output_transcription(message)
 
-    async def _handle_msg_turn_complete(self, message):
+    async def _handle_msg_input_transcription(self, message):
+        if (
+            message.server_content
+            and message.server_content.input_transcription
+            and message.server_content.input_transcription.text
+        ):
+            self._user_text_buffer.append(
+                message.server_content.input_transcription.text
+            )
+        await super()._handle_msg_input_transcription(message)
         await self._flush_ai_buffer()
         await super()._handle_msg_turn_complete(message)
 
@@ -1159,7 +1169,7 @@ async def create_call_pipeline(
                 ),
             ),
         )
-
+        session._gemini_llm = gemini_live
         # ── Shared availability fetch (used by both handler paths) ────────────
         async def _fetch_availability(date_str: str, service_name: Optional[str]) -> dict:
             from appointment_service import get_available_slots
@@ -1375,7 +1385,12 @@ async def create_call_pipeline(
             async def on_user_turn_stopped(aggregator, strategy, message: UserTurnStoppedMessage):
                 # ✅ PROACTIVE GREETING FIX: No longer sends BEGIN_CALL here
                 # BEGIN_CALL is now sent immediately on client connection
-                text = message.content.strip() if message.content else ""
+                # Use buffered transcription chunks (multiple can arrive at same timestamp)
+                if hasattr(session, '_gemini_llm') and session._gemini_llm and session._gemini_llm._user_text_buffer:
+                    text = "".join(session._gemini_llm._user_text_buffer).strip()
+                    session._gemini_llm._user_text_buffer.clear()
+                else:
+                    text = message.content.strip() if message.content else ""
                 if text:
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
                     session.add_transcript_entry("customer", text)

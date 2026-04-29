@@ -418,7 +418,7 @@ JSON:"""
     if not raw:
         return None
 
-    logger.info(f"Order extraction raw response: {raw[:500]}")
+    logger.info(f"Order extraction raw response: {raw[:2000]}")
 
     try:
         data = json.loads(_repair_json(raw))
