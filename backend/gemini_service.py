@@ -1037,6 +1037,9 @@ def build_system_prompt(
   If NOT in the list: "I'm sorry, we don't deliver to that area. Our delivery covers zip codes {_zip_list}. Would you like to place a pickup order instead?"
   If in the list: proceed with the order.
   Always collect the FULL street address including apartment/unit number and zip code.
+  MANDATORY: For delivery orders, you MUST collect the delivery address BEFORE the upsell or readback.
+  If the customer gave items but no address yet, ask: "And what's your delivery address?"
+  Do NOT proceed to upsell or readback until you have the full delivery address with zip code.
   Delivery ETA = prep time + {delivery_eta_offset_minutes} minutes extra for delivery.
   If customer asks about delivery fee: mention the fee amount.
   If order is below minimum: "Our delivery minimum is ${delivery_minimum/100:.2f}. Would you like to add anything else, or switch to pickup?" """
