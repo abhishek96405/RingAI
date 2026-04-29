@@ -127,6 +127,15 @@ const SettingsPage = () => {
       if (restaurantData.pickup_enabled === undefined && configData?.pickup_enabled !== undefined) {
         restaurantData.pickup_enabled = configData.pickup_enabled;
       }
+      // Parse address into structured fields for the form
+      const addr = restaurantData.address || "";
+      const parts = addr.split(",").map((s: string) => s.trim());
+      const lastPart = parts[2] || "";
+      const stateZip = lastPart.split(" ");
+      restaurantData._street = parts[0] || "";
+      restaurantData._city = parts[1] || "";
+      restaurantData._state = stateZip[0] || "";
+      restaurantData._zip = stateZip[1] || parts[3]?.trim() || "";
       setRestaurant(restaurantData);
       setConfig({ ...configData, operating_hours: { ...defaultHours, ...(configData?.operating_hours || {}) } });
       setBusinessType(configRes.data?.business_type || "restaurant");
@@ -146,10 +155,6 @@ const SettingsPage = () => {
       const payload: any = {
         name: restaurant?.name,
         address: `${restaurant?._street}, ${restaurant?._city}, ${restaurant?._state} ${restaurant?._zip}`.trim(),
-        _street: restaurant?.address?.split(",").map((s: string) => s.trim())?.[0] || "",
-        _city: restaurant?.address?.split(",").map((s: string) => s.trim())?.[1] || "",
-        _state: restaurant?.address?.split(",").map((s: string) => s.trim())?.[2]?.split(" ")?.[0] || "",
-        _zip: restaurant?.address?.split(",").map((s: string) => s.trim())?.[2]?.split(" ")?.[1] || restaurant?.address?.split(",").map((s: string) => s.trim())?.[3]?.trim() || "",
         timezone: restaurant?.timezone,
         owner_name: restaurant?.owner_name,
         owner_email: restaurant?.owner_email,
