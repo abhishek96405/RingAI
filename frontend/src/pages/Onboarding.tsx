@@ -105,6 +105,10 @@ export default function Onboarding() {
     name: "",
     cuisine_type: "",
     address: "",
+    _street: "",
+    _city: "",
+    _state: "",
+    _zip: "",
     timezone: "America/Chicago",
     owner_name: "",
     owner_email: "",
@@ -200,13 +204,14 @@ export default function Onboarding() {
       toast.error(`${getBusinessLabel()} name is required`);
       return;
     }
-    if (!restaurantData.address?.trim()) {
-      toast.error("Business address is required");
+    if (!restaurantData._street?.trim() || !restaurantData._city?.trim() || !restaurantData._state?.trim() || !restaurantData._zip?.trim()) {
+      toast.error("Complete business address is required (street, city, state, zip)");
       return;
     }
 
     setSubmitting(true);
     try {
+      restaurantData.address = `${restaurantData._street}, ${restaurantData._city}, ${restaurantData._state} ${restaurantData._zip}`;
       const res = await createRestaurantApi(restaurantData);
       const createdRestaurant = res.data;
 
@@ -448,13 +453,27 @@ export default function Onboarding() {
             </div>
 
             <div className="space-y-2">
-              <Label>Address <span className="text-destructive">*</span></Label>
+              <Label>Street Address <span className="text-destructive">*</span></Label>
               <Input 
-                value={restaurantData.address} 
-                onChange={(e) => setRestaurantData({ ...restaurantData, address: e.target.value })} 
+                value={restaurantData._street} 
+                onChange={(e) => setRestaurantData({ ...restaurantData, _street: e.target.value })} 
                 className="h-11 rounded-xl" 
-                placeholder="123 Main St, Chicago, IL 60601"
+                placeholder="1520 W Ogden Ave"
               />
+            </div>
+            <div className="grid sm:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>City <span className="text-destructive">*</span></Label>
+                <Input value={restaurantData._city} onChange={(e) => setRestaurantData({ ...restaurantData, _city: e.target.value })} placeholder="Naperville" className="h-11 rounded-xl" />
+              </div>
+              <div className="space-y-2">
+                <Label>State <span className="text-destructive">*</span></Label>
+                <Input value={restaurantData._state} onChange={(e) => setRestaurantData({ ...restaurantData, _state: e.target.value })} placeholder="IL" maxLength={2} className="h-11 rounded-xl" />
+              </div>
+              <div className="space-y-2">
+                <Label>Zip Code <span className="text-destructive">*</span></Label>
+                <Input value={restaurantData._zip} onChange={(e) => setRestaurantData({ ...restaurantData, _zip: e.target.value })} placeholder="60540" maxLength={5} className="h-11 rounded-xl" />
+              </div>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">

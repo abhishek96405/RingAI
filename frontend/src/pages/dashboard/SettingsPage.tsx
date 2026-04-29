@@ -145,7 +145,11 @@ const SettingsPage = () => {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
       const payload: any = {
         name: restaurant?.name,
-        address: restaurant?.address,
+        address: `${restaurant?._street}, ${restaurant?._city}, ${restaurant?._state} ${restaurant?._zip}`.trim(),
+        _street: restaurant?.address?.split(",").map((s: string) => s.trim())?.[0] || "",
+        _city: restaurant?.address?.split(",").map((s: string) => s.trim())?.[1] || "",
+        _state: restaurant?.address?.split(",").map((s: string) => s.trim())?.[2]?.split(" ")?.[0] || "",
+        _zip: restaurant?.address?.split(",").map((s: string) => s.trim())?.[2]?.split(" ")?.[1] || restaurant?.address?.split(",").map((s: string) => s.trim())?.[3]?.trim() || "",
         timezone: restaurant?.timezone,
         owner_name: restaurant?.owner_name,
         owner_email: restaurant?.owner_email,
@@ -286,7 +290,13 @@ const SettingsPage = () => {
               <div className="space-y-2"><Label>Owner Email</Label><Input value={restaurant?.owner_email || ""} onChange={(e) => setRestaurant({ ...restaurant, owner_email: e.target.value })} className="h-11 rounded-xl" /></div>
               <div className="space-y-2"><Label>Business Phone</Label><Input value={restaurant?.business_phone || ""} onChange={(e) => setRestaurant({ ...restaurant, business_phone: e.target.value })} className="h-11 rounded-xl" /></div>
               <div className="space-y-2"><Label>Billing Email</Label><Input value={restaurant?.billing_email || ""} onChange={(e) => setRestaurant({ ...restaurant, billing_email: e.target.value })} className="h-11 rounded-xl" /></div>
-              <div className="space-y-2 sm:col-span-2"><Label>Address</Label><Input value={restaurant?.address || ""} onChange={(e) => setRestaurant({ ...restaurant, address: e.target.value })} className="h-11 rounded-xl" /></div>
+              <div className="space-y-2 sm:col-span-2"><Label>Street Address <span className="text-destructive">*</span></Label><Input value={restaurant?._street || ""} onChange={(e) => setRestaurant({ ...restaurant, _street: e.target.value })} placeholder="1520 W Ogden Ave" className="h-11 rounded-xl" /></div>
+              <div className="space-y-2"><Label>City <span className="text-destructive">*</span></Label><Input value={restaurant?._city || ""} onChange={(e) => setRestaurant({ ...restaurant, _city: e.target.value })} placeholder="Naperville" className="h-11 rounded-xl" /></div>
+              <div className="space-y-2">
+                <Label>State <span className="text-destructive">*</span></Label>
+                <Input value={restaurant?._state || ""} onChange={(e) => setRestaurant({ ...restaurant, _state: e.target.value })} placeholder="IL" maxLength={2} className="h-11 rounded-xl" />
+              </div>
+              <div className="space-y-2"><Label>Zip Code <span className="text-destructive">*</span></Label><Input value={restaurant?._zip || ""} onChange={(e) => setRestaurant({ ...restaurant, _zip: e.target.value })} placeholder="60540" maxLength={5} className="h-11 rounded-xl" /></div>
               <div className="space-y-2">
                 <Label>Timezone</Label>
                 <Select value={restaurant?.timezone || "America/Chicago"} onValueChange={(v) => setRestaurant({ ...restaurant, timezone: v })}>
