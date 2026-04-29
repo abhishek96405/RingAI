@@ -1489,6 +1489,9 @@ async def create_call_pipeline(
         async def on_disconnect(transport, client):
             logger.info(f"[{call_sid}] Disconnected — post-call processing")
             try:
+                # Flush any remaining AI text that wasn't captured before disconnect
+                if session and hasattr(session, '_gemini_llm') and session._gemini_llm:
+                    await session._gemini_llm._flush_ai_buffer()
                 if session:
                     # Ensure order dispatched if not already
                     if session.order.state == OrderState.CONFIRMED and not session._order_dispatched and not session._hangup_scheduled:
