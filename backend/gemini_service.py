@@ -386,6 +386,7 @@ RULES:
 - CRITICAL: If the SIGNAL above shows order_confirmed_signal detected=True, you MUST set order_confirmed=true — no exceptions
 - The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears anywhere in the transcript
 - If ORDER_CONFIRMED appears in the transcript, set order_confirmed=true regardless of anything else
+- The AI's FINAL readback (e.g. "Let me read that back: one Chicken Biryani, two Samosas...") followed by customer confirmation ("yes","yeah","correct") is the MOST RELIABLE source. Always extract items from the confirmed readback even if some items don't appear in CUSTOMER lines.
 - Only include items from the FINAL order that the AI acknowledged
 - Never invent items not in the menu above
 - customer_name: always write in English/Latin characters, romanize if spoken in another script

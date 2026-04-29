@@ -1052,10 +1052,13 @@ async def create_call_pipeline(
             order_confirmed_phrases = [
                 "your order is confirmed",
                 "order is confirmed",
+                "order's confirmed",
                 "i'll send you a text confirmation",
                 "sending you a text confirmation",
+                "send you a text with",
                 "ready in about",
                 "thank you for calling",
+                "thanks for calling",
             ]
             if (
                 session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
