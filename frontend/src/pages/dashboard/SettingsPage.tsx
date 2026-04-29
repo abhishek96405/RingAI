@@ -323,7 +323,7 @@ const SettingsPage = () => {
             {/* Restaurant-only toggles */}
             {!isAppointmentBusiness && (
               <div className="grid sm:grid-cols-2 gap-4">
-                {[["pickup_enabled","Pickup Enabled"],["delivery_enabled","Delivery Enabled"],["dine_in_enabled","Dine-in Enabled"],["reservations_enabled","Reservations Enabled"]].map(([key, label]) => (
+                {[["pickup_enabled","Pickup Enabled"],["delivery_enabled","Delivery Enabled"],["reservations_enabled","Reservations Enabled"]].map(([key, label]) => (
                   <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                     <p className="text-sm font-medium">{label}</p>
                     <Switch checked={restaurant?.[key] ?? false} onCheckedChange={(v) => setRestaurant({ ...restaurant, [key]: v })} />
@@ -377,6 +377,36 @@ const SettingsPage = () => {
                       className="h-9"
                     />
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Delivery Settings (only when enabled) */}
+            {!isAppointmentBusiness && restaurant?.delivery_enabled && (
+              <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
+                <h4 className="font-medium text-sm">Delivery Settings</h4>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Delivery Minimum ($)</Label>
+                    <Input type="number" value={((config?.delivery_minimum || 1500) / 100).toFixed(2)} onChange={(e) => setConfig({ ...config, delivery_minimum: Math.round(parseFloat(e.target.value || "0") * 100) })} step="0.01" min="0" className="h-9" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Delivery Fee ($)</Label>
+                    <Input type="number" value={((restaurant?.delivery_fee || 0) / 100).toFixed(2)} onChange={(e) => setRestaurant({ ...restaurant, delivery_fee: Math.round(parseFloat(e.target.value || "0") * 100) })} step="0.01" min="0" placeholder="0 = free delivery" className="h-9" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Delivery Radius (miles)</Label>
+                    <Input type="number" value={restaurant?.delivery_radius_miles || 5} onChange={(e) => setRestaurant({ ...restaurant, delivery_radius_miles: parseFloat(e.target.value) || 5 })} step="0.5" min="0.5" max="50" className="h-9" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Extra Delivery Time (min)</Label>
+                    <Input type="number" value={restaurant?.delivery_eta_offset_minutes || 15} onChange={(e) => setRestaurant({ ...restaurant, delivery_eta_offset_minutes: parseInt(e.target.value) || 15 })} min="0" max="60" className="h-9" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Delivery Zip Codes (comma separated)</Label>
+                  <Input value={(restaurant?.delivery_zip_codes || []).join(", ")} onChange={(e) => setRestaurant({ ...restaurant, delivery_zip_codes: e.target.value.split(",").map((z: string) => z.trim()).filter(Boolean) })} placeholder="60540, 60563, 60564" className="h-9" />
+                  <p className="text-xs text-muted-foreground">AI will only accept delivery orders from these zip codes. Leave empty to accept all areas.</p>
                 </div>
               </div>
             )}
@@ -453,69 +483,7 @@ const SettingsPage = () => {
                   <Switch checked={config?.upsell_enabled || false} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
                 </div>
               )}
-              {!isAppointmentBusiness && restaurant?.delivery_enabled && (
-                <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
-                  <h4 className="font-medium text-sm">Delivery Settings</h4>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Delivery Minimum ($)</Label>
-                      <Input
-                        type="number"
-                        value={((config?.delivery_minimum || 1500) / 100).toFixed(2)}
-                        onChange={(e) => setConfig({ ...config, delivery_minimum: Math.round(parseFloat(e.target.value || "0") * 100) })}
-                        step="0.01"
-                        min="0"
-                        className="h-9"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Delivery Fee ($)</Label>
-                      <Input
-                        type="number"
-                        value={((restaurant?.delivery_fee || 0) / 100).toFixed(2)}
-                        onChange={(e) => setRestaurant({ ...restaurant, delivery_fee: Math.round(parseFloat(e.target.value || "0") * 100) })}
-                        step="0.01"
-                        min="0"
-                        placeholder="0 = free delivery"
-                        className="h-9"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Delivery Radius (miles)</Label>
-                      <Input
-                        type="number"
-                        value={restaurant?.delivery_radius_miles || 5}
-                        onChange={(e) => setRestaurant({ ...restaurant, delivery_radius_miles: parseFloat(e.target.value) || 5 })}
-                        step="0.5"
-                        min="0.5"
-                        max="50"
-                        className="h-9"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Extra Delivery Time (min)</Label>
-                      <Input
-                        type="number"
-                        value={restaurant?.delivery_eta_offset_minutes || 15}
-                        onChange={(e) => setRestaurant({ ...restaurant, delivery_eta_offset_minutes: parseInt(e.target.value) || 15 })}
-                        min="0"
-                        max="60"
-                        className="h-9"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Delivery Zip Codes (comma separated)</Label>
-                    <Input
-                      value={(restaurant?.delivery_zip_codes || []).join(", ")}
-                      onChange={(e) => setRestaurant({ ...restaurant, delivery_zip_codes: e.target.value.split(",").map((z: string) => z.trim()).filter(Boolean) })}
-                      placeholder="60540, 60563, 60564"
-                      className="h-9"
-                    />
-                    <p className="text-xs text-muted-foreground">AI will only accept delivery orders from these zip codes. Leave empty to accept all areas.</p>
-                  </div>
-                </div>
-              )}
+              
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                 <div><p className="text-sm font-medium">Voicemail Enabled</p><p className="text-xs text-muted-foreground">Allow voicemail after hours</p></div>
                 <Switch checked={config?.voicemail_enabled || false} onCheckedChange={(v) => setConfig({ ...config, voicemail_enabled: v })} />
