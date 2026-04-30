@@ -234,6 +234,9 @@ const DashboardHome = () => {
           </div>
         </div>
       </div>
+
+      {/* AI Learning */}
+      <AILearningWidget />
     </div>
   );
 };
