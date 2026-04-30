@@ -10,6 +10,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { exportAnalytics } from "@/lib/api";
 import { Download } from "lucide-react";
+import AILearningWidget from "./AILearningWidget";
 
 function StatCard({ icon: Icon, label, value, subtext, iconColor }: any) {
   return (

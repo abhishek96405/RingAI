@@ -3924,6 +3924,21 @@ async def twilio_media_stream(websocket: WebSocket):
                     )
                     if session:
                         session._sms_count += 1
+
+                # Feed to auto-learning service (post-call, non-blocking)
+                try:
+                    if analysis and session and session.business_type == "restaurant":
+                        learning_service = get_learning_service(db)
+                        learning_result = await learning_service.process_call_analysis(
+                            restaurant_id=restaurant_id,
+                            call_id=call_sid,
+                            analysis=analysis,
+                            order_completed=bool(order_data and order_data.get("items")),
+                            order_total=order_total,
+                        )
+                        logger.info(f"[{call_sid}] Learning: aliases={len(learning_result.get('aliases_learned', []))}, flagged={learning_result.get('flagged_for_review')}")
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] Auto-learning failed (non-critical): {e}")
             except Exception as e:
                 logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
 

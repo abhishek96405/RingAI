@@ -17,7 +17,7 @@ from collections import defaultdict
 logger = logging.getLogger(__name__)
 
 # Thresholds for auto-learning
-MENU_ALIAS_THRESHOLD = 2  # Apply alias after 2 occurrences
+MENU_ALIAS_THRESHOLD = 5  # Apply alias after 5 occurrences (safety margin)
 RULE_SUGGESTION_THRESHOLD = 3  # Apply rule after 3 occurrences
 LOW_QUALITY_THRESHOLD = 70  # Flag calls below this score
 AUTO_ALIAS_CONFIDENCE = 0.8  # Confidence needed for auto-apply

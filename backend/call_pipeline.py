@@ -338,6 +338,7 @@ class CallSession:
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
+        self._call_timer_task = None     # auto-escalation after max duration
         self._twilio_duration_seconds = None  # exact duration from Twilio status callback
 
         # Business type for horizontal platform support
@@ -399,6 +400,9 @@ class CallSession:
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
         self._hangup_scheduled = False
+        if self._call_timer_task:
+            self._call_timer_task.cancel()
+            self._call_timer_task = None
         await self._schedule_hangup(reason="order_confirmed")
 
     async def _handle_appointment_confirmed(self):
@@ -1496,6 +1500,26 @@ async def create_call_pipeline(
                 except Exception as e:
                     logger.warning(f"[{call_sid}] BEGIN_CALL failed: {e}")
 
+                # Start call duration timer — auto-escalate if call runs too long
+                if session and session.business_type == "restaurant":
+                    async def _call_duration_guard():
+                        try:
+                            # Wait initial period then check order type
+                            await asyncio.sleep(150)  # 2.5 min — check at this point
+                            max_seconds = 240 if session._detected_order_type == "delivery" else 180
+                            remaining = max_seconds - 150
+                            if remaining > 0:
+                                await asyncio.sleep(remaining)
+                            # Only escalate if order not already confirmed
+                            if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
+                                logger.info(f"[{call_sid}] Call duration limit reached ({max_seconds}s) — escalating")
+                                session._escalated = True
+                                session.order.transition(OrderState.ESCALATED, "call duration limit")
+                                await session._schedule_hangup(reason="escalation")
+                        except asyncio.CancelledError:
+                            pass
+                    session._call_timer_task = asyncio.create_task(_call_duration_guard())
+
                 
         # ------------------------------------------------------------------
         # Disconnect handler
@@ -1505,6 +1529,9 @@ async def create_call_pipeline(
         @transport.event_handler("on_client_disconnected")
         async def on_disconnect(transport, client):
             logger.info(f"[{call_sid}] Disconnected — post-call processing")
+            if session and session._call_timer_task:
+                session._call_timer_task.cancel()
+                session._call_timer_task = None
             try:
                 # Flush any remaining AI text that wasn't captured before disconnect
                 if session and hasattr(session, '_gemini_llm') and session._gemini_llm:

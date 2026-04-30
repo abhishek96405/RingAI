@@ -250,6 +250,7 @@ class MenuIndex:
                 f"{item['name']} ${item['price']/100:.2f}"
                 + (f"[!{','.join(item['allergens'])}]" if item.get("allergens") else "")
                 + _format_modifiers_compact(item.get("resolved_modifiers", []))
+                + (f" [also called: {', '.join(item['aliases'])}]" if item.get("aliases") else "")
                 for item in cat_items
             )
             lines.append(f"{cat.upper()}: {items_str}")
