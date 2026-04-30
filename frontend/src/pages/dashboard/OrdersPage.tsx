@@ -205,8 +205,8 @@ const OrdersPage = () => {
           <div className="col-span-2">Phone</div>
           <div className="col-span-2">Items</div>
           <div className="col-span-1">Type</div>
-          <div className="col-span-2">Total</div>
-          <div className="col-span-1">Date</div>
+          <div className="col-span-1">Total</div>
+          <div className="col-span-2">Date</div>
         </div>
 
         {paginated.length === 0 ? (
@@ -268,10 +268,10 @@ const OrdersPage = () => {
                       {order.order_json?.order_type === "delivery" ? "Delivery" : "Pickup"}
                     </span>
                   </div>
-                  <div className="col-span-2 font-semibold text-success">
+                  <div className="col-span-1 font-semibold text-success">
                     ${((order.order_total || 0) / 100).toFixed(2)}
                   </div>
-                  <div className="col-span-1 text-xs text-muted-foreground whitespace-nowrap">
+                  <div className="col-span-2 text-xs text-muted-foreground whitespace-nowrap">
                     {formatDate(order.started_at)}
                   </div>
                 </motion.div>
