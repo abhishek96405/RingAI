@@ -337,6 +337,7 @@ class CallSession:
         self._reservation_dispatched = False  # For restaurant reservations
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
+        self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
         self._twilio_duration_seconds = None  # exact duration from Twilio status callback
 
         # Business type for horizontal platform support
@@ -548,7 +549,8 @@ class CallSession:
         if not self.order.items:
             for attempt in range(1, max_retries + 1):
                 extracted = await extract_order_from_transcript(
-                    self.transcript, self.menu_index
+                    self.transcript, self.menu_index,
+                    detected_order_type=self._detected_order_type,
                 )
                 # Use extracted items if present — ignore confirmed flag
                 # ORDER_CONFIRMED signal is the source of truth, not extraction
@@ -558,6 +560,9 @@ class CallSession:
                     extracted.caller_number = self.caller_number
                     extracted.order_confirmed = True
                     self.order = extracted
+                    # Override with detected order type from conversation
+                    if self._detected_order_type and self._detected_order_type in ("pickup", "delivery"):
+                        self.order.order_type = self._detected_order_type
                     logger.info(
                         f"[{self.call_sid}] Extraction succeeded with "
                         f"{len(extracted.items)} items (confirmed override)"
@@ -1395,8 +1400,18 @@ async def create_call_pipeline(
                     text = message.content.strip() if message.content else ""
                 if text:
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
-                    session.add_transcript_entry("customer", text)
-                    await idle_processor._stop()
+                    # Detect order type from customer speech (restaurant only)
+                    if session.business_type == "restaurant":
+                        _tl = text.lower()
+                        if any(w in _tl for w in ["delivery", "deliver", "delivered"]):
+                            session._detected_order_type = "delivery"
+                            logger.info(f"[{call_sid}] Order type locked: delivery (from customer)")
+                        elif any(w in _tl for w in ["pickup", "pick up", "pick-up", "carry out", "carryout"]):
+                            session._detected_order_type = "pickup"
+                            logger.info(f"[{call_sid}] Order type locked: pickup (from customer)")
+                        elif any(w in _tl for w in ["reservation", "reserve", "book a table", "table for"]):
+                            session._detected_order_type = "reservation"
+                            logger.info(f"[{call_sid}] Order type locked: reservation (from customer)")
                     # Cancel farewell timer if customer speaks again
                     if hasattr(session, '_farewell_timer') and session._farewell_timer:
                         session._farewell_timer.cancel()
@@ -1502,12 +1517,16 @@ async def create_call_pipeline(
                     # Last-chance extraction if still no items
                     if not session.order.items and session.transcript:
                         extracted = await extract_order_from_transcript(
-                            session.transcript, session.menu_index
+                            session.transcript, session.menu_index,
+                            detected_order_type=session._detected_order_type,
                         )
                         if extracted:
                             extracted.restaurant_id = restaurant_id
                             extracted.call_sid      = call_sid
                             extracted.caller_number = session.caller_number
+                            # Override with detected order type from conversation
+                            if session._detected_order_type and session._detected_order_type in ("pickup", "delivery"):
+                                extracted.order_type = session._detected_order_type
                             session.order = extracted
                             result = await send_order_to_kitchen(extracted, session.restaurant)
                             if result["success"]:

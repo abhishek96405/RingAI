@@ -349,6 +349,7 @@ class LiveOrder:
 async def extract_order_from_transcript(
     transcript: List[Dict],
     menu_index: MenuIndex,
+    detected_order_type: Optional[str] = None,
 ) -> Optional[LiveOrder]:
     extract_order_from_transcript._last_tokens = 0  # reset each call
     """Parse a transcript and return a validated LiveOrder. Returns None if no confirmed order."""
@@ -392,6 +393,7 @@ RULES:
 - customer_name: always write in English/Latin characters, romanize if spoken in another script
   Example: "అభిషేక్" → "Abhishek", "अभिषेक" → "Abhishek", "அபிஷேக்" → "Abhishek"
 
+{f"ORDER TYPE OVERRIDE: This call was identified as a {detected_order_type.upper()} order. You MUST set order_type to '{detected_order_type}'." if detected_order_type else ""}
 SIGNAL: order_confirmed_detected={order_confirmed_signal}
 TRANSCRIPT:
 {transcript_text[:4000]}
@@ -1094,29 +1096,50 @@ def build_system_prompt(
             greeting_line = f"Hi {_cname}! Thanks for calling {restaurant_name}. We're currently closed right now but I can answer any questions about our menu or hours."
         else:
             greeting_line = f"Hi! Thanks for calling {restaurant_name}. We're currently closed right now but I can answer any questions about our menu or hours."
-    elif customer_profile and customer_profile.get("last_name"):
-        _cname = customer_profile["last_name"]
-        greeting_line = f"Welcome back, {_cname}! What can I get for you today?"
     else:
-        greeting_line = (
-            f"Hi! I'm an AI assistant for {restaurant_name}. Are you calling for pickup or delivery?"
-            if delivery_enabled else
-            f"Hi! I'm an AI assistant for {restaurant_name}. How can I help you today?"
-        )
+        # Build order type question based on enabled settings
+        if delivery_enabled and reservations_enabled:
+            _type_question = "Are you calling for pickup, delivery, or to make a reservation?"
+        elif delivery_enabled:
+            _type_question = "Are you calling for pickup or delivery?"
+        elif reservations_enabled:
+            _type_question = "Are you calling to place an order or to make a reservation?"
+        else:
+            _type_question = "What can I get for you today?"
 
-    step1_block = (
-        """STEP 1: The greeting already asked pickup or delivery.
+        if customer_profile and customer_profile.get("last_name"):
+            _cname = customer_profile["last_name"]
+            greeting_line = f"Welcome back, {_cname}! {_type_question}"
+        else:
+            greeting_line = f"Hi! I'm an AI assistant for {restaurant_name}. {_type_question}"
+
+    if delivery_enabled and reservations_enabled:
+        step1_block = """STEP 1: The greeting asked pickup, delivery, or reservation.
   Customer says "pickup" → "Great! What would you like to order?"
   Customer says "delivery" → "Perfect! What would you like? And I'll need your delivery address."
-  If customer skips order type and lists items — let them finish ALL items, then ask order type.
-  Once confirmed — NEVER ask for order type again. Remember it for the entire call.
+  Customer says "reservation" or "reserve a table" → Switch to RESERVATION flow below.
+  If customer skips order type and lists items — let them finish ALL items, then ask: "Is this for pickup or delivery?"
+  Once the order type is confirmed — NEVER ask again. Remember it for the entire call.
+  If customer wants BOTH an order and a reservation, handle the order first, then the reservation.
   NEVER interrupt a customer who is mid-sentence or listing items."""
-        if delivery_enabled else
-        """STEP 1: This restaurant is pickup only — do NOT mention or ask about delivery.
+    elif delivery_enabled:
+        step1_block = """STEP 1: The greeting asked pickup or delivery.
+  Customer says "pickup" → "Great! What would you like to order?"
+  Customer says "delivery" → "Perfect! What would you like? And I'll need your delivery address."
+  If customer skips order type and lists items — let them finish ALL items, then ask: "Is this for pickup or delivery?"
+  Once the order type is confirmed — NEVER ask again. Remember it for the entire call.
+  NEVER interrupt a customer who is mid-sentence or listing items."""
+    elif reservations_enabled:
+        step1_block = """STEP 1: The greeting asked to place an order or make a reservation.
+  Customer says "order" or starts listing items → "Great! What would you like to order?"
+  Customer says "reservation" or "reserve a table" → Switch to RESERVATION flow below.
+  If customer wants BOTH an order and a reservation, handle the order first, then the reservation.
+  NEVER interrupt a customer who is mid-sentence or listing items."""
+    else:
+        step1_block = """STEP 1: This restaurant is pickup only — do NOT mention or ask about delivery.
   Greet and immediately ask: "What can I get for you today?"
   If customer asks about delivery: "We're pickup only — would you like to place a pickup order?"
   NEVER interrupt a customer who is mid-sentence or listing items."""
-    )
 
     _consent = customer_profile.get("name_consent") if customer_profile else None
     if customer_profile and customer_profile.get("last_name") and _consent is not False:
@@ -1386,7 +1409,8 @@ STEP 2: Take the order. Acknowledge each item briefly — "Got it", "Added", "Pe
 STEP 4: MANDATORY READBACK — never skip this:
   Read back ALL items confirmed during this call — not just the most recent ones.
   Keep a running mental list of every item the customer added, even if discussed earlier.
-  "Let me read that back: one Chicken Biryani, two Samosas, and a Mango Lassi. Does that sound right?"
+  For DELIVERY orders, always include the delivery address in the readback:
+  "Let me read that back: one Chicken Biryani and two Samosas, going to 984 Four Seasons Boulevard, Aurora. Does that sound right?"
   If the customer says you missed an item — immediately add it and re-read the full list.
   
   NEVER volunteer the total price during readback. Just list the items.
