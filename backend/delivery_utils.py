@@ -53,6 +53,7 @@ async def validate_delivery_distance(
                 return {"within_radius": True, "distance_miles": None, "reason": "no_results"}
 
             element = rows[0]["elements"][0]
+            logger.info(f"Distance Matrix response: origins={data.get('origin_addresses')}, destinations={data.get('destination_addresses')}, element={element}")
             if element.get("status") != "OK":
                 logger.warning(f"Distance matrix status: {element.get('status')}")
                 return {"within_radius": True, "distance_miles": None, "reason": element.get("status")}
