@@ -48,8 +48,10 @@ async def validate_delivery_distance(
                 return {"within_radius": True, "distance_miles": None, "reason": "api_error"}
 
             data = resp.json()
+            logger.info(f"Distance Matrix raw: {data}")
             rows = data.get("rows", [])
             if not rows or not rows[0].get("elements"):
+                logger.warning(f"Distance Matrix no rows/elements: {data}")
                 return {"within_radius": True, "distance_miles": None, "reason": "no_results"}
 
             element = rows[0]["elements"][0]

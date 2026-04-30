@@ -203,7 +203,8 @@ const OrdersPage = () => {
           <div className="col-span-2">Order #</div>
           <div className="col-span-2">Customer</div>
           <div className="col-span-2">Phone</div>
-          <div className="col-span-3">Items</div>
+          <div className="col-span-2">Items</div>
+          <div className="col-span-1">Type</div>
           <div className="col-span-2">Total</div>
           <div className="col-span-1">Date</div>
         </div>
@@ -252,14 +253,20 @@ const OrdersPage = () => {
                     <Phone className="w-3.5 h-3.5 shrink-0" />
                     <span className="text-xs">{formatPhone(order.caller_number)}</span>
                   </div>
-                  <div className="col-span-3 text-muted-foreground truncate text-xs">
+                  <div className="col-span-2 text-muted-foreground truncate text-xs">
                     {itemSummary}
                     {extra && (
                       <span className="text-primary font-medium">{extra}</span>
                     )}
                   </div>
-                  <div className="col-span-2 font-semibold text-success">
-                    ${((order.order_total || 0) / 100).toFixed(2)}
+                  <div className="col-span-1">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${
+                      order.order_json?.order_type === "delivery" 
+                        ? "bg-blue-500/10 text-blue-500" 
+                        : "bg-emerald-500/10 text-emerald-500"
+                    }`}>
+                      {order.order_json?.order_type === "delivery" ? "Delivery" : "Pickup"}
+                    </span>
                   </div>
                   <div className="col-span-1 text-xs text-muted-foreground whitespace-nowrap">
                     {formatDate(order.started_at)}
