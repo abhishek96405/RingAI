@@ -211,6 +211,8 @@ class RingAIGeminiLive(GeminiLiveLLMService):
                 message.server_content.input_transcription.text
             )
         await super()._handle_msg_input_transcription(message)
+
+    async def _handle_msg_turn_complete(self, message):
         await self._flush_ai_buffer()
         await super()._handle_msg_turn_complete(message)
 
