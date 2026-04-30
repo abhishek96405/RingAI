@@ -37,7 +37,7 @@ async def validate_delivery_distance(
                 "https://maps.googleapis.com/maps/api/distancematrix/json",
                 params={
                     "origins": restaurant_address,
-                    "destinations": delivery_address,
+                    "destinations": delivery_address.replace(". ", ", ").rstrip("."),
                     "units": "imperial",
                     "key": api_key,
                 },
