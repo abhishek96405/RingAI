@@ -1430,7 +1430,7 @@ STEP 4: MANDATORY READBACK — never skip this:
 
 STEP 5: Confirm only after explicit yes:
   For PICKUP orders say EXACTLY:
-  "Perfect! Your order is confirmed. Ready in about {prep_time} — I'll send you a text confirmation now. Thank you for calling {restaurant_name}!"
+  "Perfect! Your order is confirmed. I'll send you a text confirmation with your estimated pickup time. Thank you for calling {restaurant_name}!"
   
   For DELIVERY orders say EXACTLY:
   "Perfect! Your order is confirmed. I'll send you a text with your estimated delivery time and order details. Thank you for calling {restaurant_name}!"
@@ -1695,6 +1695,29 @@ Rules:
 - issues/highlights: short strings, max 5 items each
 - summary: one sentence, max 100 characters
 
+menu_suggestions — CRITICAL FOR LEARNING:
+  Scan every CUSTOMER line. If the customer used a non-standard name, phonetic approximation,
+  nickname, abbreviation, or colloquial term that the AI mapped to a real menu item,
+  record it as: {"said": "<what customer said>", "resolved_as": "<exact menu item name>"}
+
+  Include a suggestion whenever the customer said something like:
+  - A phonetic approximation: "apollo fish" heard as "a bowl of fish", "chicken tikka" as "chicken tika"
+  - A nickname or abbreviation: "dal", "makhni", "biryani" (when multiple biryanis exist)
+  - A colloquial term: "coke" for "Coca-Cola", "chili chicken" for "Chilli Chicken"
+  - An unclear item that the AI clarified into a specific menu item
+
+  You are given a MENU list at the bottom — cross-reference it to identify the resolved name.
+  If the customer's phrasing is identical to the menu item name, do NOT include it.
+  Only include genuine alias/phonetic mappings. Max 5 per call.
+
+  Example: customer says "bowl of fish" -> AI serves "Apollo Fish"
+  -> {"said": "bowl of fish", "resolved_as": "Apollo Fish"}
+
+rule_suggestions — pattern issues spotted across the call:
+  Short strings describing recurring problems (e.g. "Customer asked about gluten-free options — not handled",
+  "Customer had to repeat order type twice").
+  Only include if a real gap exists. Max 3.
+
 Return the JSON now:"""
 
 
@@ -1708,29 +1731,41 @@ async def analyse_call_transcript(
     if not client:
         return _mock_call_analysis(transcript, order_json)
 
-    if len(transcript) > 8:
-        truncated = transcript[:2] + transcript[-4:]
-        transcript_for_analysis = truncated
-    else:
-        transcript_for_analysis = transcript
-
+    # Keep all customer turns (alias detection needs full context), cap each line length
     transcript_text = "\n".join(
-        f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e['text'][:150]}"
-        for e in transcript_for_analysis
+        f"{'CUSTOMER' if e.get('role') == 'customer' else 'AI'}: {e['text'][:200]}"
+        for e in transcript
     )
+    if len(transcript_text) > 2000:
+        # If still too long: keep first 2 turns + as many tail turns as fit
+        lines = transcript_text.split("\n")
+        head = "\n".join(lines[:2])
+        tail_lines = []
+        budget = 2000 - len(head) - 10
+        for line in reversed(lines[2:]):
+            if len(line) + 1 <= budget:
+                tail_lines.insert(0, line)
+                budget -= len(line) + 1
+            else:
+                break
+        transcript_text = head + "\n[...]\n" + "\n".join(tail_lines)
 
-    if len(transcript_text) > 1200:
-        transcript_text = transcript_text[:1200] + "..."
+    # Build compact menu context so the model can identify alias -> item mappings
+    menu_context = ""
+    if menu_items:
+        item_names = [item["name"] for item in menu_items if item.get("available", True)]
+        if item_names:
+            menu_context = "\n\nMENU ITEMS (exact names): " + ", ".join(item_names[:60])
 
     try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": f"TRANSCRIPT:\n{transcript_text}"}
+                {"role": "user", "content": f"TRANSCRIPT:\n{transcript_text}{menu_context}"}
             ],
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=700,
         )
 
         raw_text = response.choices[0].message.content.strip()

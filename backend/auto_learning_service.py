@@ -98,7 +98,8 @@ class AutoLearningService:
         logger.info(
             f"Learning processed for {restaurant_id}: "
             f"aliases={len(actions_taken['aliases_learned'])}, "
-            f"flagged={actions_taken['flagged_for_review']}"
+            f"flagged={actions_taken['flagged_for_review']}, "
+            f"quality_score={actions_taken['quality_score']}"
         )
         
         return actions_taken
@@ -106,21 +107,29 @@ class AutoLearningService:
     async def _process_menu_suggestion(
         self,
         restaurant_id: str,
-        suggestion: str,
+        suggestion,
         call_id: str,
     ) -> Optional[Dict[str, str]]:
         """
         Process a menu suggestion and potentially create an alias.
-        
-        Suggestion format expected: "Add 'X' as alias for Y" or similar
+
+        Accepts either:
+          - dict: {"said": "bowl of fish", "resolved_as": "Apollo Fish"}  <- structured format
+          - str:  "Add 'X' as alias for Y"  <- legacy string format
         """
-        # Parse the suggestion to extract alias → target mapping
-        parsed = self._parse_menu_suggestion(suggestion)
-        if not parsed:
-            return None
-        
-        alias_term = parsed["alias"]
-        target_item = parsed["target"]
+        # Structured dict format from updated analysis prompt
+        if isinstance(suggestion, dict):
+            alias_term = (suggestion.get("said") or "").strip()
+            target_item = (suggestion.get("resolved_as") or "").strip()
+            if not alias_term or not target_item:
+                return None
+        else:
+            # Legacy string format — fall through to regex parser
+            parsed = self._parse_menu_suggestion(suggestion)
+            if not parsed:
+                return None
+            alias_term = parsed["alias"]
+            target_item = parsed["target"]
         
         # Check if this suggestion already exists
         existing = await self.db.learning_suggestions.find_one({

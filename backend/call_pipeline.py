@@ -1077,7 +1077,6 @@ async def create_call_pipeline(
                 "i'll send you a text confirmation",
                 "sending you a text confirmation",
                 "send you a text with",
-                "ready in about",
                 "thank you for calling",
                 "thanks for calling",
             ]
