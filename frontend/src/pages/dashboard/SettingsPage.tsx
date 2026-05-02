@@ -456,8 +456,10 @@ const SettingsPage = () => {
             <div className="space-y-2">
               <Label>Voice</Label>
               <div className="grid gap-2 mt-1">
-                {voiceOptions.map((voice) => (
-                  <div key={voice.id} onClick={() => setConfig({ ...config, voice_id: voice.id })} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${config?.voice_id === voice.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
+                {voiceOptions.map((voice) => {
+                  const isVoiceLocked = restaurant?.plan !== "PRO" && voice.id !== "Leda";
+                  return (
+                  <div key={voice.id} onClick={() => !isVoiceLocked && setConfig({ ...config, voice_id: voice.id })} className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${isVoiceLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${config?.voice_id === voice.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
                     <Volume2 className="w-4 h-4 text-muted-foreground" />
                     <div className="flex-1"><p className="text-sm font-medium">{voice.name}</p><p className="text-xs text-muted-foreground">{voice.accent}</p></div>
                     <div className="flex items-center gap-2">
@@ -470,15 +472,20 @@ const SettingsPage = () => {
                         <Volume2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
+                    {isVoiceLocked && <span className="text-xs text-muted-foreground">Pro</span>}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
             <div className="space-y-2"><Label>Custom Greeting</Label><Textarea value={config?.disclosure_text || ""} onChange={(e) => setConfig({ ...config, disclosure_text: e.target.value })} className="rounded-xl min-h-[80px]" /></div>
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Primary Language</Label>
-                <Select value={config?.primary_language || "en"} onValueChange={(v) => setConfig({ ...config, primary_language: v })}>
+                <div className="flex items-center gap-2">
+                  <Label>Primary Language</Label>
+                  {restaurant?.plan !== "PRO" && <span className="text-xs text-muted-foreground">(Pro for multi-language)</span>}
+                </div>
+                <Select value={config?.primary_language || "en"} disabled={restaurant?.plan !== "PRO"} onValueChange={(v) => setConfig({ ...config, primary_language: v })}>
                   <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="en">English</SelectItem><SelectItem value="es">Spanish</SelectItem></SelectContent>
                 </Select>
@@ -500,8 +507,11 @@ const SettingsPage = () => {
               {/* Upselling — restaurant only */}
               {!isAppointmentBusiness && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-                  <div><p className="text-sm font-medium">Upselling</p><p className="text-xs text-muted-foreground">Suggest add-ons after main order</p></div>
-                  <Switch checked={config?.upsell_enabled || false} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
+                  <div className="flex items-center gap-2">
+                    <div><p className="text-sm font-medium">Upselling</p><p className="text-xs text-muted-foreground">Suggest add-ons after main order</p></div>
+                    {restaurant?.plan !== "PRO" && <span className="text-xs text-muted-foreground">(Pro)</span>}
+                  </div>
+                  <Switch checked={config?.upsell_enabled || false} disabled={restaurant?.plan !== "PRO"} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
                 </div>
               )}
               

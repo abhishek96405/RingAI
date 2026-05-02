@@ -6,30 +6,43 @@ import { motion } from "framer-motion";
 const plans = [
   {
     name: "Starter",
-    price: "$49",
+    price: "$199",
     period: "/month",
-    description: "Perfect for small businesses getting started with AI.",
-    features: ["Up to 100 calls/month", "1 phone number", "Basic booking support", "Email support", "Standard analytics"],
-    cta: "Start Free Trial",
+    description: "Everything you need to automate phone orders.",
+    features: [
+      "500 AI calls/month",
+      "AI pickup order taking",
+      "1 phone number",
+      "POS integration (Clover, Square, Toast)",
+      "SMS order confirmations",
+      "Prepayment via SMS (1% customer fee)",
+      "Full analytics dashboard",
+      "Call history & transcripts",
+      "Email support",
+    ],
+    cta: "Get Started",
     popular: false,
   },
   {
-    name: "Professional",
-    price: "$149",
+    name: "Pro",
+    price: "$349",
     period: "/month",
-    description: "For growing businesses that need the full power of AI.",
-    features: ["Up to 500 calls/month", "3 phone numbers", "Full service catalog", "Google Calendar sync", "SMS reminders", "Priority support", "Multilingual support"],
-    cta: "Start Free Trial",
+    description: "Full AI power — delivery, reservations, upselling & more.",
+    features: [
+      "1,000 AI calls/month",
+      "Everything in Starter, plus:",
+      "AI delivery order handling",
+      "AI table reservations",
+      "AI upselling during calls",
+      "Customer recognition",
+      "Auto AI learning",
+      "8 premium voice options",
+      "Multi-language support",
+      "Customer CRM profiles",
+      "Priority support",
+    ],
+    cta: "Get Started",
     popular: true,
-  },
-  {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
-    description: "For chains and high-volume operations.",
-    features: ["Unlimited calls", "Unlimited numbers", "Custom AI training", "Multi-location support", "Dedicated account manager", "Custom integrations", "SLA guarantee", "White-label option"],
-    cta: "Contact Sales",
-    popular: false,
   },
 ];
 
@@ -52,7 +65,7 @@ const PricingSection = () => {
           </p>
         </motion.div>
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+        <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">
           {plans.map((plan, i) => (
             <motion.div
               key={plan.name}

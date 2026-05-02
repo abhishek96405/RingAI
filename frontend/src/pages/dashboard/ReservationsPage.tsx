@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAppSession } from "@/context/AppSessionContext";
 import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,26 @@ const statusColors: Record<string, string> = {
 };
 
 export const ReservationsPage = () => {
+  const { activeRestaurant } = useAppSession();
+
+  if (activeRestaurant?.plan !== "PRO") {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="p-8 text-center max-w-md rounded-xl border border-border bg-card">
+          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mx-auto mb-4">
+            <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <h3 className="font-display font-bold text-lg mb-2">AI Table Reservations</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Let your AI handle table reservations, manage availability, and book parties automatically.
+          </p>
+          <a href="/billing" className="inline-flex items-center justify-center rounded-xl bg-gradient-primary text-primary-foreground px-6 py-2 text-sm font-medium shadow-glow hover:opacity-90">
+            Upgrade to Pro
+          </a>
+        </div>
+      </div>
+    );
+  }
   const [searchParams] = useSearchParams();
   const restaurantId = searchParams.get("restaurant_id") || getRestaurantId() || "";
 
