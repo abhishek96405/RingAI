@@ -332,6 +332,7 @@ class CallSession:
         )
         self._order_dispatched  = False
         self._escalated         = False
+        self._escalation_deferred = False  # escalation deferred until order completes
         self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
         self._booking_dispatched = False  # For appointment businesses
         self._reservation_dispatched = False  # For restaurant reservations
@@ -369,12 +370,35 @@ class CallSession:
                 self.order.transition(OrderState.CONFIRMED, "confirmed via AI signal")
                 self.order.confirmed_at = datetime.now(timezone.utc).isoformat()
                 asyncio.ensure_future(self._handle_order_confirmed())
+                # Execute deferred escalation after order dispatch completes
+                if self._escalation_deferred:
+                    async def _deferred_escalation():
+                        # Wait for order dispatch + SMS to finish
+                        await asyncio.sleep(5.0)
+                        if not self._escalated:
+                            logger.info(f"[{self.call_sid}] Executing deferred escalation after order completion")
+                            self._escalation_deferred = False
+                            self._escalated = True
+                            self._hangup_scheduled = False  # reset to allow escalation hangup
+                            await self._schedule_hangup(reason="escalation")
+                    asyncio.ensure_future(_deferred_escalation())
 
             if signals["escalate_to_human"] and not self._escalated:
-                logger.info(f"[{self.call_sid}] ESCALATE signal detected")
-                self.order.transition(OrderState.ESCALATED, "escalation via AI signal")
-                self._escalated = True
-                asyncio.ensure_future(self._schedule_hangup(reason="escalation"))
+                # Check if there's an active order that shouldn't be abandoned
+                _has_active_order = (
+                    self.order
+                    and hasattr(self.order, 'items')
+                    and len(getattr(self.order, 'items', []))  > 0
+                    and self.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED, OrderState.ESCALATED)
+                )
+                if _has_active_order:
+                    logger.info(f"[{self.call_sid}] ESCALATE signal detected but order in progress — deferring until order completes")
+                    self._escalation_deferred = True
+                else:
+                    logger.info(f"[{self.call_sid}] ESCALATE signal detected")
+                    self.order.transition(OrderState.ESCALATED, "escalation via AI signal")
+                    self._escalated = True
+                    asyncio.ensure_future(self._schedule_hangup(reason="escalation"))
 
     # ------------------------------------------------------------------
     # Order confirmed — dispatch then hang up
@@ -1407,22 +1431,30 @@ async def create_call_pipeline(
                     if session.business_type == "restaurant":
                         _tl = text.lower()
                         _plan = session.restaurant.get("plan", "STARTER")
+                        _rest_has_delivery = session.restaurant.get("offers_delivery", True)
+                        _rest_has_reservations = session.restaurant.get("offers_reservations", True)
                         if any(w in _tl for w in ["delivery", "deliver", "delivered"]):
-                            if _plan == "PRO":
+                            if _plan == "PRO" and _rest_has_delivery:
                                 session._detected_order_type = "delivery"
                                 logger.info(f"[{call_sid}] Order type locked: delivery (from customer)")
+                            elif _rest_has_delivery:
+                                # STARTER — restaurant has delivery, AI will offer escalation via prompt
+                                logger.info(f"[{call_sid}] Delivery requested on STARTER — AI will offer escalation to team")
                             else:
-                                session._detected_order_type = "pickup"
-                                logger.info(f"[{call_sid}] Delivery requested but STARTER plan — forcing pickup")
+                                # Restaurant doesn't offer delivery at all
+                                logger.info(f"[{call_sid}] Delivery requested but restaurant doesn't deliver")
                         elif any(w in _tl for w in ["pickup", "pick up", "pick-up", "carry out", "carryout"]):
                             session._detected_order_type = "pickup"
                             logger.info(f"[{call_sid}] Order type locked: pickup (from customer)")
                         elif any(w in _tl for w in ["reservation", "reserve", "book a table", "table for"]):
-                            if _plan == "PRO":
+                            if _plan == "PRO" and _rest_has_reservations:
                                 session._detected_order_type = "reservation"
                                 logger.info(f"[{call_sid}] Order type locked: reservation (from customer)")
+                            elif _rest_has_reservations:
+                                # STARTER — restaurant has reservations, AI will offer escalation via prompt
+                                logger.info(f"[{call_sid}] Reservation requested on STARTER — AI will offer escalation to team")
                             else:
-                                logger.info(f"[{call_sid}] Reservation requested but STARTER plan — ignoring")
+                                logger.info(f"[{call_sid}] Reservation requested but restaurant doesn't offer reservations")
                     # Cancel farewell timer if customer speaks again
                     if hasattr(session, '_farewell_timer') and session._farewell_timer:
                         session._farewell_timer.cancel()
@@ -1549,10 +1581,22 @@ async def create_call_pipeline(
 
                             await asyncio.sleep(max_seconds - warn_at)
                             if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
-                                logger.info(f"[{call_sid}] STARTER call duration limit ({max_seconds}s) — escalating to reception")
-                                session._escalated = True
-                                session.order.transition(OrderState.ESCALATED, "starter call duration limit")
-                                await session._schedule_hangup(reason="escalation")
+                                # If order has items and is near completion, extend by 60s
+                                _has_items = hasattr(session.order, 'items') and len(getattr(session.order, 'items', [])) > 0
+                                if _has_items and not getattr(session, '_duration_extended', False):
+                                    logger.info(f"[{call_sid}] STARTER duration limit but order in progress — extending 60s")
+                                    session._duration_extended = True
+                                    await asyncio.sleep(60)
+                                    if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
+                                        logger.info(f"[{call_sid}] STARTER extended duration exceeded — escalating")
+                                        session._escalated = True
+                                        session.order.transition(OrderState.ESCALATED, "starter call duration limit extended")
+                                        await session._schedule_hangup(reason="escalation")
+                                else:
+                                    logger.info(f"[{call_sid}] STARTER call duration limit ({max_seconds}s) — escalating to reception")
+                                    session._escalated = True
+                                    session.order.transition(OrderState.ESCALATED, "starter call duration limit")
+                                    await session._schedule_hangup(reason="escalation")
                         except asyncio.CancelledError:
                             pass
                     session._call_timer_task = asyncio.create_task(_call_duration_guard())

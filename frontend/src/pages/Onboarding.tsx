@@ -121,6 +121,8 @@ export default function Onboarding() {
     delivery_enabled: true,
     dine_in_enabled: true,
     reservations_enabled: false,
+    offers_delivery: true,
+    offers_reservations: true,
     catering_enabled: false,
     avg_prep_time_minutes: 20,
     reservation_party_limit: 8,
@@ -509,10 +511,22 @@ export default function Onboarding() {
                   </div>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  {[["pickup_enabled", "Pickup Enabled"], ["delivery_enabled", "Delivery Enabled"], ["dine_in_enabled", "Dine-in Enabled"], ["reservations_enabled", "Reservations Enabled"]].map(([key, label]) => (
+                  {[["pickup_enabled", "Pickup Enabled"], ["dine_in_enabled", "Dine-in Enabled"]].map(([key, label]) => (
                     <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                       <span className="text-sm">{label}</span>
                       <input type="checkbox" className="accent-primary" checked={restaurantData[key]} onChange={(e) => setRestaurantData({ ...restaurantData, [key]: e.target.checked })} />
+                    </div>
+                  ))}
+                  {[
+                    { key: "offers_delivery", label: "Does your restaurant offer delivery?" },
+                    { key: "offers_reservations", label: "Does your restaurant take reservations?" },
+                  ].map(({ key, label }) => (
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                      <span className="text-sm">{label}</span>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setRestaurantData({ ...restaurantData, [key]: true })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurantData[key] ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Yes</button>
+                        <button type="button" onClick={() => setRestaurantData({ ...restaurantData, [key]: false })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${!restaurantData[key] ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>No</button>
+                      </div>
                     </div>
                   ))}
                 </div>

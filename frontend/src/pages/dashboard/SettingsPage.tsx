@@ -176,6 +176,8 @@ const SettingsPage = () => {
         payload.delivery_eta_offset_minutes = Number(restaurant?.delivery_eta_offset_minutes || 15);
         payload.dine_in_enabled = restaurant?.dine_in_enabled;
         payload.reservations_enabled = restaurant?.reservations_enabled;
+        payload.offers_delivery = restaurant?.offers_delivery;
+        payload.offers_reservations = restaurant?.offers_reservations;
         payload.catering_enabled = restaurant?.catering_enabled;
         payload.avg_prep_time_minutes = Number(restaurant?.avg_prep_time_minutes || 0);
         payload.reservation_party_limit = Number(restaurant?.reservation_party_limit || 0);
@@ -350,6 +352,18 @@ const SettingsPage = () => {
                     </div>
                   );
                 })}
+                  {[
+                    { key: "offers_delivery", label: "Does your restaurant offer delivery?" },
+                    { key: "offers_reservations", label: "Does your restaurant take reservations?" },
+                  ].map(({ key, label }) => (
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                      <span className="text-sm">{label}</span>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setRestaurant({ ...restaurant, [key]: true })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurant?.[key] !== false ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Yes</button>
+                        <button type="button" onClick={() => setRestaurant({ ...restaurant, [key]: false })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurant?.[key] === false ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>No</button>
+                      </div>
+                    </div>
+                  ))}
               </div>
             )}
 

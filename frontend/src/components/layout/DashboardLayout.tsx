@@ -56,7 +56,7 @@ const baseNavItems = [
 const restaurantNavItems = [
   { icon: UtensilsCrossed, label: "Menu", path: "/dashboard/menu" },
   { icon: ShoppingBag, label: "Orders", path: "/dashboard/orders" },
-  { icon: CalendarDays, label: "Reservations", path: "/dashboard/reservations" },
+  { icon: CalendarDays, label: "Reservations", path: "/dashboard/reservations", proOnly: true },
 ];
 
 // Appointment business nav items

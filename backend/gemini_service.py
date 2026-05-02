@@ -506,12 +506,7 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
             "ORDER HAS BEEN CONFIRMED",
             "ORDER IS PLACED",
         ]),
-        "escalate_to_human": any(p in t for p in [
-            "ESCALATE_TO_HUMAN",
-            "CONNECT YOU WITH",
-            "TRANSFER YOU",
-            "TEAM MEMBER RIGHT AWAY",
-        ]),
+        "escalate_to_human": "ESCALATE_TO_HUMAN" in t,
         "call_ending": any(p in t for p in [
             "THANK YOU FOR CALLING",
             "GOODBYE",
@@ -954,7 +949,8 @@ def build_system_prompt(
     escalation_rules: List[str],
     menu_items: List[Dict],
     disclosure_text: str,
-    upsell_enabled: bool = True,
+    offers_delivery: bool = True,
+    offers_reservations: bool = True,
     delivery_enabled: bool = True,
     delivery_minimum: int = 1500,
     delivery_fee: int = 0,
@@ -982,14 +978,53 @@ def build_system_prompt(
                          "upsell_enabled": True, "customer_recognition": True,
                          "max_call_duration_sec": None, "warn_at_sec": None}
 
+    # Save original restaurant settings before plan enforcement
+    _restaurant_offers_delivery = offers_delivery
+    _restaurant_offers_reservations = offers_reservations
+
     if not plan_features.get("delivery_enabled"):
-        delivery_enabled = False
+        delivery_enabled = False  # AI won't handle delivery — prompt generates pickup flow
     if not plan_features.get("reservations_enabled"):
         reservations_enabled = False
     if not plan_features.get("upsell_enabled"):
         upsell_enabled = False
     if not plan_features.get("customer_recognition"):
         customer_profile = None
+
+    # STARTER-specific prompt overrides for features the restaurant has but AI can't handle
+    _starter_restrictions = ""
+    if _restaurant_offers_delivery and not plan_features.get("delivery_enabled"):
+        # Restaurant offers delivery but AI can't handle it — escalate to human
+        _starter_restrictions += """
+IMPORTANT — DELIVERY HANDLING:
+This restaurant DOES offer delivery, but delivery orders must be handled by our team.
+- If customer asks about delivery while an order is in progress:
+  Say "We do offer delivery! Let me finish your pickup order first, and then I can connect you with our team to arrange delivery."
+  Finish the order (STEP 4 readback → STEP 5 confirmation). ONLY after confirmation, say:
+  "Now let me connect you with our team for that delivery. Please hold."
+  Then say ESCALATE_TO_HUMAN.
+- If customer calls ONLY for delivery (no pickup order in progress):
+  Say "We do offer delivery! Let me connect you with our team to set that up. Please hold."
+  Then say ESCALATE_TO_HUMAN.
+- OVERRIDE the "pickup only" instruction above — do NOT say "we're pickup only" or "we don't deliver".
+"""
+    if _restaurant_offers_reservations and not plan_features.get("reservations_enabled"):
+        # Restaurant does reservations but AI can't handle them — escalate to human
+        _starter_restrictions += """
+IMPORTANT — RESERVATION HANDLING:
+This restaurant DOES take reservations, but reservations must be handled by our team.
+- If customer asks about reservations while an order is in progress:
+  Say "We do take reservations! Let me finish your order first, and then I can connect you with our team to book a table."
+  Finish the order (STEP 4 readback → STEP 5 confirmation). ONLY after confirmation, say:
+  "Now let me connect you with our team for that reservation. Please hold."
+  Then say ESCALATE_TO_HUMAN.
+- If customer calls ONLY for a reservation (no order in progress):
+  Say "We do take reservations! Let me connect you with our team to book that for you. Please hold."
+  Then say ESCALATE_TO_HUMAN.
+"""
+
+    # On STARTER, skip name-save question since CRM is disabled
+    _skip_name_save = not plan_features.get("customer_recognition")
 
     menu_index = MenuIndex(menu_items)
     menu_examples = generate_menu_examples(menu_index)
@@ -1183,7 +1218,12 @@ RETURNING CUSTOMER
   Do NOT ask if they want their name saved."""
     else:
         customer_block = ""
-        step3_block = """STEP 3: Ask for customer name: "Could I get a name for the order?"
+        if _skip_name_save:
+            step3_block = """STEP 3: Ask for customer name: "Could I get a name for the order?"
+  Wait for the name before doing anything else.
+  Do NOT ask if they want their name saved."""
+        else:
+            step3_block = """STEP 3: Ask for customer name: "Could I get a name for the order?"
   Wait for the name. Then ask: "Would you like me to remember your name for next time?"
   Accept their answer — do not push."""
 
@@ -1539,6 +1579,7 @@ NEVER DO THESE
 ✗ Ask for pickup/delivery again after it was already confirmed
 
 If asked what AI you are: "I'm the virtual assistant for {restaurant_name}. How can I help with your order?"
+{_starter_restrictions}
 """ + (f"""
 
 ═══════════════════════════

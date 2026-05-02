@@ -470,6 +470,8 @@ class RestaurantBase(BaseModel):
 
     # operations
     pickup_enabled: bool = True
+    offers_delivery: bool = True
+    offers_reservations: bool = True
     delivery_enabled: bool = True
     delivery_fee: int = 0
     delivery_radius_miles: float = 5.0
@@ -524,6 +526,8 @@ class RestaurantUpdate(BaseModel):
     primary_language: Optional[str] = None
 
     pickup_enabled: Optional[bool] = None
+    offers_delivery: Optional[bool] = None
+    offers_reservations: Optional[bool] = None
     delivery_enabled: Optional[bool] = None
     delivery_fee: Optional[int] = None
     delivery_radius_miles: Optional[float] = None
@@ -3658,6 +3662,8 @@ async def twilio_incoming_call(request: Request):
         menu_items=menu_items,
         disclosure_text=config.get("disclosure_text", "Hi! I'm an AI assistant. How can I help you today?") if config else "Hi! I'm an AI assistant. How can I help you today?",
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        offers_delivery=restaurant.get("offers_delivery", True),
+        offers_reservations=restaurant.get("offers_reservations", True),
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
         delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
         delivery_fee=restaurant.get("delivery_fee", 0),
@@ -4525,6 +4531,8 @@ async def run_test_scenario(
         menu_items=menu_items,
         disclosure_text=config.get("disclosure_text", "Hi! How can I help you?") if config else "Hi! How can I help you?",
         upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        offers_delivery=restaurant.get("offers_delivery", True),
+        offers_reservations=restaurant.get("offers_reservations", True),
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
         delivery_minimum=config.get("delivery_minimum", 1500),
         delivery_fee=restaurant.get("delivery_fee", 0),
