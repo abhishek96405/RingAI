@@ -949,6 +949,7 @@ def build_system_prompt(
     escalation_rules: List[str],
     menu_items: List[Dict],
     disclosure_text: str,
+    upsell_enabled: bool = True,
     offers_delivery: bool = True,
     offers_reservations: bool = True,
     delivery_enabled: bool = True,
