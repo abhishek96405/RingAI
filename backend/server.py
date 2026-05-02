@@ -22,6 +22,61 @@ stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
 
 # ============================================================
+# PLAN CONFIGURATION — SINGLE SOURCE OF TRUTH
+# ============================================================
+
+PLAN_CONFIG = {
+    "STARTER": {
+        "price_env": "STRIPE_PRICE_STARTER",
+        "monthly_call_limit": 500,
+        "overage_per_call_cents": 25,
+        "max_call_duration_sec": 180,
+        "warn_at_sec": 150,
+        "phone_numbers": 1,
+        "delivery_enabled": False,
+        "reservations_enabled": False,
+        "upsell_enabled": False,
+        "customer_recognition": False,
+        "auto_learning": False,
+        "multi_language": False,
+        "multi_voice": False,
+        "prepayment_fee_pct": 1.0,
+    },
+    "PRO": {
+        "price_env": "STRIPE_PRICE_PRO",
+        "monthly_call_limit": 1000,
+        "overage_per_call_cents": 20,
+        "max_call_duration_sec": None,
+        "warn_at_sec": None,
+        "phone_numbers": 1,
+        "delivery_enabled": True,
+        "reservations_enabled": True,
+        "upsell_enabled": True,
+        "customer_recognition": True,
+        "auto_learning": True,
+        "multi_language": True,
+        "multi_voice": True,
+        "prepayment_fee_pct": 1.0,
+    },
+}
+
+
+def get_plan_features(plan_name: str) -> dict:
+    """Get feature config for a plan. Defaults to STARTER if unknown."""
+    return PLAN_CONFIG.get(plan_name, PLAN_CONFIG["STARTER"])
+
+
+def get_price_id_to_plan_map() -> dict:
+    """Reverse lookup: Stripe Price ID -> plan name."""
+    mapping = {}
+    for plan_name, config in PLAN_CONFIG.items():
+        price_id = os.environ.get(config["price_env"], "")
+        if price_id:
+            mapping[price_id] = plan_name
+    return mapping
+
+
+# ============================================================
 # GRACEFUL SHUTDOWN
 # ============================================================
 _active_websockets: Set[WebSocket] = set()
@@ -512,7 +567,7 @@ class Restaurant(RestaurantBase):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     is_active: bool = False
-    plan: str = "STARTER"
+    plan: str = "PRO"
     monthly_call_count: int = 0
 
     stripe_customer_id: Optional[str] = None
@@ -552,6 +607,7 @@ class RestaurantSelection(BaseModel):
 
 class BillingCheckoutRequest(BaseModel):
     restaurant_id: str
+    plan: Optional[str] = None
     price_id: Optional[str] = None
 
 
@@ -1084,7 +1140,7 @@ async def get_restaurant(restaurant_id: str, user: Dict[str, Any] = Depends(get_
 
 @api_router.put("/restaurants/{restaurant_id}")
 async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Dict[str, Any] = Depends(get_current_user)):
-    await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     # Also manually preserve integer fields that could be 0 (falsy but valid)
     for field in ("slot_capacity", "slot_interval_minutes", "delivery_minimum"):
@@ -1093,6 +1149,17 @@ async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Di
             update_data[field] = val
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Plan-based feature enforcement (restaurant only)
+    plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+    if not plan_features["delivery_enabled"]:
+        update_data.pop("delivery_enabled", None)
+        if "delivery_enabled" in update_data:
+            update_data["delivery_enabled"] = False
+    if not plan_features["reservations_enabled"]:
+        update_data.pop("reservations_enabled", None)
+        if "reservations_enabled" in update_data:
+            update_data["reservations_enabled"] = False
 
     # Auto-detect timezone if address changed
     if "address" in update_data and update_data["address"]:
@@ -1127,8 +1194,14 @@ async def get_restaurant_config(restaurant_id: str, user: Dict[str, Any] = Depen
 
 @api_router.put("/restaurants/{restaurant_id}/config")
 async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpdate, user: Dict[str, Any] = Depends(get_current_user)):
-    await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+
+    # Plan-based feature enforcement
+    plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+    if not plan_features["upsell_enabled"]:
+        update_data.pop("upsell_enabled", None)
+
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
     cfg_coll = get_config_collection(business_type)
@@ -1931,7 +2004,9 @@ async def get_learning_stats(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get auto-learning statistics for a restaurant."""
-    await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    if not get_plan_features(restaurant.get("plan", "STARTER"))["auto_learning"]:
+        return {"total_calls_processed": 0, "aliases_learned": 0, "calls_flagged": 0, "last_processed_at": None}
     learning_service = get_learning_service(db)
     stats = await learning_service.get_learning_stats(restaurant_id)
     return stats
@@ -1945,7 +2020,9 @@ async def get_flagged_calls(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get calls flagged for owner review (low quality scores)."""
-    await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    if not get_plan_features(restaurant.get("plan", "STARTER"))["auto_learning"]:
+        return {"flagged_calls": [], "count": 0}
     learning_service = get_learning_service(db)
     calls = await learning_service.get_flagged_calls(
         restaurant_id, limit, include_reviewed
@@ -1959,7 +2036,9 @@ async def get_learned_aliases(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get all auto-learned menu aliases."""
-    await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    if not get_plan_features(restaurant.get("plan", "STARTER"))["auto_learning"]:
+        return {"aliases": [], "count": 0}
     learning_service = get_learning_service(db)
     aliases = await learning_service.get_learned_aliases(restaurant_id)
     return {"aliases": aliases, "count": len(aliases)}
@@ -1971,7 +2050,9 @@ async def get_pending_suggestions(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get pending suggestions (aliases not yet applied, rules to review)."""
-    await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    if not get_plan_features(restaurant.get("plan", "STARTER"))["auto_learning"]:
+        return {"menu_suggestions": [], "rule_suggestions": []}
     learning_service = get_learning_service(db)
     suggestions = await learning_service.get_pending_suggestions(restaurant_id)
     return suggestions
@@ -3160,30 +3241,44 @@ async def create_stripe_payment_link(
     order_total_cents: int,
     restaurant_name: str,
     call_sid: str,
+    restaurant_id: str = "",
+    convenience_fee_pct: float = 1.0,
 ) -> Optional[str]:
     if not stripe.api_key:
         return None
     if order_total_cents <= 0:
         return None
     try:
-        # Create a one-time price
-        price = stripe.Price.create(
-            unit_amount=order_total_cents,
-            currency="usd",
-            product_data={
-                "name": f"{restaurant_name} Phone Order",
+        fee_cents = max(1, round(order_total_cents * convenience_fee_pct / 100))
+        checkout_session = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "unit_amount": order_total_cents,
+                        "product_data": {"name": f"Order — {restaurant_name}"},
+                    },
+                    "quantity": 1,
+                },
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "unit_amount": fee_cents,
+                        "product_data": {"name": "Convenience Fee"},
+                    },
+                    "quantity": 1,
+                },
+            ],
+            metadata={
+                "type": "order_payment",
+                "order_id": call_sid,
+                "restaurant_id": restaurant_id,
+                "restaurant_name": restaurant_name,
             },
+            after_completion={"type": "redirect", "redirect": {"url": os.environ.get("PAYMENT_SUCCESS_URL", "https://duuutah.com/payment-success")}},
         )
-        # Create payment link
-        payment_link = stripe.PaymentLink.create(
-            line_items=[{"price": price.id, "quantity": 1}],
-            metadata={"call_sid": call_sid},
-            after_completion={
-                "type": "message",
-                "message": {"message": "Payment received! See you soon."},
-            },
-        )
-        return payment_link.url
+        return checkout_session.url
     except Exception as e:
         logger.error(f"Stripe payment link error: {e}")
         return None
@@ -3222,7 +3317,7 @@ async def startup_seed():
             timezone="America/New_York",
             address="123 Main Street, New York, NY 10001",
             is_active=True,
-            plan="GROWTH",
+            plan="PRO",
             monthly_call_count=0,
             owner_name="Bella Owner",
             owner_email="owner@bellacucina.example",
@@ -3440,12 +3535,22 @@ async def twilio_incoming_call(request: Request):
     # Pre-fetch all pipeline data NOW so WebSocket handler starts instantly
     restaurant_id = restaurant["id"]
     business_type = restaurant.get("business_type", "restaurant")
-    config, menu_items, customer_profile = await _asyncio.gather(
-        get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}),
-        db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
-        db.customer_profiles.find_one({"phone_number": caller_number, "restaurant_id": restaurant_id}, {"_id": 0}),
-    )
-    logger.info(f"[{call_sid}] CRM lookup: caller={caller_number}, profile={customer_profile}")
+    plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+
+    if plan_features["customer_recognition"]:
+        config, menu_items, customer_profile = await _asyncio.gather(
+            get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}),
+            db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
+            db.customer_profiles.find_one({"phone_number": caller_number, "restaurant_id": restaurant_id}, {"_id": 0}),
+        )
+        logger.info(f"[{call_sid}] CRM lookup: caller={caller_number}, profile={customer_profile}")
+    else:
+        config, menu_items = await _asyncio.gather(
+            get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}),
+            db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
+        )
+        customer_profile = None
+        logger.info(f"[{call_sid}] CRM skipped (plan: {restaurant.get('plan', 'STARTER')})")
 
     # Enrich menu items with resolved modifier groups for AI prompt
     if business_type == "restaurant" or config is None:
@@ -3544,6 +3649,7 @@ async def twilio_incoming_call(request: Request):
     system_prompt = get_system_prompt(
         business_type=business_type,
         customer_profile=customer_profile,
+        plan=restaurant.get("plan", "STARTER"),
         restaurant_name=restaurant.get("name", "the restaurant"),
         cuisine_type=restaurant.get("cuisine_type", ""),
         persona=config.get("persona", "friendly") if config else "friendly",
@@ -3844,11 +3950,12 @@ async def twilio_media_stream(websocket: WebSocket):
                 await db.active_calls.delete_one({"call_sid": call_sid})
                 logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
 
-                # CRM: upsert customer profile
+                # CRM: upsert customer profile (PRO only)
                 customer_name = None
                 if session and session.order and session.order.customer_name:
                     customer_name = session.order.customer_name
-                if caller_number := active_call.get("caller_number"):
+                _plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+                if _plan_features["customer_recognition"] and (caller_number := active_call.get("caller_number")):
                         _profile_update = {
                             "phone_number": caller_number,
                             "restaurant_id": restaurant_id,
@@ -3908,10 +4015,13 @@ async def twilio_media_stream(websocket: WebSocket):
                 if sms_enabled and session and session.order.items:
                     payment_link = None
                     if sms_payment_enabled and order_total > 0:
+                        _fee_pct = get_plan_features(restaurant.get("plan", "STARTER"))["prepayment_fee_pct"]
                         payment_link = await create_stripe_payment_link(
                             order_total_cents=order_total,
                             restaurant_name=restaurant.get("name", "the restaurant"),
                             call_sid=call_sid,
+                            restaurant_id=restaurant_id,
+                            convenience_fee_pct=_fee_pct,
                         )
                     await send_order_sms(
                         caller_number=active_call.get("caller_number", ""),
@@ -3925,9 +4035,9 @@ async def twilio_media_stream(websocket: WebSocket):
                     if session:
                         session._sms_count += 1
 
-                # Feed to auto-learning service (post-call, non-blocking)
+                # Feed to auto-learning service (PRO only, post-call, non-blocking)
                 try:
-                    if analysis and session and session.business_type == "restaurant":
+                    if analysis and session and session.business_type == "restaurant" and _plan_features.get("auto_learning"):
                         learning_service = get_learning_service(db)
                         learning_result = await learning_service.process_call_analysis(
                             restaurant_id=restaurant_id,
@@ -3978,10 +4088,17 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
     if not stripe.api_key:
         raise HTTPException(status_code=400, detail="Stripe is not configured")
 
-    frontend_url = get_frontend_url()
-    price_id = payload.price_id or os.environ.get("STRIPE_DEFAULT_PRICE_ID")
+    # Resolve plan -> price ID
+    plan_name = (payload.plan or "starter").upper()
+    if plan_name not in PLAN_CONFIG:
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {plan_name}. Valid plans: {', '.join(PLAN_CONFIG.keys())}")
+
+    price_env_key = PLAN_CONFIG[plan_name]["price_env"]
+    price_id = payload.price_id or os.environ.get(price_env_key) or os.environ.get("STRIPE_DEFAULT_PRICE_ID")
     if not price_id:
-        raise HTTPException(status_code=400, detail="Stripe price is not configured")
+        raise HTTPException(status_code=400, detail=f"Stripe price not configured for {plan_name}. Set {price_env_key} env var.")
+
+    frontend_url = get_frontend_url()
 
     customer_id = restaurant.get("stripe_customer_id")
     if not customer_id:
@@ -4002,12 +4119,45 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
         mode="subscription",
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{frontend_url}/settings?billing=success",
-        cancel_url=f"{frontend_url}/settings?billing=cancelled",
-        metadata={"restaurant_id": restaurant["id"]},
+        success_url=f"{frontend_url}/billing?billing=success",
+        cancel_url=f"{frontend_url}/billing?billing=cancelled",
+        metadata={"restaurant_id": restaurant["id"], "plan": plan_name},
     )
 
     return {"checkout_url": session.url}
+
+
+class BillingPortalRequest(BaseModel):
+    restaurant_id: str
+
+
+@api_router.post("/billing/portal")
+async def create_billing_portal(payload: BillingPortalRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    """Create a Stripe Customer Portal session for managing subscriptions."""
+    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
+
+    if not stripe.api_key:
+        raise HTTPException(status_code=400, detail="Stripe is not configured")
+
+    customer_id = restaurant.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No active subscription. Please choose a plan first.")
+
+    frontend_url = get_frontend_url()
+    portal_session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=f"{frontend_url}/billing",
+    )
+
+    return {"portal_url": portal_session.url}
+
+
+@api_router.get("/restaurants/{restaurant_id}/plan-features")
+async def get_plan_features_endpoint(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Return the plan config for the authenticated restaurant."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    plan = restaurant.get("plan", "STARTER")
+    return {"plan": plan, "features": get_plan_features(plan)}
 
 
 @api_router.post("/webhooks/stripe")
@@ -4026,43 +4176,139 @@ async def stripe_webhook(request: Request):
 
     event_type = event["type"]
     data = event["data"]["object"]
+    all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
 
     if event_type == "checkout.session.completed":
-        restaurant_id = data.get("metadata", {}).get("restaurant_id")
-        subscription_id = data.get("subscription")
-        customer_id = data.get("customer")
-        if restaurant_id:
-            for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
-                await _coll.update_one(
-                    {"id": restaurant_id},
+        checkout_mode = data.get("mode")
+        meta = data.get("metadata", {})
+
+        if checkout_mode == "payment" and meta.get("type") == "order_payment":
+            # --- ORDER PREPAYMENT ---
+            order_id = meta.get("order_id")
+            rest_id = meta.get("restaurant_id")
+            if order_id:
+                await db.call_records.update_one(
+                    {"twilio_call_sid": order_id},
                     {"$set": {
-                        "stripe_customer_id": customer_id,
-                        "stripe_subscription_id": subscription_id,
-                        "billing_status": "active",
-                        "plan": "GROWTH",
+                        "payment_status": "paid",
+                        "paid_at": datetime.now(timezone.utc).isoformat(),
+                        "stripe_payment_id": data.get("payment_intent", ""),
                     }}
                 )
+                logger.info(f"[Stripe] Order {order_id} marked as paid")
+                # Notify restaurant via WebSocket
+                try:
+                    from websocket_notifications import notify_restaurant
+                    await notify_restaurant(rest_id, {
+                        "type": "order_paid",
+                        "order_id": order_id,
+                        "amount": data.get("amount_total", 0),
+                    })
+                except Exception as e:
+                    logger.warning(f"[Stripe] WebSocket notify failed: {e}")
+                # Send payment confirmation SMS
+                try:
+                    caller = await db.call_records.find_one({"twilio_call_sid": order_id}, {"caller_number": 1, "_id": 0})
+                    if caller and caller.get("caller_number"):
+                        amount_str = f"${data.get('amount_total', 0) / 100:.2f}"
+                        rest_name = meta.get("restaurant_name", "the restaurant")
+                        sms_body = f"Payment of {amount_str} received for your order at {rest_name}. Thank you!"
+                        account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+                        auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+                        from_number = os.environ.get("TWILIO_PHONE_NUMBER")
+                        if account_sid and auth_token and from_number:
+                            import base64 as _b64
+                            _creds = _b64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
+                            import httpx as _httpx
+                            async with _httpx.AsyncClient(timeout=8.0) as _client:
+                                await _client.post(
+                                    f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+                                    data={"From": from_number, "To": caller["caller_number"], "Body": sms_body},
+                                    headers={"Authorization": f"Basic {_creds}"},
+                                )
+                            logger.info(f"[Stripe] Payment confirmation SMS sent for {order_id}")
+                except Exception as e:
+                    logger.warning(f"[Stripe] Payment SMS failed: {e}")
+
+        elif checkout_mode == "subscription":
+            # --- SUBSCRIPTION CHECKOUT ---
+            restaurant_id = meta.get("restaurant_id")
+            subscription_id = data.get("subscription")
+            customer_id = data.get("customer")
+            plan_name = meta.get("plan", "STARTER")
+            plan_features = get_plan_features(plan_name)
+            if restaurant_id:
+                for _coll in all_collections:
+                    await _coll.update_one(
+                        {"id": restaurant_id},
+                        {"$set": {
+                            "stripe_customer_id": customer_id,
+                            "stripe_subscription_id": subscription_id,
+                            "billing_status": "active",
+                            "plan": plan_name,
+                            "monthly_call_limit": plan_features["monthly_call_limit"],
+                            "subscription_started_at": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                logger.info(f"[Stripe] Subscription activated: restaurant={restaurant_id}, plan={plan_name}")
 
     elif event_type in ("customer.subscription.updated", "customer.subscription.created"):
         subscription_id = data.get("id")
         customer_id = data.get("customer")
         status = data.get("status")
-        for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+        # Resolve plan from the subscription's price ID
+        price_to_plan = get_price_id_to_plan_map()
+        items = data.get("items", {}).get("data", [])
+        resolved_plan = None
+        if items:
+            sub_price_id = items[0].get("price", {}).get("id", "")
+            resolved_plan = price_to_plan.get(sub_price_id)
+        update_fields = {
+            "stripe_subscription_id": subscription_id,
+            "billing_status": status,
+        }
+        if resolved_plan:
+            update_fields["plan"] = resolved_plan
+            update_fields["monthly_call_limit"] = get_plan_features(resolved_plan)["monthly_call_limit"]
+        for _coll in all_collections:
             await _coll.update_one(
                 {"stripe_customer_id": customer_id},
-                {"$set": {
-                    "stripe_subscription_id": subscription_id,
-                    "billing_status": status,
-                }}
+                {"$set": update_fields}
             )
+        logger.info(f"[Stripe] Subscription {event_type}: customer={customer_id}, status={status}, plan={resolved_plan}")
 
     elif event_type == "customer.subscription.deleted":
         customer_id = data.get("customer")
-        for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+        # Check if within 7-day free cancellation window
+        for _coll in all_collections:
+            rest = await _coll.find_one({"stripe_customer_id": customer_id}, {"subscription_started_at": 1, "_id": 0})
+            if rest and rest.get("subscription_started_at"):
+                started = datetime.fromisoformat(rest["subscription_started_at"].replace("Z", "+00:00"))
+                days_active = (datetime.now(timezone.utc) - started).days
+                cancel_note = "free_cancellation" if days_active <= 7 else "standard_cancellation"
+                logger.info(f"[Stripe] Subscription canceled: customer={customer_id}, days_active={days_active}, {cancel_note}")
             await _coll.update_one(
                 {"stripe_customer_id": customer_id},
                 {"$set": {"billing_status": "canceled"}}
             )
+
+    elif event_type == "invoice.payment_failed":
+        customer_id = data.get("customer")
+        for _coll in all_collections:
+            await _coll.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {"billing_status": "past_due"}}
+            )
+        logger.warning(f"[Stripe] Payment failed for customer {customer_id}")
+
+    elif event_type == "invoice.paid":
+        customer_id = data.get("customer")
+        for _coll in all_collections:
+            await _coll.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {"billing_status": "active", "monthly_call_count": 0}}
+            )
+        logger.info(f"[Stripe] Invoice paid for customer {customer_id} — call count reset")
 
     return JSONResponse({"received": True})
 

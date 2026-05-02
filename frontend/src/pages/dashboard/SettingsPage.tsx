@@ -338,12 +338,18 @@ const SettingsPage = () => {
             {/* Restaurant-only toggles */}
             {!isAppointmentBusiness && (
               <div className="grid sm:grid-cols-2 gap-4">
-                {[["pickup_enabled","Pickup Enabled"],["delivery_enabled","Delivery Enabled"],["reservations_enabled","Reservations Enabled"]].map(([key, label]) => (
-                  <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-                    <p className="text-sm font-medium">{label}</p>
-                    <Switch checked={restaurant?.[key] ?? false} onCheckedChange={(v) => setRestaurant({ ...restaurant, [key]: v })} />
-                  </div>
-                ))}
+                {[["pickup_enabled","Pickup Enabled"],["delivery_enabled","Delivery Enabled"],["reservations_enabled","Reservations Enabled"]].map(([key, label]) => {
+                  const isGated = (key === "delivery_enabled" || key === "reservations_enabled") && restaurant?.plan !== "PRO";
+                  return (
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">{label}</p>
+                        {isGated && <span className="text-xs text-muted-foreground">(Pro)</span>}
+                      </div>
+                      <Switch checked={restaurant?.[key] ?? false} disabled={isGated} onCheckedChange={(v) => setRestaurant({ ...restaurant, [key]: v })} />
+                    </div>
+                  );
+                })}
               </div>
             )}
 

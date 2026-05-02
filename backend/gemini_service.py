@@ -970,7 +970,27 @@ def build_system_prompt(
     reservations_enabled: bool = False,
     reservation_settings: Optional[Dict] = None,
     available_reservation_slots: Optional[List[Dict]] = None,
+    plan: str = "STARTER",
 ) -> str:
+    # ── Plan-based feature enforcement ──
+    # Import here to avoid circular imports
+    try:
+        from server import PLAN_CONFIG
+        plan_features = PLAN_CONFIG.get(plan, PLAN_CONFIG["STARTER"])
+    except ImportError:
+        plan_features = {"delivery_enabled": True, "reservations_enabled": True,
+                         "upsell_enabled": True, "customer_recognition": True,
+                         "max_call_duration_sec": None, "warn_at_sec": None}
+
+    if not plan_features.get("delivery_enabled"):
+        delivery_enabled = False
+    if not plan_features.get("reservations_enabled"):
+        reservations_enabled = False
+    if not plan_features.get("upsell_enabled"):
+        upsell_enabled = False
+    if not plan_features.get("customer_recognition"):
+        customer_profile = None
+
     menu_index = MenuIndex(menu_items)
     menu_examples = generate_menu_examples(menu_index)
 
@@ -1519,7 +1539,16 @@ NEVER DO THESE
 ✗ Ask for pickup/delivery again after it was already confirmed
 
 If asked what AI you are: "I'm the virtual assistant for {restaurant_name}. How can I help with your order?"
-"""
+""" + (f"""
+
+═══════════════════════════
+CALL TIME LIMIT
+═══════════════════════════
+This call has a {plan_features.get('max_call_duration_sec', 180) // 60}-minute time limit.
+At approximately {plan_features.get('warn_at_sec', 150) // 60} minutes {(plan_features.get('warn_at_sec', 150) % 60)} seconds,
+you will be asked to let the customer know the call will be forwarded to reception in 30 seconds.
+Keep the conversation focused and efficient. Prioritize completing the order quickly.
+""" if plan_features.get("max_call_duration_sec") else "")
 
 
 # ---------------------------------------------------------------------------
@@ -1989,6 +2018,7 @@ async def send_menu_sms(
 def get_system_prompt(
     business_type: str,
     customer_profile: dict = None,
+    plan: str = "STARTER",
     **kwargs
 ) -> str:
     """
@@ -1999,7 +2029,7 @@ def get_system_prompt(
     """
     if business_type in ("restaurant",):
         restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
-        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
+        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile, plan=plan)
 
     elif business_type in ("clinic", "salon", "home_services", "legal"):
         try:

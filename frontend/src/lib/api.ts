@@ -172,6 +172,10 @@ export const activateRestaurant = async (id?: string | null) => {
 
 export const createBillingCheckout = (payload: unknown) => api.post(`/billing/create-checkout-session`, payload);
 
+export const createBillingPortal = (payload: unknown) => api.post(`/billing/portal`, payload);
+
+export const getPlanFeatures = (restaurantId: string) => api.get(`/restaurants/${restaurantId}/plan-features`);
+
 export const getSquareConnectUrl = (restaurantId?: string | null) =>
   api.get(`/integrations/square/connect`, {
     params: { restaurant_id: requireRestaurantId(restaurantId) },

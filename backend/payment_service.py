@@ -17,17 +17,21 @@ logger = logging.getLogger(__name__)
 
 
 async def create_payment_link(
-    order_total: int,  # cents
+    order_total: int,  # cents — food total only
     order_id: str,
     restaurant_name: str,
     customer_name: str = "Customer",
     items_description: str = "",
+    restaurant_id: str = "",
+    convenience_fee_pct: float = 1.0,
 ) -> Optional[str]:
     """
-    Create a Stripe payment link for an order.
+    Create a Stripe Checkout Session for order prepayment.
+    Uses inline price_data — does NOT create persistent Price objects.
+    Adds convenience fee as a separate visible line item.
     
     Returns:
-        Payment link URL, or None if creation fails
+        Checkout Session URL, or None if creation fails
     """
     import stripe
     
@@ -39,21 +43,35 @@ async def create_payment_link(
     stripe.api_key = stripe_key
     
     try:
-        # Create a price for this specific order
-        price = stripe.Price.create(
-            unit_amount=order_total,
-            currency="usd",
-            product_data={
-                "name": f"Order {order_id[-8:].upper()} - {restaurant_name}",
-                "description": items_description[:500] if items_description else None,
-            },
-        )
+        fee_cents = max(1, round(order_total * convenience_fee_pct / 100))
         
-        # Create payment link
-        payment_link = stripe.PaymentLink.create(
-            line_items=[{"price": price.id, "quantity": 1}],
+        checkout_session = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "unit_amount": order_total,
+                        "product_data": {
+                            "name": f"Order — {restaurant_name}",
+                            "description": items_description[:500] if items_description else None,
+                        },
+                    },
+                    "quantity": 1,
+                },
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "unit_amount": fee_cents,
+                        "product_data": {"name": "Convenience Fee"},
+                    },
+                    "quantity": 1,
+                },
+            ],
             metadata={
+                "type": "order_payment",
                 "order_id": order_id,
+                "restaurant_id": restaurant_id,
                 "restaurant_name": restaurant_name,
                 "customer_name": customer_name,
             },
@@ -62,14 +80,14 @@ async def create_payment_link(
                 "redirect": {
                     "url": os.environ.get("PAYMENT_SUCCESS_URL", "https://duuutah.com/payment-success")
                 }
-            }
+            },
         )
         
-        logger.info(f"Payment link created for order {order_id}: {payment_link.url}")
-        return payment_link.url
+        logger.info(f"Payment checkout created for order {order_id}: {checkout_session.url}")
+        return checkout_session.url
         
     except Exception as e:
-        logger.error(f"Stripe payment link error: {e}")
+        logger.error(f"Stripe payment checkout error: {e}")
         return None
 
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { createBillingCheckout, getRestaurant, getRestaurantId } from "@/lib/api";
+import { createBillingCheckout, createBillingPortal, getRestaurant, getRestaurantId } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,41 +24,38 @@ const plans = [
     price: 199,
     calls: 500,
     features: [
-      "500 AI calls/month",
-      "Basic analytics",
+      "500 AI calls/month ($0.25/call overage)",
+      "AI pickup order taking",
+      "1 AI voice (default)",
+      "1 language",
+      "Full menu & modifier management",
+      "POS integration (Clover, Square, Toast)",
+      "SMS order confirmations",
+      "Prepayment via SMS (1% customer fee)",
+      "Full analytics dashboard",
+      "Call history & transcripts",
       "Email support",
-      "1 phone number",
     ],
     popular: false,
   },
   {
-    name: "Professional",
-    price: 299,
+    name: "Pro",
+    price: 349,
     calls: 1000,
     features: [
-      "1000 AI calls/month",
-      "Advanced analytics",
+      "Everything in Starter, plus:",
+      "1,000 AI calls/month ($0.20/call overage)",
+      "AI delivery order handling",
+      "AI table reservations",
+      "AI upselling during calls",
+      "Customer recognition",
+      "Auto AI learning",
+      "8 premium voice options",
+      "Multi-language support",
+      "Customer CRM profiles",
       "Priority support",
-      "3 phone numbers",
-      "Custom voice",
-      "SMS notifications",
     ],
     popular: true,
-  },
-  {
-    name: "Enterprise",
-    price: 499,
-    calls: 2500,
-    features: [
-      "2500 AI calls/month",
-      "Full analytics suite",
-      "24/7 phone support",
-      "Unlimited phone numbers",
-      "Custom integrations",
-      "Dedicated account manager",
-      "SLA guarantee",
-    ],
-    popular: false,
   },
 ];
 
@@ -106,8 +103,8 @@ const BillingPage = () => {
   const manageBilling = async () => {
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const res = await createBillingCheckout({ restaurant_id: restaurantId });
-      const url = res?.data?.checkout_url;
+      const res = await createBillingPortal({ restaurant_id: restaurantId });
+      const url = res?.data?.portal_url;
       if (!url) return toast.error("Billing portal not available");
       window.location.href = url;
     } catch (err: any) {
@@ -204,7 +201,7 @@ const BillingPage = () => {
       {/* Pricing Plans */}
       <div>
         <h3 className="font-display font-bold text-lg mb-4">Available Plans</h3>
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="grid md:grid-cols-2 gap-6 max-w-3xl">
           {plans.map((plan) => (
             <Card 
               key={plan.name}
@@ -267,7 +264,7 @@ const BillingPage = () => {
           <div>
             <p className="font-medium text-sm">What happens if I exceed my call limit?</p>
             <p className="text-sm text-muted-foreground mt-1">
-              You'll be notified when approaching your limit. Overage calls are billed at $0.25/call.
+              You'll be notified when approaching your limit. Overage calls are billed at $0.25/call (Starter) or $0.20/call (Pro).
             </p>
           </div>
           <Separator />
@@ -281,7 +278,7 @@ const BillingPage = () => {
           <div>
             <p className="font-medium text-sm">Do you offer refunds?</p>
             <p className="text-sm text-muted-foreground mt-1">
-              We offer a 14-day money-back guarantee for first-time subscribers.
+              Cancel within 7 days for free. After 7 days, we charge the current month's fee.
             </p>
           </div>
         </div>

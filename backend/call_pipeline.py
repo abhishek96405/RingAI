@@ -1406,15 +1406,23 @@ async def create_call_pipeline(
                     # Detect order type from customer speech (restaurant only)
                     if session.business_type == "restaurant":
                         _tl = text.lower()
+                        _plan = session.restaurant.get("plan", "STARTER")
                         if any(w in _tl for w in ["delivery", "deliver", "delivered"]):
-                            session._detected_order_type = "delivery"
-                            logger.info(f"[{call_sid}] Order type locked: delivery (from customer)")
+                            if _plan == "PRO":
+                                session._detected_order_type = "delivery"
+                                logger.info(f"[{call_sid}] Order type locked: delivery (from customer)")
+                            else:
+                                session._detected_order_type = "pickup"
+                                logger.info(f"[{call_sid}] Delivery requested but STARTER plan — forcing pickup")
                         elif any(w in _tl for w in ["pickup", "pick up", "pick-up", "carry out", "carryout"]):
                             session._detected_order_type = "pickup"
                             logger.info(f"[{call_sid}] Order type locked: pickup (from customer)")
                         elif any(w in _tl for w in ["reservation", "reserve", "book a table", "table for"]):
-                            session._detected_order_type = "reservation"
-                            logger.info(f"[{call_sid}] Order type locked: reservation (from customer)")
+                            if _plan == "PRO":
+                                session._detected_order_type = "reservation"
+                                logger.info(f"[{call_sid}] Order type locked: reservation (from customer)")
+                            else:
+                                logger.info(f"[{call_sid}] Reservation requested but STARTER plan — ignoring")
                     # Cancel farewell timer if customer speaks again
                     if hasattr(session, '_farewell_timer') and session._farewell_timer:
                         session._farewell_timer.cancel()
@@ -1503,17 +1511,47 @@ async def create_call_pipeline(
                 if session and session.business_type == "restaurant":
                     async def _call_duration_guard():
                         try:
-                            # Wait initial period then check order type
-                            await asyncio.sleep(150)  # 2.5 min — check at this point
-                            max_seconds = 240 if session._detected_order_type == "delivery" else 180
-                            remaining = max_seconds - 150
-                            if remaining > 0:
-                                await asyncio.sleep(remaining)
-                            # Only escalate if order not already confirmed
+                            _plan = session.restaurant.get("plan", "STARTER")
+                            try:
+                                from server import PLAN_CONFIG
+                                _pf = PLAN_CONFIG.get(_plan, PLAN_CONFIG["STARTER"])
+                            except ImportError:
+                                _pf = {"max_call_duration_sec": 180, "warn_at_sec": 150}
+                            max_seconds = _pf.get("max_call_duration_sec")
+                            warn_at = _pf.get("warn_at_sec")
+
+                            if not max_seconds:
+                                # PRO — no duration limit, but keep a safety net
+                                max_seconds = 240 if session._detected_order_type == "delivery" else 180
+                                await asyncio.sleep(max_seconds)
+                                if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
+                                    logger.info(f"[{call_sid}] Call duration limit ({max_seconds}s) — escalating")
+                                    session._escalated = True
+                                    session.order.transition(OrderState.ESCALATED, "call duration limit")
+                                    await session._schedule_hangup(reason="escalation")
+                                return
+
+                            # STARTER — warn at warn_at seconds, escalate at max_seconds
+                            await asyncio.sleep(warn_at)
                             if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
-                                logger.info(f"[{call_sid}] Call duration limit reached ({max_seconds}s) — escalating")
+                                logger.info(f"[{call_sid}] STARTER call duration warning at {warn_at}s")
+                                # Inject system warning for AI to relay to customer
+                                if hasattr(session, '_gemini_llm') and session._gemini_llm:
+                                    try:
+                                        await session._gemini_llm.send_text_message(
+                                            "SYSTEM NOTICE: This call will be forwarded to our reception team in 30 seconds. "
+                                            "Please let the customer know by saying something like: "
+                                            "'Just so you know, I'll be connecting you with our team in about 30 seconds.' "
+                                            "Then continue helping with the order."
+                                        )
+                                    except Exception as _e:
+                                        logger.warning(f"[{call_sid}] Could not inject duration warning: {_e}")
+
+                            await asyncio.sleep(max_seconds - warn_at)
+                            if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
+                                logger.info(f"[{call_sid}] STARTER call duration limit ({max_seconds}s) — escalating to reception")
                                 session._escalated = True
-                                session.order.transition(OrderState.ESCALATED, "call duration limit")
+                                session.order.transition(OrderState.ESCALATED, "starter call duration limit")
                                 await session._schedule_hangup(reason="escalation")
                         except asyncio.CancelledError:
                             pass
