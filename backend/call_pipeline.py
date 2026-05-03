@@ -1445,6 +1445,7 @@ async def create_call_pipeline(
                             elif _rest_has_delivery:
                                 # STARTER — restaurant has delivery, AI will offer escalation via prompt
                                 logger.info(f"[{call_sid}] Delivery requested on STARTER — AI will offer escalation to team")
+                                session._escalation_deferred = True
                             else:
                                 # Restaurant doesn't offer delivery at all
                                 logger.info(f"[{call_sid}] Delivery requested but restaurant doesn't deliver")
@@ -1458,6 +1459,7 @@ async def create_call_pipeline(
                             elif _rest_has_reservations:
                                 # STARTER — restaurant has reservations, AI will offer escalation via prompt
                                 logger.info(f"[{call_sid}] Reservation requested on STARTER — AI will offer escalation to team")
+                                session._escalation_deferred = True
                             else:
                                 logger.info(f"[{call_sid}] Reservation requested but restaurant doesn't offer reservations")
                     # Cancel farewell timer if customer speaks again
