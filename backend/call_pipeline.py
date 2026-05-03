@@ -365,8 +365,9 @@ class CallSession:
         if role == "ai":
             signals = detect_call_signals(text)
 
-            if signals["order_confirmed"] and not self._order_dispatched:
+            if signals["order_confirmed"] and not self._order_dispatched and not self._hangup_scheduled:
                 logger.info(f"[{self.call_sid}] ORDER_CONFIRMED signal detected")
+                self._order_dispatched = True  # set immediately to prevent double-fire
                 self.order.transition(OrderState.CONFIRMED, "confirmed via AI signal")
                 self.order.confirmed_at = datetime.now(timezone.utc).isoformat()
                 asyncio.ensure_future(self._handle_order_confirmed())
@@ -374,13 +375,12 @@ class CallSession:
                 if self._escalation_deferred:
                     async def _deferred_escalation():
                         # Wait for order dispatch + SMS to finish
-                        await asyncio.sleep(5.0)
-                        if not self._escalated:
-                            logger.info(f"[{self.call_sid}] Executing deferred escalation after order completion")
-                            self._escalation_deferred = False
-                            self._escalated = True
-                            self._hangup_scheduled = False  # reset to allow escalation hangup
-                            await self._schedule_hangup(reason="escalation")
+                        await asyncio.sleep(3.0)
+                        logger.info(f"[{self.call_sid}] Executing deferred escalation after order completion")
+                        self._escalation_deferred = False
+                        self._escalated = True
+                        self._hangup_scheduled = False  # reset so escalation hangup can proceed
+                        await self._schedule_hangup(reason="escalation")
                     asyncio.ensure_future(_deferred_escalation())
 
             if signals["escalate_to_human"] and not self._escalated:
@@ -427,7 +427,11 @@ class CallSession:
         if self._call_timer_task:
             self._call_timer_task.cancel()
             self._call_timer_task = None
-        await self._schedule_hangup(reason="order_confirmed")
+        # If escalation is deferred, let the deferred escalation handle hangup (with transfer)
+        if self._escalation_deferred:
+            logger.info(f"[{self.call_sid}] Skipping order_confirmed hangup — deferred escalation will handle transfer")
+        else:
+            await self._schedule_hangup(reason="order_confirmed")
 
     async def _handle_appointment_confirmed(self):
         """Handle appointment businesses — dispatch booking then hang up."""
