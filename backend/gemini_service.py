@@ -1755,8 +1755,8 @@ ANALYSIS_SYSTEM_PROMPT = """You are a call quality analyst. Analyze the transcri
 
 IMPORTANT: Return ONLY valid JSON, no markdown, no explanations.
 
-Required JSON format:
-{"quality_score":85,"order_accuracy":"accurate","detected_language":"en","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"Brief summary"}
+Required JSON format (values shown are EXAMPLES ONLY — calculate the real score based on the call):
+{"quality_score":<integer 1-100>,"order_accuracy":"<accurate|minor_issues|inaccurate>","detected_language":"<ISO code>","issues":[],"highlights":[],"menu_suggestions":[],"rule_suggestions":[],"summary":"<one sentence>"}
 
 Rules:
 - quality_score: integer 1-100

@@ -1431,6 +1431,7 @@ async def create_call_pipeline(
                     text = message.content.strip() if message.content else ""
                 if text:
                     logger.info(f"[{call_sid}] CUSTOMER: {text}")
+                    session.add_transcript_entry("customer", text)
                     # Detect order type from customer speech (restaurant only)
                     if session.business_type == "restaurant":
                         _tl = text.lower()

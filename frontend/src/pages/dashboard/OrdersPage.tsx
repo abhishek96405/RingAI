@@ -37,10 +37,12 @@ const OrdersPage = () => {
       if (!restaurantId) { setOrders([]); setFiltered([]); return; }
 
     // Fetch up to 3 pages to get up to 300 orders
-      const res1 = await getCalls(restaurantId, { page: 1, limit: 100, status: "COMPLETED" });
+      const [res1, res1e] = await Promise.all([
+        getCalls(restaurantId, { page: 1, limit: 100, status: "COMPLETED" }),
+        getCalls(restaurantId, { page: 1, limit: 100, status: "ESCALATED" }),
+      ]);
       const data = res1.data;
-      let allCalls = data.calls || [];
-
+      let allCalls = [...(data.calls || []), ...(res1e.data.calls || [])];
       if (data.pages > 1) {
         const res2 = await getCalls(restaurantId, { page: 2, limit: 100, status: "COMPLETED" });
         allCalls = [...allCalls, ...(res2.data.calls || [])];
