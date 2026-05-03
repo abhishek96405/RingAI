@@ -131,16 +131,7 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         # Guards VAD interruption during opening greeting window
         self._greeting_in_progress = False
 
-    async def _handle_interruption(self):
-        """
-        Suppress VAD-triggered interruptions while:
-        - A function call is executing (_fn_in_progress)
-        - The opening greeting is still being spoken (_greeting_in_progress)
-        """
-        if self._fn_in_progress:
-            logger.debug("VAD interruption suppressed — function call in progress")
-            return
-        await super()._handle_interruption()
+    # _handle_interruption is defined below _flush_ai_buffer (single definition)
 
     async def _run_function_call(self, tool_call, llm_context):
         """
@@ -224,7 +215,11 @@ class RingAIGeminiLive(GeminiLiveLLMService):
                 await self._on_ai_transcript(full_text)
 
     async def _handle_interruption(self):
+        """Suppress VAD interruptions during function calls + reset capture flag."""
         self._last_captured_from_model_turn = False
+        if self._fn_in_progress:
+            logger.debug("VAD interruption suppressed — function call in progress")
+            return
         await super()._handle_interruption()
 
     async def _create_initial_response(self):
@@ -331,6 +326,7 @@ class CallSession:
             caller_number=caller_number,
         )
         self._order_dispatched  = False
+        self._order_confirmed_handled = False  # guards _handle_order_confirmed re-entry
         self._escalated         = False
         self._escalation_deferred = False  # escalation deferred until order completes
         self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
@@ -385,8 +381,7 @@ class CallSession:
                             logger.info(f"[{self.call_sid}] Executing deferred escalation after order completion")
                             self._escalation_deferred = False
                             self._escalated = True
-                            self._hangup_scheduled = False
-                            await self._schedule_hangup(reason="escalation")
+                            await self._schedule_hangup(reason="escalation", _skip_guard=True)
                     asyncio.ensure_future(_order_then_escalate())
                 else:
                     asyncio.ensure_future(self._handle_order_confirmed())
@@ -406,6 +401,12 @@ class CallSession:
 
     async def _handle_order_confirmed(self):
         """Handle restaurant orders — dispatch order then hang up."""
+        # Re-entry guard: only handle once even if called from multiple detection paths
+        if self._order_confirmed_handled:
+            logger.info(f"[{self.call_sid}] ORDER_CONFIRMED already handled — skipping duplicate")
+            return
+        self._order_confirmed_handled = True
+
         if not self.is_open:
             logger.warning(f"[{self.call_sid}] ORDER_CONFIRMED blocked — restaurant is CLOSED")
             return
@@ -423,7 +424,8 @@ class CallSession:
                 )
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        self._hangup_scheduled = False
+        # Keep _hangup_scheduled = True — prevents on_client_disconnected from
+        # calling on_call_complete again. _schedule_hangup uses _skip_guard to proceed.
         if self._call_timer_task:
             self._call_timer_task.cancel()
             self._call_timer_task = None
@@ -431,7 +433,7 @@ class CallSession:
         if self._escalation_deferred:
             logger.info(f"[{self.call_sid}] Skipping order_confirmed hangup — deferred escalation will handle transfer")
         else:
-            await self._schedule_hangup(reason="order_confirmed")
+            await self._schedule_hangup(reason="order_confirmed", _skip_guard=True)
 
     async def _handle_appointment_confirmed(self):
         """Handle appointment businesses — dispatch booking then hang up."""
@@ -448,8 +450,7 @@ class CallSession:
                 )
             except Exception as e:
                 logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        self._hangup_scheduled = False
-        await self._schedule_hangup(reason="appointment_confirmed")
+        await self._schedule_hangup(reason="appointment_confirmed", _skip_guard=True)
 
     async def _handle_reservation_confirmed(self):
         """Handle restaurant reservation — extract details and dispatch reservation."""
@@ -504,8 +505,8 @@ class CallSession:
     # Schedule hangup — calls on_call_complete FIRST, then terminates
     # ------------------------------------------------------------------
 
-    async def _schedule_hangup(self, reason: str = "order_confirmed"):
-        if self._hangup_scheduled:
+    async def _schedule_hangup(self, reason: str = "order_confirmed", _skip_guard: bool = False):
+        if not _skip_guard and self._hangup_scheduled:
             return
         self._hangup_scheduled = True
         logger.info(
@@ -1097,25 +1098,9 @@ async def create_call_pipeline(
                 session._sms_count += 1
                 logger.info(f"[{call_sid}] Menu SMS triggered")
 
-            # ── ORDER_CONFIRMED signal (restaurant) ──
-            order_confirmed_phrases = [
-                "your order is confirmed",
-                "order is confirmed",
-                "order's confirmed",
-                "i'll send you a text confirmation",
-                "sending you a text confirmation",
-                "send you a text with",
-                "thank you for calling",
-                "thanks for calling",
-            ]
-            if (
-                session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED)
-                and any(p in text_lower for p in order_confirmed_phrases)
-                and session.business_type == "restaurant"
-            ):
-                logger.info(f"[{call_sid}] ORDER_CONFIRMED signal detected")
-                session.order.transition(OrderState.CONFIRMED, "signal")
-                asyncio.create_task(session._handle_order_confirmed())
+            # ── ORDER_CONFIRMED signal handled in add_transcript_entry ──
+            # (detect_call_signals + _handle_order_confirmed is the single path,
+            #  including the escalation_deferred flow — no duplicate here)
 
             # ── APPOINTMENT_CONFIRMED signal ──
             appointment_confirmed_phrases = [
