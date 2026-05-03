@@ -1469,8 +1469,12 @@ STEP 2: Take the order. Acknowledge each item briefly — "Got it", "Added", "Pe
 {step3_block}
 
 STEP 4: MANDATORY READBACK — never skip this:
-  Read back ALL items confirmed during this call — not just the most recent ones.
-  Keep a running mental list of every item the customer added, even if discussed earlier.
+  Read back ALL items with their EXACT quantities confirmed during this call — not just the most recent ones.
+  Keep a running mental list of every item AND quantity the customer added, even if discussed earlier.
+  CRITICAL: If a side conversation happened (reservation questions, delivery questions, etc.) between
+  when items were ordered and the readback, go back and recall the EXACT quantities originally stated.
+  Example: Customer said "three Apollo Fish" then asked about reservations then gave their name →
+  readback MUST say "three Apollo Fish", NOT "one Apollo Fish". Never reduce quantities.
   For DELIVERY orders, always include the delivery address in the readback:
   "Let me read that back: one Chicken Biryani and two Samosas, going to 984 Four Seasons Boulevard, Aurora. Does that sound right?"
   If the customer says you missed an item — immediately add it and re-read the full list.

@@ -363,41 +363,42 @@ class CallSession:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         if role == "ai":
+            # Guard: skip if we already handled order confirmation (prevents double-fire
+            # from duplicate add_transcript_entry calls for the same AI message)
+            if getattr(self, '_last_signal_text', None) == text:
+                return
             signals = detect_call_signals(text)
+            if not any(signals.values()):
+                return  # no signals — skip processing
+            self._last_signal_text = text  # mark this message as processed
 
-            if signals["order_confirmed"] and not self._order_dispatched and not self._hangup_scheduled:
+            if signals["order_confirmed"] and not self._hangup_scheduled:
                 logger.info(f"[{self.call_sid}] ORDER_CONFIRMED signal detected")
                 self.order.transition(OrderState.CONFIRMED, "confirmed via AI signal")
                 self.order.confirmed_at = datetime.now(timezone.utc).isoformat()
-                asyncio.ensure_future(self._handle_order_confirmed())
-                # Execute deferred escalation after order dispatch completes
                 if self._escalation_deferred:
-                    async def _deferred_escalation():
-                        # Wait for order dispatch + SMS to finish
+                    # Order + deferred escalation: dispatch order, then transfer to human
+                    async def _order_then_escalate():
+                        await self._handle_order_confirmed()
                         await asyncio.sleep(3.0)
-                        logger.info(f"[{self.call_sid}] Executing deferred escalation after order completion")
-                        self._escalation_deferred = False
-                        self._escalated = True
-                        self._hangup_scheduled = False  # reset so escalation hangup can proceed
-                        await self._schedule_hangup(reason="escalation")
-                    asyncio.ensure_future(_deferred_escalation())
-
-            if signals["escalate_to_human"] and not self._escalated:
-                # Check if there's an active order that shouldn't be abandoned
-                _has_active_order = (
-                    self.order
-                    and hasattr(self.order, 'items')
-                    and len(getattr(self.order, 'items', []))  > 0
-                    and self.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED, OrderState.ESCALATED)
-                )
-                if _has_active_order:
-                    logger.info(f"[{self.call_sid}] ESCALATE signal detected but order in progress — deferring until order completes")
-                    self._escalation_deferred = True
+                        if not self._escalated:
+                            logger.info(f"[{self.call_sid}] Executing deferred escalation after order completion")
+                            self._escalation_deferred = False
+                            self._escalated = True
+                            self._hangup_scheduled = False
+                            await self._schedule_hangup(reason="escalation")
+                    asyncio.ensure_future(_order_then_escalate())
                 else:
-                    logger.info(f"[{self.call_sid}] ESCALATE signal detected")
-                    self.order.transition(OrderState.ESCALATED, "escalation via AI signal")
-                    self._escalated = True
-                    asyncio.ensure_future(self._schedule_hangup(reason="escalation"))
+                    asyncio.ensure_future(self._handle_order_confirmed())
+                return  # ORDER_CONFIRMED handled — skip ESCALATE in same message
+
+            if signals["escalate_to_human"] and not self._escalated and not self._escalation_deferred:
+                # Escalation deferred is already set from customer speech detection —
+                # the deferred handler will fire after order confirmation, so skip here
+                logger.info(f"[{self.call_sid}] ESCALATE signal detected")
+                self.order.transition(OrderState.ESCALATED, "escalation via AI signal")
+                self._escalated = True
+                asyncio.ensure_future(self._schedule_hangup(reason="escalation"))
 
     # ------------------------------------------------------------------
     # Order confirmed — dispatch then hang up
