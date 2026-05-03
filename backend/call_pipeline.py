@@ -367,7 +367,6 @@ class CallSession:
 
             if signals["order_confirmed"] and not self._order_dispatched and not self._hangup_scheduled:
                 logger.info(f"[{self.call_sid}] ORDER_CONFIRMED signal detected")
-                self._order_dispatched = True  # set immediately to prevent double-fire
                 self.order.transition(OrderState.CONFIRMED, "confirmed via AI signal")
                 self.order.confirmed_at = datetime.now(timezone.utc).isoformat()
                 asyncio.ensure_future(self._handle_order_confirmed())
