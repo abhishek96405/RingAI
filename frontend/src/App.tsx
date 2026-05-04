@@ -21,6 +21,7 @@ import AppointmentsPage from "./pages/dashboard/AppointmentsPage";
 import ReservationsPage from "./pages/dashboard/ReservationsPage";
 import AdminPage from "./pages/dashboard/AdminPage";
 import NotFound from "./pages/NotFound";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
 
@@ -183,6 +184,7 @@ const AppRoutes = () => (
       <Route path="reservations" element={<ReservationsPage />} />
       <Route path="admin" element={<AdminPage />} />
     </Route>
+    <Route path="/payment-success" element={<PaymentSuccessPage />} />
     <Route path="*" element={<NotFound />} />
   </Routes>
 );

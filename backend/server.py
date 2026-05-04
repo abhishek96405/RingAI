@@ -500,6 +500,9 @@ class RestaurantBase(BaseModel):
     toast_restaurant_guid: Optional[str] = None
     # SMS payment link option
     prepayment_enabled: bool = False
+    # Stripe Connect (order prepayment)
+    stripe_account_id: Optional[str] = None
+    stripe_connect_status: Optional[str] = None  # "pending" | "active" | "disconnected"
     # lifecycle
     status: str = "draft"
     onboarding_step: int = 1
@@ -565,6 +568,9 @@ class RestaurantUpdate(BaseModel):
     toast_restaurant_guid: Optional[str] = None
     # SMS payment link option
     prepayment_enabled: Optional[bool] = None
+    # Stripe Connect (order prepayment)
+    stripe_account_id: Optional[str] = None
+    stripe_connect_status: Optional[str] = None
 
 
 class Restaurant(RestaurantBase):
@@ -3246,14 +3252,26 @@ async def create_stripe_payment_link(
     restaurant_name: str,
     call_sid: str,
     restaurant_id: str = "",
-    convenience_fee_pct: float = 1.0,
+    stripe_account_id: Optional[str] = None,
 ) -> Optional[str]:
+    """
+    Create a Stripe Checkout session for order prepayment.
+    - If stripe_account_id is set (Stripe Connect): payment goes to restaurant's account,
+      Duuutah AI keeps 1% as application_fee_amount automatically.
+    - If not connected: returns None (prepayment disabled for this restaurant).
+    """
     if not stripe.api_key:
+        logger.warning("Stripe payment link skipped — STRIPE_SECRET_KEY not set")
         return None
     if order_total_cents <= 0:
         return None
+    if not stripe_account_id:
+        logger.info(f"[{call_sid}] Stripe prepayment skipped — restaurant not connected to Stripe Connect")
+        return None
     try:
-        fee_cents = max(1, round(order_total_cents * convenience_fee_pct / 100))
+        # 1% convenience fee kept by Duuutah AI (minimum 1 cent)
+        application_fee_cents = max(1, round(order_total_cents * 0.01))
+        success_url = os.environ.get("PAYMENT_SUCCESS_URL", "https://duuutah.com/payment-success")
         checkout_session = stripe.checkout.Session.create(
             mode="payment",
             line_items=[
@@ -3265,23 +3283,21 @@ async def create_stripe_payment_link(
                     },
                     "quantity": 1,
                 },
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "unit_amount": fee_cents,
-                        "product_data": {"name": "Convenience Fee"},
-                    },
-                    "quantity": 1,
-                },
             ],
+            payment_intent_data={
+                "application_fee_amount": application_fee_cents,
+                "transfer_data": {"destination": stripe_account_id},
+            },
             metadata={
                 "type": "order_payment",
                 "order_id": call_sid,
                 "restaurant_id": restaurant_id,
                 "restaurant_name": restaurant_name,
             },
-            after_completion={"type": "redirect", "redirect": {"url": os.environ.get("PAYMENT_SUCCESS_URL", "https://duuutah.com/payment-success")}},
+            success_url=f"{success_url}?order={call_sid}",
+            cancel_url=f"{success_url}?cancelled=true",
         )
+        logger.info(f"[{call_sid}] Stripe payment link created → {stripe_account_id} (fee: {application_fee_cents}¢)")
         return checkout_session.url
     except Exception as e:
         logger.error(f"Stripe payment link error: {e}")
@@ -4021,13 +4037,13 @@ async def twilio_media_stream(websocket: WebSocket):
                 if sms_enabled and session and session.order.items:
                     payment_link = None
                     if sms_payment_enabled and order_total > 0:
-                        _fee_pct = get_plan_features(restaurant.get("plan", "STARTER"))["prepayment_fee_pct"]
+                        _stripe_account_id = restaurant.get("stripe_account_id")
                         payment_link = await create_stripe_payment_link(
                             order_total_cents=order_total,
                             restaurant_name=restaurant.get("name", "the restaurant"),
                             call_sid=call_sid,
                             restaurant_id=restaurant_id,
-                            convenience_fee_pct=_fee_pct,
+                            stripe_account_id=_stripe_account_id,
                         )
                     await send_order_sms(
                         caller_number=active_call.get("caller_number", ""),
@@ -4352,6 +4368,128 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
     for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
         await _coll.update_one({"id": state}, {"$set": {"square_connected": True}})
     return {"connected": True, "restaurant_id": state}
+
+
+# ─────────────────────────────────────────────────────────────
+# STRIPE CONNECT — Restaurant onboarding (order prepayment)
+# ─────────────────────────────────────────────────────────────
+
+@api_router.get("/integrations/stripe/connect")
+async def stripe_connect(
+    restaurant_id: str = Query(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Generate a Stripe Connect Express OAuth URL for the restaurant owner."""
+    await ensure_restaurant_access(restaurant_id, user)
+    client_id = os.environ.get("STRIPE_CLIENT_ID")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Stripe Connect is not configured — set STRIPE_CLIENT_ID on Render")
+    frontend_url = get_frontend_url()
+    redirect_uri = f"{frontend_url}/integrations/stripe/callback"
+    connect_url = (
+        "https://connect.stripe.com/oauth/authorize"
+        f"?response_type=code"
+        f"&client_id={client_id}"
+        f"&scope=read_write"
+        f"&state={restaurant_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&stripe_user[business_type]=company"
+    )
+    return {"connect_url": connect_url}
+
+
+@api_router.get("/integrations/stripe/callback")
+async def stripe_connect_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    """
+    Stripe redirects here after restaurant owner completes Connect onboarding.
+    Exchanges the OAuth code for a stripe_account_id and saves to DB.
+    state = restaurant_id
+    """
+    frontend_url = get_frontend_url()
+
+    if error or not code or not state:
+        logger.warning(f"[Stripe Connect] Callback error: {error} (state={state})")
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/dashboard/integrations?stripe_error=true"},
+        )
+
+    try:
+        response = stripe.OAuth.token(grant_type="authorization_code", code=code)
+        stripe_account_id = response.get("stripe_user_id")
+        if not stripe_account_id:
+            raise ValueError("No stripe_user_id in response")
+
+        # Save to all business collections
+        all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
+        for _coll in all_collections:
+            await _coll.update_one(
+                {"id": state},
+                {"$set": {
+                    "stripe_account_id": stripe_account_id,
+                    "stripe_connect_status": "active",
+                    "stripe_connect_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+        logger.info(f"[Stripe Connect] Restaurant {state} connected → {stripe_account_id}")
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/dashboard/integrations?stripe_connected=true"},
+        )
+    except Exception as e:
+        logger.error(f"[Stripe Connect] Callback failed: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/dashboard/integrations?stripe_error=true"},
+        )
+
+
+@api_router.post("/integrations/stripe/disconnect")
+async def stripe_connect_disconnect(
+    restaurant_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Disconnect Stripe Connect for a restaurant."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    stripe_account_id = restaurant.get("stripe_account_id")
+    if stripe_account_id:
+        try:
+            stripe.OAuth.deauthorize(
+                client_id=os.environ.get("STRIPE_CLIENT_ID", ""),
+                stripe_user_id=stripe_account_id,
+            )
+        except Exception as e:
+            logger.warning(f"[Stripe Connect] Deauthorize failed (non-critical): {e}")
+
+    all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
+    for _coll in all_collections:
+        await _coll.update_one(
+            {"id": restaurant_id},
+            {"$set": {
+                "stripe_account_id": None,
+                "stripe_connect_status": "disconnected",
+            }},
+        )
+    logger.info(f"[Stripe Connect] Restaurant {restaurant_id} disconnected")
+    return {"disconnected": True}
+
+
+@api_router.get("/integrations/stripe/status")
+async def stripe_connect_status(
+    restaurant_id: str = Query(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Return Stripe Connect status for a restaurant."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    return {
+        "connected": restaurant.get("stripe_connect_status") == "active",
+        "stripe_account_id": restaurant.get("stripe_account_id"),
+        "status": restaurant.get("stripe_connect_status") or "not_connected",
+    }
 
 
 @api_router.post("/webhooks/square")

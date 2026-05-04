@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection, getStripeConnectUrl, getStripeConnectStatus, disconnectStripeConnect } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -145,6 +145,104 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
           {saving ? "Saving..." : "Save Credentials"}
         </Button>
       </div>
+    </Card>
+  );
+}
+
+function StripeConnectCard({ restaurantId }: { restaurantId: string }) {
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("stripe_connected") === "true") {
+      toast.success("Stripe account connected successfully!");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    if (params.get("stripe_error") === "true") {
+      toast.error("Stripe connection failed. Please try again.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    getStripeConnectStatus(restaurantId)
+      .then((res) => setConnected(res.data?.connected || false))
+      .catch(() => setConnected(false))
+      .finally(() => setLoading(false));
+  }, [restaurantId]);
+
+  const handleConnect = async () => {
+    try {
+      setConnecting(true);
+      const res = await getStripeConnectUrl(restaurantId);
+      const url = res?.data?.connect_url;
+      if (!url) return toast.error("Stripe Connect URL not available — check STRIPE_CLIENT_ID on Render");
+      window.location.href = url;
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to start Stripe connection");
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm("Disconnect Stripe? Customers will no longer be able to prepay for orders.")) return;
+    try {
+      setDisconnecting(true);
+      await disconnectStripeConnect(restaurantId);
+      setConnected(false);
+      toast.success("Stripe account disconnected");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to disconnect Stripe");
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  return (
+    <Card className="premium-card p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <CreditCard className="w-5 h-5 text-primary" />
+          <h3 className="font-display font-bold text-lg">Stripe Payments</h3>
+        </div>
+        {!loading && connected && (
+          <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1">
+            <CheckCircle2 className="w-3 h-3" /> Connected
+          </Badge>
+        )}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Connect your Stripe account to accept prepayments from customers. Duuutah AI charges a 1% convenience fee per transaction — the rest goes directly to you.
+      </p>
+      {loading ? (
+        <div className="h-10 rounded-xl bg-muted animate-pulse" />
+      ) : connected ? (
+        <Button
+          variant="outline"
+          className="text-destructive rounded-xl"
+          onClick={handleDisconnect}
+          disabled={disconnecting}
+        >
+          {disconnecting ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Disconnecting...</> : "Disconnect Stripe"}
+        </Button>
+      ) : (
+        <Button
+          className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90"
+          onClick={handleConnect}
+          disabled={connecting}
+        >
+          {connecting ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Redirecting to Stripe...</> : "Connect Stripe Account"}
+        </Button>
+      )}
+      {!connected && !loading && (
+        <p className="text-xs text-muted-foreground">
+          Works with new and existing Stripe accounts. You'll be redirected to Stripe to complete setup in ~2 minutes.
+        </p>
+      )}
     </Card>
   );
 }
@@ -298,6 +396,8 @@ const IntegrationsPage = () => {
           </Button>
         )}
       </Card>
+
+      <StripeConnectCard restaurantId={activeRestaurant?.id || getRestaurantId() || ""} />
 
       <POSCredentialsCard restaurantId={activeRestaurant?.id || getRestaurantId() || ""} />
 

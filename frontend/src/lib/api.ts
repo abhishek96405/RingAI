@@ -309,4 +309,20 @@ export const rejectLearningAlias = (restaurantId: string | null | undefined, ali
 export const getFlaggedCalls = (restaurantId?: string | null) =>
   api.get(`/restaurants/${requireRestaurantId(restaurantId)}/learning/flagged-calls`);
 
+// ── Stripe Connect ──
+export const getStripeConnectUrl = (restaurantId?: string | null) =>
+  api.get(`/integrations/stripe/connect`, {
+    params: { restaurant_id: requireRestaurantId(restaurantId) },
+  });
+
+export const getStripeConnectStatus = (restaurantId?: string | null) =>
+  api.get(`/integrations/stripe/status`, {
+    params: { restaurant_id: requireRestaurantId(restaurantId) },
+  });
+
+export const disconnectStripeConnect = (restaurantId?: string | null) =>
+  api.post(`/integrations/stripe/disconnect`, {
+    restaurant_id: requireRestaurantId(restaurantId),
+  });
+
 export default api;
