@@ -4385,7 +4385,10 @@ async def stripe_connect(
     if not client_id:
         raise HTTPException(status_code=400, detail="Stripe Connect is not configured — set STRIPE_CLIENT_ID on Render")
     frontend_url = get_frontend_url()
-    redirect_uri = f"{frontend_url}/integrations/stripe/callback"
+    redirect_uri = os.environ.get(
+        "STRIPE_CONNECT_REDIRECT_URI",
+        f"{frontend_url}/api/integrations/stripe/callback"
+    )
     connect_url = (
         "https://connect.stripe.com/oauth/authorize"
         f"?response_type=code"
