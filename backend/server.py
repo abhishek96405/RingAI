@@ -4416,11 +4416,11 @@ async def stripe_connect_callback(
 
     if error or not code or not state:
         logger.warning(f"[Stripe Connect] Callback error: {error} (state={state})")
-        return JSONResponse(
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?stripe_error=true",
             status_code=302,
-            headers={"Location": f"{frontend_url}/dashboard/integrations?stripe_error=true"},
         )
-
     try:
         response = stripe.OAuth.token(grant_type="authorization_code", code=code)
         stripe_account_id = response.get("stripe_user_id")
@@ -4439,15 +4439,17 @@ async def stripe_connect_callback(
                 }},
             )
         logger.info(f"[Stripe Connect] Restaurant {state} connected → {stripe_account_id}")
-        return JSONResponse(
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?stripe_connected=true",
             status_code=302,
-            headers={"Location": f"{frontend_url}/dashboard/integrations?stripe_connected=true"},
         )
     except Exception as e:
         logger.error(f"[Stripe Connect] Callback failed: {e}", exc_info=True)
-        return JSONResponse(
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?stripe_error=true",
             status_code=302,
-            headers={"Location": f"{frontend_url}/dashboard/integrations?stripe_error=true"},
         )
 
 
