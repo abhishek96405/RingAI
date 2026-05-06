@@ -54,7 +54,7 @@ const Login = () => {
                 <Phone className="w-4 h-4 text-primary-foreground" />
               </motion.div>
               <span className="font-display font-bold text-xl">
-                Ring<span className="text-gradient">AI</span>
+                Duuutah <span className="text-gradient">AI</span>
               </span>
             </Link>
           </motion.div>
