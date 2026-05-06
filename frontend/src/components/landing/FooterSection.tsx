@@ -71,7 +71,7 @@ const FooterSection = () => {
           transition={{ duration: 0.5, delay: 0.4 }}
           className="mt-12 pt-8 border-t border-border/50 text-center text-xs text-muted-foreground"
         >
-          © {new Date().getFullYear()} RingAI. All rights reserved.
+          © {new Date().getFullYear()} Duuutah AI. All rights reserved.
         </motion.div>
       </div>
     </footer>

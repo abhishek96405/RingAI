@@ -35,7 +35,7 @@ const CTASection = () => {
           transition={{ delay: 0.35, duration: 0.5 }}
           className="text-lg text-primary-foreground/70 max-w-lg mx-auto mb-7"
         >
-          Join 500+ businesses already using RingAI to boost revenue and delight customers.
+          Join 500+ businesses already using Duuutah AI to boost revenue and delight customers.
         </motion.p>
         <motion.div
           initial={{ opacity: 0, y: 15 }}

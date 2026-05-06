@@ -9,24 +9,24 @@ import {
 
 const faqs = [
   {
-    q: "How does RingAI handle phone orders?",
-    a: "RingAI uses advanced natural language processing to understand callers, take orders from your menu, handle modifications and special requests, and confirm everything before ending the call. Orders are sent directly to your POS or dashboard in real time.",
+    q: "How does Duuutah AI handle phone orders?",
+    a: "Duuutah AI uses advanced natural language processing to understand callers, take orders from your menu, handle modifications and special requests, and confirm everything before ending the call. Orders are sent directly to your POS or dashboard in real time.",
   },
   {
     q: "How long does setup take?",
     a: "Most restaurants are fully set up in under 10 minutes. Just upload your menu, configure your greeting and hours, connect your phone number, and you're live. No technical expertise required.",
   },
   {
-    q: "Can RingAI handle multiple calls at once?",
-    a: "Absolutely. Unlike a human receptionist, RingAI can handle unlimited concurrent calls — so you'll never miss an order during peak hours again.",
+    q: "Can Duuutah AI handle multiple calls at once?",
+    a: "Absolutely. Unlike a human receptionist, Duuutah AI can handle unlimited concurrent calls — so you'll never miss an order during peak hours again.",
   },
   {
     q: "Does it work with my existing phone number?",
-    a: "Yes. RingAI integrates with your existing phone system through call forwarding. You keep your current number — customers won't notice any change except better, faster service.",
+    a: "Yes. Duuutah AI integrates with your existing phone system through call forwarding. You keep your current number — customers won't notice any change except better, faster service.",
   },
   {
     q: "What happens if the AI can't understand a caller?",
-    a: "RingAI is designed to gracefully handle edge cases. If it's unsure, it will politely ask for clarification. You can also set a fallback to transfer to a staff member for complex requests.",
+    a: "Duuutah AI is designed to gracefully handle edge cases. If it's unsure, it will politely ask for clarification. You can also set a fallback to transfer to a staff member for complex requests.",
   },
   {
     q: "Is there a contract or can I cancel anytime?",
@@ -56,7 +56,7 @@ const FAQSection = () => {
             <span className="text-gradient">We've Got Answers</span>
           </h2>
           <p className="text-muted-foreground text-base max-w-xl mx-auto">
-            Everything you need to know about RingAI before getting started.
+            Everything you need to know about Duuutah AI before getting started.
           </p>
         </motion.div>
 

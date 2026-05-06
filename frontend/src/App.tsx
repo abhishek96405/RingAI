@@ -33,7 +33,7 @@ function FullPageLoader() {
       <div className="text-center space-y-3">
         <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-muted border-t-foreground" />
         <div>
-          <p className="text-sm font-medium text-foreground">Loading RingAI…</p>
+          <p className="text-sm font-medium text-foreground">Loading Duuutah AI…</p>
           <p className="text-xs text-muted-foreground">Syncing your workspace</p>
         </div>
       </div>

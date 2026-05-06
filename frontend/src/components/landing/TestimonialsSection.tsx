@@ -5,7 +5,7 @@ const testimonials = [
   {
     name: "Maria Chen",
     role: "Owner, Golden Dragon Restaurant",
-    quote: "RingAI cut our missed calls by 90%. We're capturing orders we used to lose every single night.",
+    quote: "Duuutah AI cut our missed calls by 90%. We're capturing orders we used to lose every single night.",
     stars: 5,
     initials: "MC",
     accentColor: "from-primary to-purple-500",
@@ -66,7 +66,7 @@ const AnimatedWaveformVisual = () => {
             <Phone className="w-5 h-5 text-primary-foreground" />
           </motion.div>
           <div>
-            <p className="font-display font-bold text-sm text-primary-foreground">RingAI Live Call</p>
+            <p className="font-display font-bold text-sm text-primary-foreground">Duuutah AI Live Call</p>
             <div className="flex items-center gap-1.5">
               <motion.div
                 className="w-2 h-2 rounded-full bg-success"
@@ -112,7 +112,7 @@ const AnimatedWaveformVisual = () => {
                 ? "bg-primary/30 text-primary-foreground rounded-br-md"
                 : "bg-primary-foreground/10 text-primary-foreground/80 rounded-bl-md"
             }`}>
-              <span className="text-[9px] text-primary-foreground/40 block mb-0.5">{msg.role === "ai" ? "RingAI" : "Caller"} · {msg.time}</span>
+              <span className="text-[9px] text-primary-foreground/40 block mb-0.5">{msg.role === "ai" ? "Duuutah AI" : "Caller"} · {msg.time}</span>
               {msg.text}
             </div>
           </motion.div>
@@ -196,7 +196,7 @@ const TestimonialsSection = () => {
                 <span className="text-gradient">Real Businesses</span>
               </h2>
               <p className="text-muted-foreground text-base max-w-lg">
-                Join business owners who trust RingAI to handle calls and boost revenue.
+                Join business owners who trust Duuutah AI to handle calls and boost revenue.
               </p>
             </motion.div>
 

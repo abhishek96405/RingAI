@@ -26,7 +26,7 @@ const AnimatedDashboard = () => {
             <div className="w-3 h-3 rounded-full bg-warning/60" />
             <div className="w-3 h-3 rounded-full bg-success/60" />
           </div>
-          <span className="text-xs text-muted-foreground font-medium ml-2">RingAI Dashboard</span>
+          <span className="text-xs text-muted-foreground font-medium ml-2">Duuutah AI Dashboard</span>
         </div>
 
         <div className="p-5 space-y-4">
@@ -163,7 +163,7 @@ const HeroSection = () => {
             </h1>
 
             <p className="text-lg text-muted-foreground leading-relaxed mb-6 max-w-md">
-              Never miss a call again. RingAI answers phones, books appointments, takes orders, and handles inquiries — 24/7, in any language.
+              Never miss a call again. Duuutah AI answers phones, books appointments, takes orders, and handles inquiries — 24/7, in any language.
             </p>
 
             {/* Business Type Selection */}

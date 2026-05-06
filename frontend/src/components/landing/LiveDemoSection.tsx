@@ -52,7 +52,7 @@ const LiveDemoSection = () => {
               Hear Ring<span className="text-gradient">AI</span> in Action
             </h2>
             <p className="text-muted-foreground text-base mb-6 max-w-lg">
-              Experience how RingAI handles a real reservation call. Our AI speaks naturally, understands context, and books tables seamlessly.
+              Experience how Duuutah AI handles a real reservation call. Our AI speaks naturally, understands context, and books tables seamlessly.
             </p>
 
             <ul className="space-y-3">
@@ -82,7 +82,7 @@ const LiveDemoSection = () => {
                     <Phone className="w-4 h-4 text-primary-foreground" />
                   </div>
                   <div>
-                    <p className="font-display font-bold text-sm text-primary-foreground">RingAI Demo</p>
+                    <p className="font-display font-bold text-sm text-primary-foreground">Duuutah AI Demo</p>
                     <p className="text-xs text-primary-foreground/70">Tap to start demo</p>
                   </div>
                 </div>
@@ -94,7 +94,7 @@ const LiveDemoSection = () => {
                         <Volume2 className="w-6 h-6 text-primary" />
                       </div>
                       <p className="font-display font-semibold text-foreground text-sm mb-1">Ready to Demo</p>
-                      <p className="text-xs text-muted-foreground">Start a simulated call to see RingAI in action</p>
+                      <p className="text-xs text-muted-foreground">Start a simulated call to see Duuutah AI in action</p>
                     </div>
                   ) : (
                     <div className="flex-1 space-y-2.5 overflow-y-auto">

@@ -229,7 +229,7 @@ const DashboardLayout = () => {
             <div className="min-w-0">
               <h2 className="font-display font-semibold text-lg truncate">{currentLabel}</h2>
               <p className="text-xs text-muted-foreground truncate">
-                {activeRestaurant?.name || "RingAI Workspace"}
+                {activeRestaurant?.name || "Duuutah AI Workspace"}
                 {activeRestaurant?.cuisine_type ? ` · ${activeRestaurant.cuisine_type}` : ""}
               </p>
             </div>

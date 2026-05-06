@@ -33,7 +33,7 @@ const FeaturesSection = () => {
             Everything Your Business Phone Needs
           </h2>
           <p className="text-base text-muted-foreground">
-            From answering calls to booking appointments, RingAI handles it all so your team can focus on what matters.
+            From answering calls to booking appointments, Duuutah AI handles it all so your team can focus on what matters.
           </p>
         </motion.div>
 

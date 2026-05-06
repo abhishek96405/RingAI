@@ -326,7 +326,7 @@ const SettingsPage = () => {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2"><Label>RingAI Phone Number</Label><Input value={restaurant?.phone_number || ""} readOnly className="h-11 rounded-xl opacity-60" /></div>
+              <div className="space-y-2"><Label>Duuutah AI Phone Number</Label><Input value={restaurant?.phone_number || ""} readOnly className="h-11 rounded-xl opacity-60" /></div>
 
               {/* Avg prep time — restaurant only */}
               {!isAppointmentBusiness && (

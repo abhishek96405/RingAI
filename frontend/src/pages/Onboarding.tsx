@@ -789,7 +789,7 @@ export default function Onboarding() {
               className="bg-gradient-primary text-primary-foreground rounded-xl px-8 shadow-glow hover:opacity-90"
             >
               {currentStep === steps.length - 1
-                ? activating ? "Activating..." : "Launch RingAI 🚀"
+                ? activating ? "Activating..." : "Launch Duuutah AI 🚀"
                 : submitting ? "Saving..." : "Continue"}
               {currentStep < steps.length - 1 && <ArrowRight className="ml-2 w-4 h-4" />}
             </Button>

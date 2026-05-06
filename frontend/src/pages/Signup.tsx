@@ -96,7 +96,7 @@ const Signup = () => {
               Create your account
             </h1>
             <p className="text-sm text-muted-foreground mb-4">
-              Start your RingAI setup and launch your AI receptionist.
+              Start your Duuutah AI setup and launch your AI receptionist.
             </p>
 
             {/* Business Type Badge */}

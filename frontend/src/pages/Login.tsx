@@ -66,7 +66,7 @@ const Login = () => {
           >
             <h1 className="font-display font-extrabold text-2xl mb-2">Welcome back</h1>
             <p className="text-sm text-muted-foreground mb-8">
-              Sign in to your RingAI dashboard.
+              Sign in to your Duuutah AI dashboard.
             </p>
           </motion.div>
 
