@@ -49,7 +49,7 @@ const LiveDemoSection = () => {
               Live Demo
             </span>
             <h2 className="font-display font-extrabold text-3xl md:text-4xl text-foreground mb-4 leading-tight">
-              Hear Ring<span className="text-gradient">AI</span> in Action
+              Hear Duuutah <span className="text-gradient">AI</span> in Action
             </h2>
             <p className="text-muted-foreground text-base mb-6 max-w-lg">
               Experience how Duuutah AI handles a real reservation call. Our AI speaks naturally, understands context, and books tables seamlessly.

@@ -31,7 +31,7 @@ const Navbar = () => {
             <Phone className="w-4.5 h-4.5 text-primary-foreground" />
           </motion.div>
           <span className="font-display font-bold text-xl tracking-tight text-foreground">
-            Ring<span className="text-gradient">AI</span>
+            Duuutah <span className="text-gradient">AI</span>
           </span>
         </Link>
 
