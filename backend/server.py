@@ -4493,14 +4493,12 @@ async def stripe_connect_status(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Return Stripe Connect status for a restaurant."""
-    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
     return {
         "connected": restaurant.get("stripe_connect_status") == "active",
         "stripe_account_id": restaurant.get("stripe_account_id"),
         "status": restaurant.get("stripe_connect_status") or "not_connected",
     }
-
-
 @api_router.post("/webhooks/square")
 async def square_webhook(request: Request):
     payload = await request.body()
