@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { getCalls, getRestaurantId } from "@/lib/api";
+import { getCalls, getRestaurantId, refundOrder } from "@/lib/api";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
@@ -27,6 +27,7 @@ const OrdersPage = () => {
   const [page, setPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [refunding, setRefunding] = useState(false);
 
   const PAGE_SIZE = 15;
 
@@ -119,6 +120,36 @@ const OrdersPage = () => {
 
   const totalRevenue = orders.reduce((sum, o) => sum + (o.order_total || 0), 0);
   const avgOrder = orders.length > 0 ? totalRevenue / orders.length : 0;
+
+  const handleRefund = async () => {
+    if (!selectedOrder) return;
+    const callSid = selectedOrder.twilio_call_sid;
+    const amount = ((selectedOrder.order_total || 0) / 100).toFixed(2);
+    if (!window.confirm(`Refund $${amount} to the customer? This cannot be undone.`)) return;
+    setRefunding(true);
+    try {
+      const restaurantId = getRestaurantId();
+      if (!restaurantId) throw new Error("No restaurant selected");
+      await refundOrder(restaurantId, callSid);
+      toast.success("Order refunded successfully");
+      setSelectedOrder({ ...selectedOrder, payment_status: "refunded" });
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.twilio_call_sid === callSid ? { ...o, payment_status: "refunded" } : o
+        )
+      );
+      setFiltered((prev) =>
+        prev.map((o) =>
+          o.twilio_call_sid === callSid ? { ...o, payment_status: "refunded" } : o
+        )
+      );
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || "Refund failed";
+      toast.error(msg);
+    } finally {
+      setRefunding(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -450,8 +481,46 @@ const OrdersPage = () => {
                         {selectedOrder.status}
                       </Badge>
                     </div>
+                    {selectedOrder.payment_status && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Payment</span>
+                        <Badge
+                          variant="secondary"
+                          className={`border-0 text-xs ${
+                            selectedOrder.payment_status === "paid"
+                              ? "bg-success/10 text-success"
+                              : selectedOrder.payment_status === "refunded"
+                              ? "bg-orange-500/10 text-orange-600"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {selectedOrder.payment_status === "paid"
+                            ? "Paid"
+                            : selectedOrder.payment_status === "refunded"
+                            ? "Refunded"
+                            : selectedOrder.payment_status}
+                        </Badge>
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Refund action */}
+                {selectedOrder.payment_status === "paid" && (
+                  <Button
+                    variant="outline"
+                    className="w-full rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                    onClick={handleRefund}
+                    disabled={refunding}
+                  >
+                    {refunding ? "Processing Refund..." : "Refund Order"}
+                  </Button>
+                )}
+                {selectedOrder.payment_status === "refunded" && (
+                  <div className="text-center text-sm text-muted-foreground py-2">
+                    This order has been refunded
+                  </div>
+                )}
               </div>
             </>
           )}

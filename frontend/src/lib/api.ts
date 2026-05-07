@@ -325,4 +325,7 @@ export const disconnectStripeConnect = (restaurantId?: string | null) =>
     restaurant_id: requireRestaurantId(restaurantId),
   });
 
+export const refundOrder = (restaurantId: string, callSid: string) =>
+  api.post(`/restaurants/${restaurantId}/orders/${callSid}/refund`);
+
 export default api;

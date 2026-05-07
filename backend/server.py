@@ -4499,6 +4499,90 @@ async def stripe_connect_status(
         "stripe_account_id": restaurant.get("stripe_account_id"),
         "status": restaurant.get("stripe_connect_status") or "not_connected",
     }
+# ─────────────────────────────────────────────────────────────
+# STRIPE REFUND — Order refund via Stripe Connect
+# ─────────────────────────────────────────────────────────────
+
+@api_router.post("/restaurants/{restaurant_id}/orders/{call_sid}/refund")
+async def refund_order(
+    restaurant_id: str,
+    call_sid: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Refund a prepaid order via Stripe Connect (direct charge)."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    stripe_account_id = restaurant.get("stripe_account_id")
+    if not stripe_account_id:
+        raise HTTPException(status_code=400, detail="Restaurant is not connected to Stripe")
+
+    call = await db.call_records.find_one(
+        {"twilio_call_sid": call_sid, "restaurant_id": restaurant_id},
+        {"_id": 0},
+    )
+    if not call:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    payment_status = call.get("payment_status")
+    if payment_status == "refunded":
+        raise HTTPException(status_code=400, detail="Order has already been refunded")
+    if payment_status != "paid":
+        raise HTTPException(status_code=400, detail="Order has not been paid — cannot refund")
+
+    stripe_payment_id = call.get("stripe_payment_id")
+    if not stripe_payment_id:
+        raise HTTPException(status_code=400, detail="No Stripe payment ID found for this order")
+
+    try:
+        refund = stripe.Refund.create(
+            payment_intent=stripe_payment_id,
+            stripe_account=stripe_account_id,
+            refund_application_fee=True,
+        )
+    except Exception as e:
+        logger.error(f"[Stripe Refund] Error for {call_sid}: {e}")
+        raise HTTPException(status_code=400, detail=f"Refund failed: {str(e)}")
+
+    await db.call_records.update_one(
+        {"twilio_call_sid": call_sid},
+        {"$set": {
+            "payment_status": "refunded",
+            "refunded_at": datetime.now(timezone.utc).isoformat(),
+            "stripe_refund_id": refund.id,
+        }},
+    )
+    logger.info(f"[Stripe Refund] Order {call_sid} refunded → {refund.id}")
+
+    # Send refund confirmation SMS (non-blocking)
+    try:
+        caller_number = call.get("caller_number")
+        if caller_number:
+            order_total = call.get("order_total", 0)
+            amount_str = f"${order_total / 100:.2f}"
+            rest_name = restaurant.get("name", "the restaurant")
+            sms_body = (
+                f"Your payment of {amount_str} for your order at {rest_name} has been refunded. "
+                f"It may take 5-10 business days to appear on your statement."
+            )
+            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+            from_number = os.environ.get("TWILIO_PHONE_NUMBER")
+            if account_sid and auth_token and from_number:
+                import httpx as _httpx
+                import base64 as _b64
+                _creds = _b64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
+                async with _httpx.AsyncClient(timeout=8.0) as _client:
+                    await _client.post(
+                        f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+                        data={"From": from_number, "To": caller_number, "Body": sms_body},
+                        headers={"Authorization": f"Basic {_creds}"},
+                    )
+                logger.info(f"[Stripe Refund] Refund SMS sent for {call_sid}")
+    except Exception as e:
+        logger.warning(f"[Stripe Refund] SMS failed (non-critical): {e}")
+
+    return {"refunded": True, "refund_id": refund.id, "amount": call.get("order_total", 0)}
+
+
 @api_router.post("/webhooks/square")
 async def square_webhook(request: Request):
     payload = await request.body()
