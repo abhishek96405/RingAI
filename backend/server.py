@@ -4463,7 +4463,7 @@ async def stripe_connect_disconnect(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Disconnect Stripe Connect for a restaurant."""
-    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
     stripe_account_id = restaurant.get("stripe_account_id")
     if stripe_account_id:
         try:
@@ -4493,7 +4493,7 @@ async def stripe_connect_status(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Return Stripe Connect status for a restaurant."""
-    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
     return {
         "connected": restaurant.get("stripe_connect_status") == "active",
         "stripe_account_id": restaurant.get("stripe_account_id"),
