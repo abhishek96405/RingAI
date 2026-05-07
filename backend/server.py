@@ -4149,6 +4149,10 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
     return {"checkout_url": session.url}
 
 
+class DisconnectStripeRequest(BaseModel):
+    restaurant_id: str
+
+
 class BillingPortalRequest(BaseModel):
     restaurant_id: str
 
@@ -4177,7 +4181,7 @@ async def create_billing_portal(payload: BillingPortalRequest, user: Dict[str, A
 @api_router.get("/restaurants/{restaurant_id}/plan-features")
 async def get_plan_features_endpoint(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Return the plan config for the authenticated restaurant."""
-    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
     plan = restaurant.get("plan", "STARTER")
     return {"plan": plan, "features": get_plan_features(plan)}
 
@@ -4455,7 +4459,7 @@ async def stripe_connect_callback(
 
 @api_router.post("/integrations/stripe/disconnect")
 async def stripe_connect_disconnect(
-    restaurant_id: str,
+    payload: DisconnectStripeRequest,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Disconnect Stripe Connect for a restaurant."""
@@ -4473,13 +4477,13 @@ async def stripe_connect_disconnect(
     all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
     for _coll in all_collections:
         await _coll.update_one(
-            {"id": restaurant_id},
+            {"id": payload.restaurant_id},
             {"$set": {
                 "stripe_account_id": None,
                 "stripe_connect_status": "disconnected",
             }},
         )
-    logger.info(f"[Stripe Connect] Restaurant {restaurant_id} disconnected")
+    logger.info(f"[Stripe Connect] Restaurant {payload.restaurant_id} disconnected")
     return {"disconnected": True}
 
 
