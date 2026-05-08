@@ -4224,12 +4224,12 @@ async def stripe_webhook(request: Request):
                 logger.info(f"[Stripe] Order {order_id} marked as paid")
                 # Notify restaurant via WebSocket
                 try:
-                    from websocket_notifications import notify_restaurant
-                    await notify_restaurant(rest_id, {
-                        "type": "order_paid",
-                        "order_id": order_id,
-                        "amount": data.get("amount_total", 0),
-                    })
+                    from websocket_notifications import notify_new_order
+                    await notify_new_order(
+                        restaurant_id=rest_id,
+                        order_id=order_id,
+                        total=data.get("amount_total", 0),
+                    )
                 except Exception as e:
                     logger.warning(f"[Stripe] WebSocket notify failed: {e}")
                 # Send payment confirmation SMS
@@ -4535,7 +4535,7 @@ async def refund_order(
     try:
         refund = stripe.Refund.create(
             payment_intent=stripe_payment_id,
-            stripe_account=stripe_account_id,
+            reverse_transfer=True,
             refund_application_fee=True,
         )
     except Exception as e:
