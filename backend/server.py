@@ -4214,7 +4214,7 @@ async def stripe_webhook(request: Request):
             rest_id = meta.get("restaurant_id")
             if order_id:
                 await db.call_records.update_one(
-                    {"twilio_call_sid": order_id},
+                    {"twilio_call_sid": order_id, "payment_status": {"$ne": "refunded"}},
                     {"$set": {
                         "payment_status": "paid",
                         "paid_at": datetime.now(timezone.utc).isoformat(),
