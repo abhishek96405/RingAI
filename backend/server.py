@@ -128,7 +128,7 @@ def setup_signal_handlers():
 SENSITIVE_FIELDS = {
     "clover_api_token", "clover_merchant_id", "square_access_token", "square_location_id",
     "toast_client_id", "toast_client_secret", "toast_restaurant_guid",
-    "google_calendar_tokens", "stripe_customer_id", "stripe_subscription_id",
+    "google_calendar_tokens",
 }
 
 def strip_sensitive_fields(doc: dict) -> dict:
