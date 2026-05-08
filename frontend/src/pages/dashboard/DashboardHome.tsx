@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { getAnalyticsSummary, getRestaurantId } from "@/lib/api";
+import { activateRestaurant, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowUpRight, DollarSign, Phone, PhoneCall, ShieldCheck, Star, TrendingUp} from "lucide-react";
@@ -52,7 +52,18 @@ function CustomTooltip({ active, payload, label }: any) {
 
 const DashboardHome = () => {
   const { activeRestaurant } = useAppSession();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    if (searchParams.get("billing") !== "success") return;
+    const restaurantId = activeRestaurant?.id || getRestaurantId();
+    if (!restaurantId) return;
+    activateRestaurant(restaurantId)
+      .then(() => toast.success("Your AI phone agent is live!"))
+      .catch(() => {});
+    setSearchParams({}, { replace: true });
+  }, [searchParams, activeRestaurant]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
   const [exporting, setExporting] = useState(false);
