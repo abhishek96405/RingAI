@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Phone, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const Navbar = () => {
@@ -24,11 +24,10 @@ const Navbar = () => {
       <div className="container-wide flex items-center justify-between h-16 md:h-18">
         <Link to="/" className="flex items-center gap-2.5 group">
           <motion.div
-            className="w-9 h-9 rounded-xl bg-gradient-primary flex items-center justify-center shadow-glow"
             whileHover={{ scale: 1.1, rotate: 5 }}
             transition={{ type: "spring", stiffness: 300 }}
           >
-            <Phone className="w-4.5 h-4.5 text-primary-foreground" />
+            <img src="/icon-192x192.png" alt="Duuutah AI" className="w-9 h-9 rounded-xl" />
           </motion.div>
           <span className="font-display font-bold text-xl tracking-tight text-foreground">
             Duuutah <span className="text-gradient">AI</span>
