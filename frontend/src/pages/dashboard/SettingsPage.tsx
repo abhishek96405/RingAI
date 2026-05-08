@@ -533,6 +533,24 @@ const SettingsPage = () => {
                 <div><p className="text-sm font-medium">Voicemail Enabled</p><p className="text-xs text-muted-foreground">Allow voicemail after hours</p></div>
                 <Switch checked={config?.voicemail_enabled || false} onCheckedChange={(v) => setConfig({ ...config, voicemail_enabled: v })} />
               </div>
+
+              {!isAppointmentBusiness && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                  <div>
+                    <p className="text-sm font-medium">Order Prepayment</p>
+                    <p className="text-xs text-muted-foreground">
+                      {restaurant?.stripe_connect_status === "active"
+                        ? "Send payment link via SMS after order confirmation"
+                        : "Connect Stripe in Integrations to enable"}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={config?.sms_payment_enabled || false}
+                    disabled={restaurant?.stripe_connect_status !== "active"}
+                    onCheckedChange={(v) => setConfig({ ...config, sms_payment_enabled: v })}
+                  />
+                </div>
+              )}
             </div>
             <div>
               <Label className="mb-3 block">Operating Hours</Label>
