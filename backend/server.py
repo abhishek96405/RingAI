@@ -3297,7 +3297,7 @@ async def create_stripe_payment_link(
             success_url=f"{success_url}?order={call_sid}",
             cancel_url=f"{success_url}?cancelled=true",
         )
-        logger.info(f"[{call_sid}] Stripe payment link created → {stripe_account_id} (fee: {application_fee_cents}¢)")
+        logger.info(f"[{call_sid}] Stripe payment link created → {checkout_session.url} (acct: {stripe_account_id}, fee: {application_fee_cents}¢)")
         return checkout_session.url
     except Exception as e:
         logger.error(f"Stripe payment link error: {e}")
