@@ -584,7 +584,6 @@ class Restaurant(RestaurantBase):
 
     stripe_customer_id: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
-    billing_status: str = "not_started"
     twilio_number_sid: Optional[str] = None
     square_connected: bool = False
 
