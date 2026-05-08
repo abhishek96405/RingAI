@@ -124,7 +124,7 @@ export default function Onboarding() {
     pickup_enabled: true,
     delivery_enabled: true,
     dine_in_enabled: true,
-    reservations_enabled: false,
+    reservations_enabled: true,
     offers_delivery: true,
     offers_reservations: true,
     catering_enabled: false,
