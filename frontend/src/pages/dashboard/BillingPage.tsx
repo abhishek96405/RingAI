@@ -137,11 +137,11 @@ const BillingPage = () => {
               Manage your subscription and billing
             </p>
           </div>
-          <Badge 
-            variant={billingStatus === "active" ? "default" : "secondary"} 
-            className={billingStatus === "active" ? "bg-success text-white" : ""}
+          <Badge
+            variant={billingStatus === "active" || billingStatus === "trialing" ? "default" : "secondary"}
+            className={billingStatus === "active" ? "bg-success text-white" : billingStatus === "trialing" ? "bg-primary text-white" : ""}
           >
-            {billingStatus === "active" ? "Active" : "Inactive"}
+            {billingStatus === "active" ? "Active" : billingStatus === "trialing" ? "Trial" : billingStatus === "past_due" ? "Past Due" : "Inactive"}
           </Badge>
         </div>
 
@@ -176,7 +176,7 @@ const BillingPage = () => {
           </div>
         </div>
 
-        {billingStatus !== "active" && (
+        {billingStatus !== "active" && billingStatus !== "trialing" && (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-warning/10 border border-warning/20 mb-6">
             <AlertCircle className="w-5 h-5 text-warning flex-shrink-0" />
             <div className="flex-1">
