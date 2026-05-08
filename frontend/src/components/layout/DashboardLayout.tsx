@@ -352,6 +352,13 @@ const DashboardLayout = () => {
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
+          {activeRestaurant?.billing_status === "past_due" && (
+            <div className="mb-4 flex items-center gap-3 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm">
+              <AlertTriangle className="w-5 h-5 text-destructive shrink-0" />
+              <span className="flex-1">Your payment failed. Please update your payment method to avoid service interruption.</span>
+              <Link to="/dashboard/billing" className="text-destructive font-medium hover:underline shrink-0">Fix now →</Link>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

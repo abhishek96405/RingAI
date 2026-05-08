@@ -3975,6 +3975,29 @@ async def twilio_media_stream(websocket: WebSocket):
                 await db.active_calls.delete_one({"call_sid": call_sid})
                 logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
 
+                # Increment monthly call count + overage billing
+                try:
+                    for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+                        await _coll.update_one(
+                            {"id": restaurant_id},
+                            {"$inc": {"monthly_call_count": 1}}
+                        )
+                    _new_count = restaurant.get("monthly_call_count", 0) + 1
+                    _call_limit = restaurant.get("monthly_call_limit", 500)
+                    _cust_id = restaurant.get("stripe_customer_id")
+                    if restaurant.get("billing_status") == "active" and _cust_id and _new_count > _call_limit:
+                        _plan = restaurant.get("plan", "STARTER")
+                        _overage_cents = get_plan_features(_plan)["overage_per_call_cents"]
+                        stripe.InvoiceItem.create(
+                            customer=_cust_id,
+                            amount=_overage_cents,
+                            currency="usd",
+                            description=f"Overage call #{_new_count - _call_limit} ({_plan} plan)",
+                        )
+                        logger.info(f"[{call_sid}] Overage billed: call #{_new_count} (limit: {_call_limit}, {_overage_cents}¢)")
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] Overage billing failed (non-critical): {e}")
+
                 # CRM: upsert customer profile (PRO only)
                 customer_name = None
                 if session and session.order and session.order.customer_name:
@@ -4184,6 +4207,32 @@ async def create_billing_portal(payload: BillingPortalRequest, user: Dict[str, A
     )
 
     return {"portal_url": portal_session.url}
+
+
+@api_router.get("/billing/invoices")
+async def list_invoices(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
+    """Return recent Stripe invoices for the restaurant."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    customer_id = restaurant.get("stripe_customer_id")
+    if not customer_id:
+        return {"invoices": []}
+    try:
+        invoices = stripe.Invoice.list(customer=customer_id, limit=12)
+        return {"invoices": [
+            {
+                "id": inv.id,
+                "date": inv.created,
+                "amount": inv.amount_paid,
+                "status": inv.status,
+                "pdf": inv.invoice_pdf,
+                "description": inv.lines.data[0].description if inv.lines.data else "",
+            }
+            for inv in invoices.auto_paging_iter()
+            if inv.status in ("paid", "open", "uncollectible")
+        ][:12]}
+    except Exception as e:
+        logger.warning(f"[Billing] Invoice list failed: {e}")
+        return {"invoices": []}
 
 
 @api_router.get("/restaurants/{restaurant_id}/plan-features")

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { createBillingCheckout, createBillingPortal, getRestaurant, getRestaurantId } from "@/lib/api";
+import { createBillingCheckout, createBillingPortal, getInvoices, getRestaurant, getRestaurantId } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { 
   CreditCard, 
@@ -64,12 +65,17 @@ const BillingPage = () => {
   const [restaurant, setRestaurant] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<any[]>([]);
 
   const fetchRestaurant = useCallback(async () => {
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const res = await getRestaurant(restaurantId);
-      setRestaurant(res.data);
+      const [resR, resI] = await Promise.all([
+        getRestaurant(restaurantId),
+        getInvoices(restaurantId).catch(() => ({ data: { invoices: [] } })),
+      ]);
+      setRestaurant(resR.data);
+      setInvoices(resI.data.invoices || []);
     } catch {
       toast.error("Failed to load billing info");
     } finally {
@@ -122,6 +128,11 @@ const BillingPage = () => {
 
   const currentPlan = restaurant?.plan || "Free";
   const billingStatus = restaurant?.billing_status || "inactive";
+  const trialEndsAt = restaurant?.trial_ends_at ? new Date(restaurant.trial_ends_at) : null;
+  const trialDaysLeft = trialEndsAt ? Math.max(0, Math.ceil((trialEndsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))) : 0;
+  const callCount = restaurant?.monthly_call_count || 0;
+  const callLimit = restaurant?.monthly_call_limit || 500;
+  const usagePercent = callLimit > 0 ? Math.min(100, (callCount / callLimit) * 100) : 0;
 
   return (
     <div className="space-y-8 max-w-6xl" data-testid="billing-page">
@@ -158,7 +169,9 @@ const BillingPage = () => {
               <Phone className="w-4 h-4 text-muted-foreground" />
               <p className="text-xs text-muted-foreground font-medium">Calls This Month</p>
             </div>
-            <p className="text-xl font-display font-bold">{restaurant?.monthly_call_count || 0}</p>
+            <p className="text-xl font-display font-bold">{callCount} <span className="text-sm text-muted-foreground font-normal">/ {callLimit}</span></p>
+            <Progress value={usagePercent} className={`h-1.5 mt-2 ${usagePercent > 80 ? "[&>div]:bg-destructive" : usagePercent > 60 ? "[&>div]:bg-warning" : ""}`} />
+            {billingStatus === "trialing" && <p className="text-[10px] text-muted-foreground mt-1">No overage during trial</p>}
           </div>
           <div className="p-4 rounded-xl bg-muted/30">
             <div className="flex items-center gap-2 mb-2">
@@ -256,6 +269,52 @@ const BillingPage = () => {
           ))}
         </div>
       </div>
+
+      {/* Trial Status */}
+      {billingStatus === "trialing" && trialEndsAt && (
+        <Card className="premium-card p-6 border-primary/20 bg-primary/5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-display font-bold text-lg flex items-center gap-2">
+                <Zap className="w-5 h-5 text-primary" />
+                Free Trial Active
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                {trialDaysLeft} day{trialDaysLeft !== 1 ? "s" : ""} remaining — your card will be charged on {trialEndsAt.toLocaleDateString()}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={manageBilling} className="gap-2">
+              Cancel Trial
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Invoice History */}
+      {invoices.length > 0 && (
+        <Card className="premium-card p-6">
+          <h3 className="font-display font-bold text-lg mb-4">Invoice History</h3>
+          <div className="space-y-3">
+            {invoices.map((inv: any) => (
+              <div key={inv.id} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+                <div>
+                  <p className="text-sm font-medium">{new Date(inv.date * 1000).toLocaleDateString()}</p>
+                  <p className="text-xs text-muted-foreground">{inv.description || "Subscription"}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge variant="secondary" className={`border-0 text-xs ${inv.status === "paid" ? "bg-success/10 text-success" : inv.status === "open" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"}`}>
+                    {inv.status === "paid" ? "Paid" : inv.status === "open" ? "Open" : "Failed"}
+                  </Badge>
+                  <span className="text-sm font-medium">${(inv.amount / 100).toFixed(2)}</span>
+                  {inv.pdf && (
+                    <a href={inv.pdf} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">PDF</a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* FAQ */}
       <Card className="premium-card p-6">
