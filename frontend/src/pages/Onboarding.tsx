@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   activateRestaurant,
   confirmMenu,
+  createBillingCheckout,
   createRestaurant as createRestaurantApi,
   parseMenu as parseMenuApi,
   setRestaurantId as persistRestaurantId,
@@ -37,6 +39,7 @@ import {
   Scissors,
   Wrench,
   Scale,
+  Zap,
 } from "lucide-react";
 import { SignOutButton } from "@clerk/clerk-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -56,7 +59,7 @@ const steps = [
   { icon: Building2, label: "Business Info" },
   { icon: Utensils, label: "Menu / Services" },
   { icon: Settings, label: "AI Configuration" },
-  { icon: CreditCard, label: "Connect & Launch" },
+  { icon: CreditCard, label: "Choose Plan" },
 ];
 
 const defaultHours = {
@@ -87,6 +90,7 @@ export default function Onboarding() {
   const lastHydratedRestaurantId = useRef<string | null>(null);
 
   const [currentStep, setCurrentStep] = useState(0);
+  const [selectedPlan, setSelectedPlan] = useState<"STARTER" | "PRO">("PRO");
   const [restaurantId, setRestaurantId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [parsing, setParsing] = useState(false);
@@ -324,13 +328,14 @@ export default function Onboarding() {
 
     setActivating(true);
     try {
-      await activateRestaurant(restaurantId);
-      await refreshSession(restaurantId);
-      toast.success("Your AI phone agent is live!");
-      navigate("/dashboard", { replace: true });
+      const res = await createBillingCheckout({
+        restaurant_id: restaurantId,
+        plan: selectedPlan,
+        source: "onboarding",
+      });
+      window.location.href = res.data.checkout_url;
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to activate");
-    } finally {
+      toast.error(err?.response?.data?.detail || "Failed to start checkout");
       setActivating(false);
     }
   };
@@ -662,30 +667,60 @@ export default function Onboarding() {
           </div>
         );
 
-      // ── STEP 4: Connect & Launch ──
+      // ── STEP 4: Choose Plan ──
       case 4:
         return (
           <div className="space-y-5">
-            <Card className="premium-card p-6 bg-success/5 border-success/20">
+            <div className="grid sm:grid-cols-2 gap-4">
+              {[
+                { key: "STARTER" as const, name: "Starter", price: 199, calls: "500", overage: "0.25", features: ["AI order taking", "1 AI voice", "POS integration", "SMS confirmations", "Prepayment (1% fee)", "Analytics dashboard", "Email support"] },
+                { key: "PRO" as const, name: "Pro", price: 349, calls: "1,000", overage: "0.20", popular: true, features: ["Everything in Starter, plus:", "Delivery handling", "Table reservations", "AI upselling", "Customer recognition", "Auto AI learning", "8 voices + multi-language", "Priority support"] },
+              ].map((plan) => (
+                <Card
+                  key={plan.key}
+                  className={`relative p-5 cursor-pointer transition-all ${
+                    selectedPlan === plan.key
+                      ? "border-primary shadow-glow ring-2 ring-primary/20"
+                      : "border-border/50 hover:border-primary/30"
+                  }`}
+                  onClick={() => setSelectedPlan(plan.key)}
+                >
+                  {plan.popular && (
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2">
+                      <Badge className="bg-gradient-primary text-primary-foreground text-[10px] px-2.5 py-0.5 border-0">Most Popular</Badge>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-display font-bold text-lg">{plan.name}</h3>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedPlan === plan.key ? "border-primary bg-primary" : "border-muted-foreground/30"}`}>
+                      {selectedPlan === plan.key && <Check className="w-3 h-3 text-primary-foreground" />}
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <span className="text-3xl font-display font-bold">${plan.price}</span>
+                    <span className="text-sm text-muted-foreground">/month</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">{plan.calls} calls/mo · ${plan.overage}/call overage</p>
+                  <div className="space-y-1.5">
+                    {plan.features.map((f, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs">
+                        <Check className="w-3.5 h-3.5 text-success mt-0.5 shrink-0" />
+                        <span className="text-muted-foreground">{f}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ))}
+            </div>
+            <Card className="premium-card p-4 bg-primary/5 border-primary/20">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
-                  <Check className="w-5 h-5 text-success" />
-                </div>
+                <Zap className="w-5 h-5 text-primary" />
                 <div>
-                  <h3 className="font-display font-semibold text-sm">You're almost ready!</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Activate your {getBusinessLabel().toLowerCase()} now. Then connect Twilio and billing from the dashboard.
-                  </p>
+                  <p className="text-sm font-medium">7-day free trial · No charge today</p>
+                  <p className="text-xs text-muted-foreground">Cancel anytime during the trial — you won't be billed</p>
                 </div>
               </div>
             </Card>
-
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p>• Your {getBusinessLabel().toLowerCase()} profile is saved</p>
-              <p>• Your {isAppointmentBusiness ? "services are" : "menu is"} stored</p>
-              <p>• Your AI voice configuration is ready</p>
-              <p>• Next step after launch: provision Twilio number and connect billing</p>
-            </div>
           </div>
         );
 
@@ -755,7 +790,7 @@ export default function Onboarding() {
             {currentStep === 1 && `Tell us about your ${getBusinessLabel().toLowerCase()} so we can personalize your AI.`}
             {currentStep === 2 && `${isAppointmentBusiness ? "List your services so the AI knows what to book." : "Paste your menu so the AI knows what to offer callers."}`}
             {currentStep === 3 && "Customize how your AI sounds and behaves."}
-            {currentStep === 4 && "Launch your workspace and finish live integrations in the dashboard."}
+            {currentStep === 4 && "Start your 7-day free trial. No charge today."}
           </p>
 
           <AnimatePresence mode="wait">
@@ -789,7 +824,7 @@ export default function Onboarding() {
               className="bg-gradient-primary text-primary-foreground rounded-xl px-8 shadow-glow hover:opacity-90"
             >
               {currentStep === steps.length - 1
-                ? activating ? "Activating..." : "Launch Duuutah AI 🚀"
+                ? activating ? "Redirecting to checkout..." : "Start Free Trial →"
                 : submitting ? "Saving..." : "Continue"}
               {currentStep < steps.length - 1 && <ArrowRight className="ml-2 w-4 h-4" />}
             </Button>

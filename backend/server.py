@@ -577,7 +577,9 @@ class Restaurant(RestaurantBase):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     is_active: bool = False
-    plan: str = "PRO"
+    plan: str = "STARTER"
+    billing_status: str = "none"
+    trial_ends_at: Optional[str] = None
     monthly_call_count: int = 0
 
     stripe_customer_id: Optional[str] = None
@@ -619,6 +621,7 @@ class BillingCheckoutRequest(BaseModel):
     restaurant_id: str
     plan: Optional[str] = None
     price_id: Optional[str] = None
+    source: Optional[str] = None
 
 
 class TwilioProvisionRequest(BaseModel):
@@ -3338,6 +3341,7 @@ async def startup_seed():
             address="123 Main Street, New York, NY 10001",
             is_active=True,
             plan="PRO",
+            billing_status="active",
             monthly_call_count=0,
             owner_name="Bella Owner",
             owner_email="owner@bellacucina.example",
@@ -4137,13 +4141,18 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
             {"$set": {"stripe_customer_id": customer_id, "billing_status": "pending"}}
         )
 
+    is_onboarding = payload.source == "onboarding"
+    success_path = "/dashboard?billing=success" if is_onboarding else "/billing?billing=success"
+    cancel_path = "/onboarding?billing=cancelled" if is_onboarding else "/billing?billing=cancelled"
+
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{frontend_url}/billing?billing=success",
-        cancel_url=f"{frontend_url}/billing?billing=cancelled",
+        success_url=f"{frontend_url}{success_path}",
+        cancel_url=f"{frontend_url}{cancel_path}",
         metadata={"restaurant_id": restaurant["id"], "plan": plan_name},
+        subscription_data={"trial_period_days": 7},
     )
 
     return {"checkout_url": session.url}
@@ -4257,12 +4266,13 @@ async def stripe_webhook(request: Request):
                     logger.warning(f"[Stripe] Payment SMS failed: {e}")
 
         elif checkout_mode == "subscription":
-            # --- SUBSCRIPTION CHECKOUT ---
+            # --- SUBSCRIPTION CHECKOUT (with 7-day trial) ---
             restaurant_id = meta.get("restaurant_id")
             subscription_id = data.get("subscription")
             customer_id = data.get("customer")
             plan_name = meta.get("plan", "STARTER")
             plan_features = get_plan_features(plan_name)
+            trial_ends_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
             if restaurant_id:
                 for _coll in all_collections:
                     await _coll.update_one(
@@ -4270,13 +4280,18 @@ async def stripe_webhook(request: Request):
                         {"$set": {
                             "stripe_customer_id": customer_id,
                             "stripe_subscription_id": subscription_id,
-                            "billing_status": "active",
+                            "billing_status": "trialing",
                             "plan": plan_name,
                             "monthly_call_limit": plan_features["monthly_call_limit"],
                             "subscription_started_at": datetime.now(timezone.utc).isoformat(),
+                            "trial_ends_at": trial_ends_at,
+                            "is_active": True,
+                            "status": "active",
+                            "onboarding_step": 7,
+                            "onboarding_completed_at": datetime.now(timezone.utc).isoformat(),
                         }}
                     )
-                logger.info(f"[Stripe] Subscription activated: restaurant={restaurant_id}, plan={plan_name}")
+                logger.info(f"[Stripe] Trial started: restaurant={restaurant_id}, plan={plan_name}, trial_ends={trial_ends_at}")
 
     elif event_type in ("customer.subscription.updated", "customer.subscription.created"):
         subscription_id = data.get("id")
