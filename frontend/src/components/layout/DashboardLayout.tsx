@@ -164,10 +164,8 @@ const DashboardLayout = () => {
     <div className="flex flex-col h-full">
       <div className="h-16 flex items-center px-4 border-b border-border/50">
         <Link to="/dashboard" className="flex items-center gap-2.5 overflow-hidden">
-          <div className="w-9 h-9 rounded-xl bg-gradient-primary flex items-center justify-center shrink-0">
-            <Phone className="w-4 h-4 text-primary-foreground" />
-          </div>
-          {!collapsed && <span className="font-display font-bold text-lg whitespace-nowrap">Ring<span className="text-gradient">AI</span></span>}
+          <img src="/icon-192x192.png" alt="Duuutah AI" className="w-9 h-9 rounded-xl shrink-0" />
+          {!collapsed && <span className="font-display font-bold text-lg whitespace-nowrap">Duuutah <span className="text-gradient">AI</span></span>}
         </Link>
       </div>
 
