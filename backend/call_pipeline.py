@@ -236,7 +236,7 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         pass
 
 
-Replace:
+
 # ---------------------------------------------------------------------------
 # Twilio playback-buffer primer
 # ---------------------------------------------------------------------------
