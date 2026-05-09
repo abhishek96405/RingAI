@@ -685,6 +685,7 @@ class CallSession:
             "caller_number":      self.caller_number,
             "caller_name":        self.order.customer_name if self.order and self.order.customer_name else None,
             "started_at":         self.started_at,
+            "created_at":         self.started_at,
             "ended_at":           datetime.now(timezone.utc).isoformat(),
             "status":             "ESCALATED" if self._escalated else "COMPLETED",
             "contained_by_ai":    not self._escalated,
