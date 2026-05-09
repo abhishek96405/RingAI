@@ -38,11 +38,7 @@ try:
     )
     from pipecat.serializers.twilio import TwilioFrameSerializer
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
-    from pipecat.frames.frames import (
-        TextFrame, EndFrame, InputTextRawFrame, LLMContextFrame,
-        OutputAudioRawFrame, BotStoppedSpeakingFrame, StartInterruptionFrame,
-    )
-    from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+    from pipecat.frames.frames import TextFrame, EndFrame, InputTextRawFrame, LLMContextFrame
     from pipecat.processors.aggregators.llm_response_universal import (
         LLMContextAggregatorPair,
         UserTurnStoppedMessage,
@@ -234,56 +230,6 @@ class RingAIGeminiLive(GeminiLiveLLMService):
         TODO: Remove this override when Gemini 3.1 adds proactive audio support.
         """
         pass
-
-
-
-# ---------------------------------------------------------------------------
-# Twilio playback-buffer primer
-# ---------------------------------------------------------------------------
-if _PIPECAT_AVAILABLE:
-    class TwilioBufferPrimer(FrameProcessor):
-        """Injects ~200 ms of PCM silence before the first audio frame of
-        each AI utterance so Twilio's media-stream playback buffer has time
-        to prime.  Without this, early frames arrive before Twilio is ready
-        to play them, clipping the opening syllable the caller hears.
-
-        Place between gemini_live and transport.output() in the pipeline.
-        """
-
-        def __init__(self, padding_ms: int = 200, sample_rate: int = 8000, **kwargs):
-            super().__init__(**kwargs)
-            self._padding_ms = padding_ms
-            self._sample_rate = sample_rate
-            self._prime_next = True  # first utterance always gets primed
-
-        async def process_frame(self, frame, direction):
-            await super().process_frame(frame, direction)
-
-            # Reset primer when bot finishes speaking or user interrupts
-            if isinstance(frame, (BotStoppedSpeakingFrame, StartInterruptionFrame)):
-                self._prime_next = True
-                await self.push_frame(frame, direction)
-                return
-
-            # Prepend silence before the first audio frame of each new utterance
-            if isinstance(frame, OutputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
-                if self._prime_next:
-                    self._prime_next = False
-                    n_samples = int(self._sample_rate * self._padding_ms / 1000)
-                    silence = b"\x00" * (n_samples * 2)  # 16-bit PCM
-                    await self.push_frame(
-                        OutputAudioRawFrame(
-                            audio=silence,
-                            sample_rate=self._sample_rate,
-                            num_channels=1,
-                        ),
-                        direction,
-                    )
-                await self.push_frame(frame, direction)
-                return
-
-            # Everything else passes through unchanged
-            await self.push_frame(frame, direction)
 
 
 # ---------------------------------------------------------------------------
@@ -1446,14 +1392,11 @@ async def create_call_pipeline(
         user_aggregator = context_pair.user()
         assistant_aggregator = context_pair.assistant()
 
-        # silence_padder = TwilioBufferPrimer(padding_ms=200, sample_rate=8000)
-
         pipeline = Pipeline([
             transport.input(),
             idle_processor,
             user_aggregator,
             gemini_live,
-            # silence_padder,  # disabled for diagnostic
             transport.output(),
             assistant_aggregator,
         ])
