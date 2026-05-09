@@ -1446,14 +1446,14 @@ async def create_call_pipeline(
         user_aggregator = context_pair.user()
         assistant_aggregator = context_pair.assistant()
 
-        silence_padder = TwilioBufferPrimer(padding_ms=200, sample_rate=8000)
+        # silence_padder = TwilioBufferPrimer(padding_ms=200, sample_rate=8000)
 
         pipeline = Pipeline([
             transport.input(),
             idle_processor,
             user_aggregator,
             gemini_live,
-            silence_padder,
+            # silence_padder,  # disabled for diagnostic
             transport.output(),
             assistant_aggregator,
         ])
