@@ -37,7 +37,7 @@ google-auth==2.49.0.dev0
 google-auth-httplib2==0.3.0
 google-cloud-speech==2.36.1
 google-cloud-texttospeech==2.34.0
-google-genai==1.63.0
+google-genai==1.68.0
 google-generativeai==0.8.6
 googleapis-common-protos==1.72.0
 grpcio==1.78.0
@@ -85,7 +85,7 @@ pandas==3.0.1
 passlib==1.7.4
 pathspec==1.0.4
 pillow==12.1.1
-pipecat-ai==0.0.104
+pipecat-ai==0.0.108
 platformdirs==4.9.2
 pluggy==1.6.0
 propcache==0.4.1
