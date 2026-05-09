@@ -301,12 +301,12 @@ export const ReservationsPage = () => {
           <CardHeader>
             <CardTitle className="text-lg">Select Date</CardTitle>
           </CardHeader>
-          <CardContent className="overflow-hidden p-3">
+          <CardContent className="p-3 flex justify-center">
             <Calendar
               mode="single"
               selected={selectedDate}
               onSelect={(d) => d && setSelectedDate(d)}
-              className="rounded-md border w-full"
+              className="rounded-md border"
             />
             <div className="mt-4">
               <Label>Filter by Status</Label>
