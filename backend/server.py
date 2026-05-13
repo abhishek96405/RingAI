@@ -552,7 +552,7 @@ class RestaurantUpdate(BaseModel):
     stripe_customer_id: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
     billing_status: Optional[str] = None
-    twilio_number_sid: Optional[str] = None
+    phone_number_id: Optional[str] = None
     square_connected: Optional[bool] = None
     onboarding_completed_at: Optional[str] = None
     pos_type: Optional[str] = None
@@ -584,7 +584,7 @@ class Restaurant(RestaurantBase):
 
     stripe_customer_id: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
-    twilio_number_sid: Optional[str] = None
+    phone_number_id: Optional[str] = None
     square_connected: bool = False
 
     onboarding_completed_at: Optional[str] = None
@@ -842,7 +842,7 @@ class CallRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     restaurant_id: str
-    twilio_call_sid: str = Field(default_factory=lambda: f"CA{uuid.uuid4().hex[:32]}")
+    call_sid: str = Field(default_factory=lambda: f"CA{uuid.uuid4().hex[:32]}")
     caller_number: str
     started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     ended_at: Optional[str] = None
@@ -860,15 +860,15 @@ class CallRecord(BaseModel):
     order_total: Optional[int] = None  # cents
 
     # ── Internal cost tracking (admin only — never exposed to business owners) ──
-    cost_twilio_voice_cents: Optional[float] = None   # $0.0085/min inbound
-    cost_twilio_sms_cents: Optional[float] = None     # $0.0083/message
+    cost_voice_cents: Optional[float] = None   # $0.0085/min inbound
+    cost_sms_cents: Optional[float] = None     # $0.0083/message
     cost_gemini_live_cents: Optional[float] = None    # $0 now (free preview), track duration for future
     cost_gemini_extract_cents: Optional[float] = None # $0.075/1M input + $0.30/1M output
     cost_gemini_tts_cents: Optional[float] = None     # voice preview calls
     cost_total_cents: Optional[float] = None          # sum of all above
     gemini_extract_tokens: Optional[int] = None       # input + output tokens from extraction
-    twilio_sms_count: int = 0                         # number of SMS sent this call
-    duration_seconds_twilio: Optional[int] = None     # exact from Twilio status callback
+    sms_count: int = 0                         # number of SMS sent this call
+    duration_seconds_actual: Optional[int] = None     # exact from Twilio status callback
 
 
 class CallAnalysis(BaseModel):
@@ -2920,7 +2920,7 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
                         voice_method="POST",
                     )
                     update_fields["phone_number"] = purchased.phone_number
-                    update_fields["twilio_number_sid"] = purchased.sid
+                    update_fields["phone_number_id"] = purchased.sid
                     logger.info(f"Auto-provisioned Twilio number {purchased.phone_number} for restaurant {data.restaurant_id}")
                 else:
                     logger.warning("No available Twilio numbers found during onboarding")
@@ -3413,7 +3413,7 @@ async def twilio_status(restaurant_id: str = Query(...), user: Dict[str, Any] = 
     return {
         "configured": bool(os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN")),
         "phone_number": restaurant.get("phone_number"),
-        "twilio_number_sid": restaurant.get("twilio_number_sid"),
+        "phone_number_id": restaurant.get("phone_number_id"),
         "active": bool(restaurant.get("phone_number")),
     }
 
@@ -3447,13 +3447,13 @@ async def twilio_provision_number(data: TwilioProvisionRequest, user: Dict[str, 
         {"id": data.restaurant_id},
         {"$set": {
             "phone_number": purchased.phone_number,
-            "twilio_number_sid": purchased.sid,
+            "phone_number_id": purchased.sid,
         }}
     )
 
     return {
         "phone_number": purchased.phone_number,
-        "twilio_number_sid": purchased.sid,
+        "phone_number_id": purchased.sid,
         "voice_url": voice_url,
     }
 
@@ -3481,13 +3481,13 @@ async def twilio_assign_existing_number(data: TwilioAssignNumberRequest, user: D
         {"id": data.restaurant_id},
         {"$set": {
             "phone_number": updated.phone_number,
-            "twilio_number_sid": updated.sid,
+            "phone_number_id": updated.sid,
         }}
     )
 
     return {
         "phone_number": updated.phone_number,
-        "twilio_number_sid": updated.sid,
+        "phone_number_id": updated.sid,
         "voice_url": voice_url,
     }
 
@@ -3749,33 +3749,33 @@ async def twilio_call_status(request: Request):
             import math
 
             # Exact costs from Twilio
-            cost_twilio_voice = math.ceil(duration_secs / 60) * 0.0085
+            cost_voice = math.ceil(duration_secs / 60) * 0.0085
 
             # Fetch existing call record to get SMS count
-            record = await db.call_records.find_one({"twilio_call_sid": call_sid}, {"_id": 0})
+            record = await db.call_records.find_one({"call_sid": call_sid}, {"_id": 0})
             if record:
-                sms_count = record.get("twilio_sms_count", 0)
-                cost_twilio_sms = sms_count * 0.0083
+                sms_count = record.get("sms_count", 0)
+                cost_sms = sms_count * 0.0083
                 extract_tokens = record.get("gemini_extract_tokens", 0)
                 cost_gemini_extract = (
                     (extract_tokens * 0.7 / 1_000_000) * 0.075 +
                     (extract_tokens * 0.3 / 1_000_000) * 0.30
                 )
-                cost_total = cost_twilio_voice + cost_twilio_sms + cost_gemini_extract
+                cost_total = cost_voice + cost_sms + cost_gemini_extract
 
                 await db.call_records.update_one(
-                    {"twilio_call_sid": call_sid},
+                    {"call_sid": call_sid},
                     {"$set": {
-                        "duration_seconds_twilio": duration_secs,
-                        "cost_twilio_voice_cents": round(cost_twilio_voice * 100, 4),
-                        "cost_twilio_sms_cents": round(cost_twilio_sms * 100, 4),
+                        "duration_seconds_actual": duration_secs,
+                        "cost_voice_cents": round(cost_voice * 100, 4),
+                        "cost_sms_cents": round(cost_sms * 100, 4),
                         "cost_gemini_live_cents": 0.0,
                         "cost_gemini_extract_cents": round(cost_gemini_extract * 100, 4),
                         "cost_total_cents": round(cost_total * 100, 4),
-                        "twilio_call_status_final": call_status,
+                        "call_status_final": call_status,
                     }}
                 )
-                logger.info(f"[{call_sid}] Cost updated: voice=${cost_twilio_voice:.4f} sms=${cost_twilio_sms:.4f} total=${cost_total:.4f}")
+                logger.info(f"[{call_sid}] Cost updated: voice=${cost_voice:.4f} sms=${cost_sms:.4f} total=${cost_total:.4f}")
         except Exception as e:
             logger.error(f"[{call_sid}] Cost callback error: {e}")
 
@@ -3803,12 +3803,12 @@ async def admin_cost_analytics(
             "_id": "$restaurant_id",
             "total_calls": {"$sum": 1},
             "total_cost_cents": {"$sum": "$cost_total_cents"},
-            "total_voice_cost_cents": {"$sum": "$cost_twilio_voice_cents"},
-            "total_sms_cost_cents": {"$sum": "$cost_twilio_sms_cents"},
+            "total_voice_cost_cents": {"$sum": "$cost_voice_cents"},
+            "total_sms_cost_cents": {"$sum": "$cost_sms_cents"},
             "total_gemini_cost_cents": {"$sum": "$cost_gemini_extract_cents"},
             "total_revenue_cents": {"$sum": "$order_total"},
-            "total_duration_seconds": {"$sum": "$duration_seconds_twilio"},
-            "total_sms_count": {"$sum": "$twilio_sms_count"},
+            "total_duration_seconds": {"$sum": "$duration_seconds_actual"},
+            "total_sms_count": {"$sum": "$sms_count"},
         }},
         {"$sort": {"total_cost_cents": -1}},
     ]
@@ -3956,7 +3956,7 @@ async def twilio_media_stream(websocket: WebSocket):
 
                 call = CallRecord(
                     restaurant_id=restaurant_id,
-                    twilio_call_sid=call_sid,
+                    call_sid=call_sid,
                     caller_number=active_call.get("caller_number", ""),
                     caller_name=record_data.get("caller_name") if session else None,
                     started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
@@ -4271,7 +4271,7 @@ async def stripe_webhook(request: Request):
             rest_id = meta.get("restaurant_id")
             if order_id:
                 await db.call_records.update_one(
-                    {"twilio_call_sid": order_id, "payment_status": {"$ne": "refunded"}},
+                    {"call_sid": order_id, "payment_status": {"$ne": "refunded"}},
                     {"$set": {
                         "payment_status": "paid",
                         "paid_at": datetime.now(timezone.utc).isoformat(),
@@ -4291,7 +4291,7 @@ async def stripe_webhook(request: Request):
                     logger.warning(f"[Stripe] WebSocket notify failed: {e}")
                 # Send payment confirmation SMS
                 try:
-                    caller = await db.call_records.find_one({"twilio_call_sid": order_id}, {"caller_number": 1, "_id": 0})
+                    caller = await db.call_records.find_one({"call_sid": order_id}, {"caller_number": 1, "_id": 0})
                     if caller and caller.get("caller_number"):
                         amount_str = f"${data.get('amount_total', 0) / 100:.2f}"
                         rest_name = meta.get("restaurant_name", "the restaurant")
@@ -4579,7 +4579,7 @@ async def refund_order(
         raise HTTPException(status_code=400, detail="Restaurant is not connected to Stripe")
 
     call = await db.call_records.find_one(
-        {"twilio_call_sid": call_sid, "restaurant_id": restaurant_id},
+        {"call_sid": call_sid, "restaurant_id": restaurant_id},
         {"_id": 0},
     )
     if not call:
@@ -4606,7 +4606,7 @@ async def refund_order(
         raise HTTPException(status_code=400, detail=f"Refund failed: {str(e)}")
 
     await db.call_records.update_one(
-        {"twilio_call_sid": call_sid},
+        {"call_sid": call_sid},
         {"$set": {
             "payment_status": "refunded",
             "refunded_at": datetime.now(timezone.utc).isoformat(),

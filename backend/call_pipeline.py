@@ -336,7 +336,7 @@ class CallSession:
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
         self._call_timer_task = None     # auto-escalation after max duration
-        self._twilio_duration_seconds = None  # exact duration from Twilio status callback
+        self._actual_duration_seconds = None  # exact duration from Twilio status callback
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
@@ -707,7 +707,7 @@ class CallSession:
             record["booking_dispatched"] = True
 
         # ── Internal cost tracking (admin only) ──
-        duration_secs = getattr(self, "_twilio_duration_seconds", None)
+        duration_secs = getattr(self, "_actual_duration_seconds", None)
         if duration_secs is None:
             # Fallback: estimate from started_at to now
             try:
@@ -720,11 +720,11 @@ class CallSession:
 
         # Twilio voice: $0.0085/min inbound, ceil per minute
         import math
-        cost_twilio_voice = math.ceil(duration_minutes) * 0.0085
+        cost_voice = math.ceil(duration_minutes) * 0.0085
 
         # Twilio SMS: $0.0083/message
         sms_count = getattr(self, "_sms_count", 0)
-        cost_twilio_sms = sms_count * 0.0083
+        cost_sms = sms_count * 0.0083
 
         # Gemini Live: free preview — track duration for future billing
         # Estimated future cost: ~$0.008/min when priced
@@ -745,16 +745,16 @@ class CallSession:
             (extract_tokens * 0.3 / 1_000_000) * 0.30
         )
 
-        cost_total = cost_twilio_voice + cost_twilio_sms + cost_gemini_live + cost_gemini_extract
+        cost_total = cost_voice + cost_sms + cost_gemini_live + cost_gemini_extract
 
-        record["cost_twilio_voice_cents"] = round(cost_twilio_voice * 100, 4)
-        record["cost_twilio_sms_cents"] = round(cost_twilio_sms * 100, 4)
+        record["cost_voice_cents"] = round(cost_voice * 100, 4)
+        record["cost_sms_cents"] = round(cost_sms * 100, 4)
         record["cost_gemini_live_cents"] = round(cost_gemini_live * 100, 4)
         record["cost_gemini_extract_cents"] = round(cost_gemini_extract * 100, 4)
         record["cost_total_cents"] = round(cost_total * 100, 4)
         record["gemini_extract_tokens"] = extract_tokens
-        record["twilio_sms_count"] = sms_count
-        record["duration_seconds_twilio"] = duration_secs
+        record["sms_count"] = sms_count
+        record["duration_seconds_actual"] = duration_secs
 
         return record
 
