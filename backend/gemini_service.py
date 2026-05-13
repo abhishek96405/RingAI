@@ -573,7 +573,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
             return result
 
     # DB-only fallback
-    order_id = f"RNG-{order.call_sid[-8:].upper()}"
+    order_id = f"DTH-{order.call_sid[-8:].upper()}"
     logger.info(f"Order {order_id} saved to DB only (pos_type={pos_type})")
     return {"success": True, "order_id": order_id, "method": "database"}
 
@@ -721,7 +721,7 @@ async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[in
 
 async def _send_to_kitchen_webhook(order: LiveOrder, url: str) -> Dict[str, Any]:
     payload = {
-        "order_id": f"RNG-{order.call_sid[-8:].upper()}",
+        "order_id": f"DTH-{order.call_sid[-8:].upper()}",
         "restaurant_id": order.restaurant_id,
         "source": "ringai_phone",
         "timestamp": datetime.now(timezone.utc).isoformat(),

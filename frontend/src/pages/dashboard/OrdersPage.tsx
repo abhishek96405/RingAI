@@ -83,7 +83,7 @@ const OrdersPage = () => {
         (o) =>
           o.caller_number?.includes(q) ||
           o.order_json?.customer_name?.toLowerCase().includes(q) ||
-          o.twilio_call_sid?.toLowerCase().includes(q) ||
+          o.call_sid?.toLowerCase().includes(q) ||
           o.order_json?.items?.some((i: any) => i.name?.toLowerCase().includes(q))
       )
     );
@@ -114,8 +114,8 @@ const OrdersPage = () => {
   };
 
   const getOrderNumber = (call: any) => {
-    const sid = call.twilio_call_sid || call.id || "";
-    return `RNG-${sid.slice(-8).toUpperCase()}`;
+    const sid = call.call_sid || call.id || "";
+    return `DTH-${sid.slice(-8).toUpperCase()}`;
   };
 
   const totalRevenue = orders.reduce((sum, o) => sum + (o.order_total || 0), 0);
@@ -123,7 +123,7 @@ const OrdersPage = () => {
 
   const handleRefund = async () => {
     if (!selectedOrder) return;
-    const callSid = selectedOrder.twilio_call_sid;
+    const callSid = selectedOrder.call_sid;
     const amount = ((selectedOrder.order_total || 0) / 100).toFixed(2);
     if (!window.confirm(`Refund $${amount} to the customer? This cannot be undone.`)) return;
     setRefunding(true);
@@ -135,12 +135,12 @@ const OrdersPage = () => {
       setSelectedOrder({ ...selectedOrder, payment_status: "refunded" });
       setOrders((prev) =>
         prev.map((o) =>
-          o.twilio_call_sid === callSid ? { ...o, payment_status: "refunded" } : o
+          o.call_sid === callSid ? { ...o, payment_status: "refunded" } : o
         )
       );
       setFiltered((prev) =>
         prev.map((o) =>
-          o.twilio_call_sid === callSid ? { ...o, payment_status: "refunded" } : o
+          o.call_sid === callSid ? { ...o, payment_status: "refunded" } : o
         )
       );
     } catch (err: any) {
@@ -469,7 +469,7 @@ const OrdersPage = () => {
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Call SID</span>
                       <span className="font-mono text-xs truncate max-w-[180px]">
-                        {selectedOrder.twilio_call_sid}
+                        {selectedOrder.call_sid}
                       </span>
                     </div>
                     <div className="flex justify-between">
