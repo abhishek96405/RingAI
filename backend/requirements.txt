@@ -135,6 +135,7 @@ tokenizers==0.22.2
 tqdm==4.67.3
 transformers==5.2.0
 twilio==9.10.2
+telnyx
 typer==0.24.0
 typer-slim==0.24.0
 typing-inspection==0.4.2
