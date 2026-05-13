@@ -3726,6 +3726,58 @@ async def twilio_incoming_call(request: Request):
     twiml = generate_twiml_stream_response(ws_url, call_sid, status_callback_url)
     return Response(content=twiml, media_type="application/xml")
 
+@api_router.post("/telnyx/incoming")
+async def telnyx_incoming_call(request: Request):
+    """Phase 2a — Telnyx Call Control webhook. Receives all call events."""
+    import telnyx_service
+
+    raw_body = await request.body()
+
+    # Signature verification (skip on localhost only)
+    backend_url = get_backend_public_url()
+    if "localhost" not in backend_url and "127.0.0.1" not in backend_url:
+        sig = request.headers.get("telnyx-signature-ed25519", "")
+        ts = request.headers.get("telnyx-timestamp", "")
+        if not telnyx_service.verify_webhook_signature(raw_body, sig, ts):
+            logger.warning(f"Rejected forged Telnyx webhook from {request.client.host if request.client else 'unknown'}")
+            return Response(status_code=403, content="Forbidden")
+
+    try:
+        payload = json.loads(raw_body)
+    except Exception as e:
+        logger.error(f"[Telnyx] Webhook parse error: {e}")
+        return Response(status_code=400)
+
+    data = payload.get("data", {})
+    event_type = data.get("event_type", "")
+    event_payload = data.get("payload", {})
+    call_control_id = event_payload.get("call_control_id", "")
+
+    logger.info(f"[Telnyx webhook] event={event_type} call_control_id={call_control_id}")
+
+    if event_type == "call.initiated":
+        from_number = event_payload.get("from", "")
+        to_number = event_payload.get("to", "")
+        direction = event_payload.get("direction", "")
+        logger.info(f"[Telnyx] {direction} call: {from_number} -> {to_number}")
+        if direction == "incoming":
+            await telnyx_service.answer_call(call_control_id)
+
+    elif event_type == "call.answered":
+        await telnyx_service.speak_text(
+            call_control_id,
+            "Hello! This is a Telnyx integration test from Duuutah AI. Phase 2A is working. Goodbye!",
+        )
+
+    elif event_type == "call.speak.ended":
+        logger.info(f"[Telnyx] Speak ended for {call_control_id}, hanging up")
+        await telnyx_service.hang_up_call(call_control_id)
+
+    elif event_type == "call.hangup":
+        logger.info(f"[Telnyx] Call ended: {call_control_id}")
+
+    return Response(status_code=200)
+
 
 @api_router.post("/twilio/call-status")
 async def twilio_call_status(request: Request):

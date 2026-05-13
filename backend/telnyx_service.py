@@ -86,6 +86,46 @@ async def transfer_call(call_control_id: str, to_number: str) -> bool:
     except Exception as e:
         logger.error(f"[Telnyx] Transfer failed for {call_control_id} -> {to_number}: {e}")
         return False
+    
+
+async def answer_call(call_control_id: str) -> bool:
+    """Answer an incoming call via Telnyx Call Control API."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/answer",
+                headers=_auth_headers(),
+                json={},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            logger.info(f"[Telnyx] Answered call {call_control_id}")
+            return True
+    except Exception as e:
+        logger.error(f"[Telnyx] Answer failed for {call_control_id}: {e}")
+        return False
+
+
+async def speak_text(call_control_id: str, text: str, voice: str = "female", language: str = "en-US") -> bool:
+    """Play a TTS message on an active call."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/speak",
+                headers=_auth_headers(),
+                json={
+                    "payload": text,
+                    "voice": voice,
+                    "language": language,
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            logger.info(f"[Telnyx] Speaking on {call_control_id}: {text[:60]}...")
+            return True
+    except Exception as e:
+        logger.error(f"[Telnyx] Speak failed for {call_control_id}: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
