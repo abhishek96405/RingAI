@@ -315,6 +315,7 @@ class CallSession:
         config: Dict[str, Any],
         menu_items: List[Dict[str, Any]],
         services: Optional[List[Dict[str, Any]]] = None,
+        provider: str = "twilio",
     ):
         self.call_sid       = call_sid
         self.restaurant_id  = restaurant_id
@@ -323,6 +324,7 @@ class CallSession:
         self.config         = config
         self.menu_index     = MenuIndex(menu_items)
         self.services       = services or []  # For appointment businesses
+        self.provider       = provider  # "twilio" or "telnyx"
         self.transcript: List[Dict] = []
         self.started_at     = datetime.now(timezone.utc).isoformat()
         self.order          = LiveOrder(
@@ -527,7 +529,8 @@ class CallSession:
                 if transferred:
                     return  # Don't hang up — Twilio handles it after transfer
 
-        await hang_up_twilio_call(self.call_sid)
+        if self.provider == "twilio":
+            await hang_up_twilio_call(self.call_sid)
         if self._pipeline_task is not None:
             try:
                 await self._pipeline_task.cancel()

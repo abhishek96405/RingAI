@@ -4178,6 +4178,7 @@ async def telnyx_media_stream(websocket: WebSocket):
             config=config or {},
             menu_items=menu_items,
             services=services,
+            provider="telnyx",
         )
         session.is_open = calculate_is_open(
             operating_hours=config.get("operating_hours") if config else None,
