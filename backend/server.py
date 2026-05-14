@@ -3535,12 +3535,13 @@ async def _prefetch_call_session_data(
     """
     import asyncio as _asyncio
 
+    _lookup_filter = {"$or": [{"phone_number": called_number}, {"telnyx_phone_number": called_number}]}
     _phone_results = await _asyncio.gather(
-        db.restaurants.find_one({"phone_number": called_number}, {"_id": 0}),
-        db.clinics.find_one({"phone_number": called_number}, {"_id": 0}),
-        db.salons.find_one({"phone_number": called_number}, {"_id": 0}),
-        db.home_services.find_one({"phone_number": called_number}, {"_id": 0}),
-        db.legal.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.restaurants.find_one(_lookup_filter, {"_id": 0}),
+        db.clinics.find_one(_lookup_filter, {"_id": 0}),
+        db.salons.find_one(_lookup_filter, {"_id": 0}),
+        db.home_services.find_one(_lookup_filter, {"_id": 0}),
+        db.legal.find_one(_lookup_filter, {"_id": 0}),
     )
     restaurant = next((r for r in _phone_results if r), None)
     if not restaurant or not restaurant.get("is_active"):
