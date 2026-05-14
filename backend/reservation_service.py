@@ -493,15 +493,7 @@ async def send_reservation_sms(
     reservation_time: str,
     restaurant_address: str = "",
 ) -> bool:
-    """Send reservation confirmation SMS via Twilio."""
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-    
-    if not all([account_sid, auth_token, from_number]):
-        logger.warning("Twilio not configured - skipping SMS")
-        return False
-    
+    """Send reservation confirmation SMS via Telnyx."""
     # Format date for display
     try:
         date_obj = datetime.strptime(reservation_date, "%Y-%m-%d")
@@ -528,22 +520,20 @@ async def send_reservation_sms(
     
     message += "\n\nReply CANCEL to cancel your reservation."
     
-    try:
-        from twilio.rest import Client
-        client = Client(account_sid, auth_token)
-        
-        client.messages.create(
-            body=message,
-            from_=from_number,
-            to=customer_phone
-        )
-        
-        logger.info(f"Reservation SMS sent to {customer_phone[-4:]}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Twilio SMS error: {e}")
-        return False
+    from telnyx_service import send_sms
+    result = await send_sms(
+        to=customer_phone,
+        body=message,
+        idempotency_key=f"reservation_confirm:{customer_phone}:{reservation_date}:{reservation_time}",
+        metadata={
+            "purpose": "reservation_confirmation",
+            "restaurant_name": restaurant_name,
+            "party_size": party_size,
+            "reservation_date": reservation_date,
+            "reservation_time": reservation_time,
+        },
+    )
+    return result.success
 
 
 # ============================================================

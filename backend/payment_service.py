@@ -113,14 +113,6 @@ async def send_payment_sms(
         "payment_link": None,
     }
     
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-    
-    if not all([account_sid, auth_token, from_number]):
-        logger.warning("Twilio not configured - skipping SMS")
-        return result
-    
     # Create payment link
     payment_link = await create_payment_link(
         order_total=order_total,
@@ -150,25 +142,27 @@ async def send_payment_sms(
     else:
         message += "\nPay when you pick up."
     
-    try:
-        from twilio.rest import Client
-        client = Client(account_sid, auth_token)
-        
-        client.messages.create(
-            body=message,
-            from_=from_number,
-            to=customer_phone
-        )
-        
+    from telnyx_service import send_sms
+    sms_result = await send_sms(
+        to=customer_phone,
+        body=message,
+        idempotency_key=f"payment_link:{order_id}",
+        metadata={
+            "purpose": "payment_link",
+            "order_id": order_id,
+            "restaurant_name": restaurant_name,
+            "has_payment_link": bool(payment_link),
+            "order_total_cents": order_total,
+        },
+    )
+    if sms_result.success:
         result["success"] = True
         result["sms_sent"] = True
         result["payment_link_sent"] = bool(payment_link)
-        
-        logger.info(f"Payment SMS sent to {customer_phone[-4:]} (link: {bool(payment_link)})")
-        
-    except Exception as e:
-        logger.error(f"Payment SMS error: {e}")
-    
+        logger.info(f"Payment SMS sent to {customer_phone[-4:]} (link: {bool(payment_link)}, msg_id={sms_result.message_id})")
+    else:
+        logger.error(f"Payment SMS failed: {sms_result.error_code}: {sms_result.error_message}")
+
     return result
 
 
@@ -235,12 +229,7 @@ async def send_regular_confirmation_sms(
         "payment_link_sent": False,
     }
     
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-    
-    if not all([account_sid, auth_token, from_number]):
-        return result
+
     
     message = (
         f"Hi {customer_name}! Your order from {restaurant_name} is confirmed.\n\n"
@@ -253,20 +242,21 @@ async def send_regular_confirmation_sms(
     
     message += "\nSee you soon!"
     
-    try:
-        from twilio.rest import Client
-        client = Client(account_sid, auth_token)
-        
-        client.messages.create(
-            body=message,
-            from_=from_number,
-            to=customer_phone
-        )
-        
+    from telnyx_service import send_sms
+    sms_result = await send_sms(
+        to=customer_phone,
+        body=message,
+        idempotency_key=f"order_confirm_simple:{order_id}",
+        metadata={
+            "purpose": "order_confirmation_simple",
+            "order_id": order_id,
+            "restaurant_name": restaurant_name,
+        },
+    )
+    if sms_result.success:
         result["success"] = True
         result["sms_sent"] = True
-        
-    except Exception as e:
-        logger.error(f"Confirmation SMS error: {e}")
-    
+    else:
+        logger.error(f"Confirmation SMS failed: {sms_result.error_code}: {sms_result.error_message}")
+
     return result

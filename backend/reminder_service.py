@@ -51,14 +51,7 @@ async def send_reminder_sms(
         Reminder: Your {service} appointment at {business} is tomorrow at {time}.
         Duration: {duration}. See you then!
     """
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-    
-    if not all([account_sid, auth_token, from_number]):
-        logger.warning("Reminder SMS not sent — missing Twilio credentials")
-        return False
-    
+
     # Format date nicely
     try:
         date_obj = datetime.strptime(scheduled_date, "%Y-%m-%d")
@@ -76,30 +69,20 @@ async def send_reminder_sms(
         f"Please arrive 5-10 minutes early. See you soon!"
     )
     
-    try:
-        credentials = base64.b64encode(
-            f"{account_sid}:{auth_token}".encode()
-        ).decode()
-        
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-        
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                url,
-                data={"From": from_number, "To": customer_phone, "Body": body},
-                headers={"Authorization": f"Basic {credentials}"},
-            )
-            
-            if resp.status_code in (200, 201):
-                logger.info(f"Reminder SMS sent to {customer_phone[-4:]}")
-                return True
-            else:
-                logger.error(f"Reminder SMS failed: {resp.status_code} {resp.text}")
-                return False
-                
-    except Exception as e:
-        logger.error(f"Reminder SMS error: {e}")
-        return False
+    from telnyx_service import send_sms
+    result = await send_sms(
+        to=customer_phone,
+        body=body,
+        idempotency_key=f"reminder:{scheduled_date}:{scheduled_time}:{customer_phone}",
+        metadata={
+            "purpose": "appointment_reminder",
+            "service_name": service_name,
+            "business_name": business_name,
+            "scheduled_date": scheduled_date,
+            "scheduled_time": scheduled_time,
+        },
+    )
+    return result.success
 
 
 async def process_appointment_reminders(db) -> Dict[str, Any]:

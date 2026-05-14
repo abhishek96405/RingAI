@@ -3977,6 +3977,70 @@ async def telnyx_incoming_call(request: Request):
     return Response(status_code=200)
 
 
+@api_router.post("/telnyx/sms-status")
+async def telnyx_sms_status(request: Request):
+    """Telnyx SMS delivery status webhook. Updates db.sms_messages with delivery state and cost."""
+    import json
+    import telnyx_service
+
+    raw_body = await request.body()
+
+    backend_url = get_backend_public_url()
+    if "localhost" not in backend_url and "127.0.0.1" not in backend_url:
+        sig = request.headers.get("telnyx-signature-ed25519", "")
+        ts = request.headers.get("telnyx-timestamp", "")
+        if not telnyx_service.verify_webhook_signature(raw_body, sig, ts):
+            logger.warning(f"Rejected forged Telnyx SMS webhook from {request.client.host if request.client else 'unknown'}")
+            return Response(status_code=403, content="Forbidden")
+
+    try:
+        payload = json.loads(raw_body)
+    except Exception as e:
+        logger.error(f"[Telnyx SMS webhook] parse error: {e}")
+        return Response(status_code=400)
+
+    data = payload.get("data", {})
+    event_type = data.get("event_type", "")
+    event_payload = data.get("payload", {})
+    message_id = event_payload.get("id")
+
+    if not message_id:
+        logger.warning(f"[Telnyx SMS webhook] missing message id; event_type={event_type}")
+        return Response(status_code=200)
+
+    update: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+
+    recipients = event_payload.get("to", [])
+    if recipients:
+        recipient_status = recipients[0].get("status")
+        if recipient_status == "delivered":
+            update["status"] = "delivered"
+        elif recipient_status in ("delivery_failed", "sending_failed"):
+            update["status"] = "failed"
+            errors = event_payload.get("errors", [])
+            if errors:
+                update["error_code"] = str(errors[0].get("code", ""))
+                update["error_message"] = errors[0].get("title", "")
+        elif recipient_status == "delivery_unconfirmed":
+            update["status"] = "delivery_unconfirmed"
+
+    cost = event_payload.get("cost") or {}
+    amount_str = cost.get("amount")
+    if amount_str:
+        try:
+            update["cost_cents"] = int(round(float(amount_str) * 100))
+        except (TypeError, ValueError):
+            pass
+
+    result = await db.sms_messages.update_one(
+        {"message_id": message_id},
+        {"$set": update},
+        upsert=False,
+    )
+    logger.info(f"[Telnyx SMS webhook] {event_type} for {message_id}: matched={result.matched_count} status={update.get('status')}")
+    return Response(status_code=200)
+
+
 @api_router.post("/twilio/call-status")
 async def twilio_call_status(request: Request):
     """
@@ -4807,20 +4871,22 @@ async def stripe_webhook(request: Request):
                         amount_str = f"${data.get('amount_total', 0) / 100:.2f}"
                         rest_name = meta.get("restaurant_name", "the restaurant")
                         sms_body = f"Payment of {amount_str} received for your order at {rest_name}. Thank you!"
-                        account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-                        auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-                        from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-                        if account_sid and auth_token and from_number:
-                            import base64 as _b64
-                            _creds = _b64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
-                            import httpx as _httpx
-                            async with _httpx.AsyncClient(timeout=8.0) as _client:
-                                await _client.post(
-                                    f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
-                                    data={"From": from_number, "To": caller["caller_number"], "Body": sms_body},
-                                    headers={"Authorization": f"Basic {_creds}"},
-                                )
-                            logger.info(f"[Stripe] Payment confirmation SMS sent for {order_id}")
+                        import telnyx_service
+                        sms_result = await telnyx_service.send_sms(
+                            to=caller["caller_number"],
+                            body=sms_body,
+                            idempotency_key=f"payment_received:{order_id}",
+                            metadata={
+                                "purpose": "payment_confirmation",
+                                "order_id": order_id,
+                                "restaurant_id": rest_id,
+                                "amount_cents": data.get("amount_total", 0),
+                            },
+                        )
+                        if sms_result.success:
+                            logger.info(f"[Stripe] Payment confirmation SMS sent for {order_id} (id={sms_result.message_id})")
+                        else:
+                            logger.warning(f"[Stripe] Payment SMS failed for {order_id}: {sms_result.error_code}: {sms_result.error_message}")
                 except Exception as e:
                     logger.warning(f"[Stripe] Payment SMS failed: {e}")
 
@@ -5137,20 +5203,23 @@ async def refund_order(
                 f"Your payment of {amount_str} for your order at {rest_name} has been refunded. "
                 f"It may take 5-10 business days to appear on your statement."
             )
-            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-            from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-            if account_sid and auth_token and from_number:
-                import httpx as _httpx
-                import base64 as _b64
-                _creds = _b64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
-                async with _httpx.AsyncClient(timeout=8.0) as _client:
-                    await _client.post(
-                        f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
-                        data={"From": from_number, "To": caller_number, "Body": sms_body},
-                        headers={"Authorization": f"Basic {_creds}"},
-                    )
-                logger.info(f"[Stripe Refund] Refund SMS sent for {call_sid}")
+            import telnyx_service
+            sms_result = await telnyx_service.send_sms(
+                to=caller_number,
+                body=sms_body,
+                idempotency_key=f"refund:{call_sid}:{refund.id}",
+                metadata={
+                    "purpose": "refund_confirmation",
+                    "call_sid": call_sid,
+                    "restaurant_id": restaurant_id,
+                    "refund_id": refund.id,
+                    "amount_cents": order_total,
+                },
+            )
+            if sms_result.success:
+                logger.info(f"[Stripe Refund] Refund SMS sent for {call_sid} (id={sms_result.message_id})")
+            else:
+                logger.warning(f"[Stripe Refund] Refund SMS failed for {call_sid}: {sms_result.error_code}: {sms_result.error_message}")
     except Exception as e:
         logger.warning(f"[Stripe Refund] SMS failed (non-critical): {e}")
 
@@ -5495,6 +5564,18 @@ async def websocket_notifications(websocket: WebSocket, restaurant_id: Optional[
         logger.warning(f"WebSocket error: {e}")
     finally:
         await manager.disconnect(websocket)
+
+
+@app.on_event("startup")
+async def _register_telnyx_sms_persister():
+    """Wire telnyx_service's persistence callback to MongoDB."""
+    import telnyx_service
+
+    async def _persist(record: Dict[str, Any]) -> None:
+        await db.sms_messages.insert_one(record)
+
+    telnyx_service.set_sms_persister(_persist)
+    logger.info("Telnyx SMS persister registered (writes to db.sms_messages)")
 
 
 @app.on_event("startup")

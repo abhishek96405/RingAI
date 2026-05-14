@@ -1914,14 +1914,6 @@ async def send_order_sms(
     config: Optional[Dict] = None,
     menu_items: Optional[List[Dict]] = None,
 ) -> bool:
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-
-    if not all([account_sid, auth_token, from_number]):
-        logger.warning("SMS not sent — missing Twilio credentials")
-        return False
-
     if not order.items:
         logger.warning("SMS not sent — no items in order")
         return False
@@ -1996,26 +1988,20 @@ async def send_order_sms(
         except Exception as e:
             logger.warning(f"Payment link generation failed: {e}")
 
-    try:
-        credentials = base64.b64encode(
-            f"{account_sid}:{auth_token}".encode()
-        ).decode()
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                url,
-                data={"From": from_number, "To": caller_number, "Body": body},
-                headers={"Authorization": f"Basic {credentials}"},
-            )
-            if resp.status_code in (200, 201):
-                logger.info(f"SMS sent to {caller_number[-4:]}")
-                return True
-            else:
-                logger.error(f"SMS failed: {resp.status_code}")
-                return False
-    except Exception as e:
-        logger.error(f"SMS error: {e}")
-        return False
+    from telnyx_service import send_sms
+    result = await send_sms(
+        to=caller_number,
+        body=body,
+        idempotency_key=f"order_confirm:{order.call_sid}",
+        metadata={
+            "purpose": "order_confirmation",
+            "restaurant_id": (restaurant or {}).get("id"),
+            "call_sid": order.call_sid,
+            "order_total_cents": order.total,
+            "has_payment_link": bool(payment_link),
+        },
+    )
+    return result.success
 
 
 async def send_menu_sms(
@@ -2024,37 +2010,19 @@ async def send_menu_sms(
     restaurant_id: str,
     base_url: str = "https://ringai-v2.onrender.com",
 ) -> bool:
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-
-    if not all([account_sid, auth_token, from_number]):
-        logger.warning("Menu SMS not sent — missing Twilio credentials")
-        return False
-
     menu_url = f"{base_url}/menu/{restaurant_id}"
     body = f"Here's the {restaurant_name} menu with prices:\n{menu_url}"
 
-    try:
-        credentials = base64.b64encode(
-            f"{account_sid}:{auth_token}".encode()
-        ).decode()
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                url,
-                data={"From": from_number, "To": caller_number, "Body": body},
-                headers={"Authorization": f"Basic {credentials}"},
-            )
-            if resp.status_code in (200, 201):
-                logger.info(f"Menu SMS sent to {caller_number}")
-                return True
-            else:
-                logger.error(f"Menu SMS failed: {resp.status_code} {resp.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Menu SMS error: {e}")
-        return False
+    from telnyx_service import send_sms
+    result = await send_sms(
+        to=caller_number,
+        body=body,
+        metadata={
+            "purpose": "menu_share",
+            "restaurant_id": restaurant_id,
+        },
+    )
+    return result.success
     
 
 # ---------------------------------------------------------------------------

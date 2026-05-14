@@ -6,6 +6,12 @@ All credentials read exclusively from environment variables — never hardcoded.
 import os
 import base64
 import logging
+import asyncio
+import re
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -22,30 +28,193 @@ def _auth_headers() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# SMS
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────
+# SMS — production layer
+# ─────────────────────────────────────────────────────────────────────────
 
-async def send_sms(to_number: str, body: str) -> bool:
-    """Send an outbound SMS via Telnyx. Returns True on success."""
+# Module-level persister callback (DI). Set during app startup via set_sms_persister().
+# Keeps telnyx_service decoupled from the MongoDB client.
+_sms_persister: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
+
+# E.164: + followed by 8-15 digits
+_E164_RE = re.compile(r"^\+\d{8,15}$")
+
+# Telnyx SMS body cap
+_TELNYX_SMS_MAX_LEN = 1600
+
+
+@dataclass(frozen=True)
+class SMSResult:
+    """Result of an SMS send attempt. Truthy on success — backward-compatible
+    with callers that do `if not send_sms(...): logger.warning(...)`.
+    """
+    success: bool
+    message_id: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return self.success
+
+
+def set_sms_persister(fn: Callable[[Dict[str, Any]], Awaitable[None]]) -> None:
+    """Register an async callable invoked with each SMS attempt record."""
+    global _sms_persister
+    _sms_persister = fn
+
+
+def _validate_e164(number: str) -> bool:
+    return bool(_E164_RE.match(number or ""))
+
+
+async def _persist(record: Dict[str, Any]) -> None:
+    """Best-effort persistence — never raises."""
+    if _sms_persister is None:
+        return
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TELNYX_API_BASE}/messages",
-                headers=_auth_headers(),
-                json={
-                    "from": os.environ["TELNYX_PHONE_NUMBER"],
-                    "to": to_number,
-                    "text": body,
-                },
-                timeout=10.0,
-            )
-            resp.raise_for_status()
-            logger.info(f"[Telnyx] SMS sent to {to_number}")
-            return True
+        await _sms_persister(record)
     except Exception as e:
-        logger.error(f"[Telnyx] SMS send failed to {to_number}: {e}")
-        return False
+        logger.warning(f"[Telnyx SMS] persister failed (non-fatal): {e}")
+
+
+async def send_sms(
+    to: str,
+    body: str,
+    *,
+    idempotency_key: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    max_retries: int = 3,
+) -> SMSResult:
+    """Send an SMS via Telnyx. E.164 validated, idempotent, retries on 5xx/429/network.
+
+    Args:
+        to: Recipient phone in E.164 format (e.g. '+15551234567').
+        body: Message text. Non-empty, <= 1600 chars.
+        idempotency_key: Optional client dedup key (24h window). Auto UUID4 if omitted.
+        metadata: Arbitrary dict persisted with the SMS record (restaurant_id, purpose, etc.)
+        max_retries: Total attempt count for retryable errors. Default 3.
+
+    Returns:
+        SMSResult — truthy on success, with message_id for status callback correlation.
+    """
+    metadata = dict(metadata or {})
+    now_iso = lambda: datetime.now(timezone.utc).isoformat()
+
+    # Validation
+    if not _validate_e164(to):
+        msg = f"Invalid phone format (must be E.164): {to!r}"
+        logger.error(f"[Telnyx SMS] {msg}")
+        await _persist({
+            "to": to, "body": body, "status": "failed",
+            "error_code": "INVALID_PHONE", "error_message": msg,
+            "metadata": metadata, "created_at": now_iso(), "updated_at": now_iso(),
+        })
+        return SMSResult(success=False, error_code="INVALID_PHONE", error_message=msg)
+
+    if not body or not body.strip():
+        return SMSResult(success=False, error_code="EMPTY_BODY", error_message="Empty SMS body")
+
+    if len(body) > _TELNYX_SMS_MAX_LEN:
+        msg = f"SMS body length {len(body)} exceeds Telnyx max ({_TELNYX_SMS_MAX_LEN})"
+        logger.error(f"[Telnyx SMS] {msg}")
+        await _persist({
+            "to": to, "body": body[:200] + "...[truncated]", "status": "failed",
+            "error_code": "BODY_TOO_LONG", "error_message": msg,
+            "metadata": metadata, "created_at": now_iso(), "updated_at": now_iso(),
+        })
+        return SMSResult(success=False, error_code="BODY_TOO_LONG", error_message=msg)
+
+    from_number = os.environ.get("TELNYX_PHONE_NUMBER")
+    if not from_number:
+        return SMSResult(success=False, error_code="NO_FROM_NUMBER",
+                         error_message="TELNYX_PHONE_NUMBER env var not set")
+
+    messaging_profile_id = os.environ.get("TELNYX_MESSAGING_PROFILE_ID")
+    idem_key = idempotency_key or str(uuid.uuid4())
+
+    payload: Dict[str, Any] = {"from": from_number, "to": to, "text": body}
+    if messaging_profile_id:
+        payload["messaging_profile_id"] = messaging_profile_id
+
+    headers = {**_auth_headers(), "Idempotency-Key": idem_key}
+
+    last_error_code: Optional[str] = None
+    last_error_msg: Optional[str] = None
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = await client.post(
+                    f"{TELNYX_API_BASE}/messages",
+                    headers=headers,
+                    json=payload,
+                )
+            except httpx.RequestError as e:
+                last_error_code = "NETWORK_ERROR"
+                last_error_msg = str(e)
+                logger.warning(f"[Telnyx SMS] attempt {attempt}/{max_retries} network error to {to}: {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+                continue
+
+            if resp.status_code in (200, 201):
+                data = resp.json().get("data", {})
+                message_id = data.get("id")
+                await _persist({
+                    "message_id": message_id,
+                    "idempotency_key": idem_key,
+                    "to": to, "from": from_number, "body": body,
+                    "status": "sent",
+                    "cost_cents": None,
+                    "error_code": None, "error_message": None,
+                    "metadata": metadata,
+                    "created_at": now_iso(), "updated_at": now_iso(),
+                })
+                logger.info(f"[Telnyx SMS] sent to {to[-4:]} (id={message_id}, attempt={attempt})")
+                return SMSResult(success=True, message_id=message_id)
+
+            # Error envelope: {"errors": [{"code": "...", "title": "..."}]}
+            try:
+                err_data = resp.json() if "application/json" in resp.headers.get("content-type", "") else {}
+            except Exception:
+                err_data = {}
+            errors = err_data.get("errors") or []
+            err_code = str(errors[0].get("code")) if errors else f"HTTP_{resp.status_code}"
+            err_msg = errors[0].get("title", resp.text[:200]) if errors else resp.text[:200]
+            last_error_code = err_code
+            last_error_msg = err_msg
+
+            if resp.status_code >= 500 or resp.status_code == 429:
+                logger.warning(f"[Telnyx SMS] attempt {attempt}/{max_retries} retryable {resp.status_code}: {err_code}: {err_msg}")
+                if attempt < max_retries:
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+                continue
+
+            # Non-retryable 4xx
+            logger.error(f"[Telnyx SMS] non-retryable {resp.status_code} to {to}: {err_code}: {err_msg}")
+            await _persist({
+                "idempotency_key": idem_key,
+                "to": to, "from": from_number, "body": body,
+                "status": "failed",
+                "error_code": err_code, "error_message": err_msg,
+                "metadata": metadata,
+                "created_at": now_iso(), "updated_at": now_iso(),
+            })
+            return SMSResult(success=False, error_code=err_code, error_message=err_msg)
+
+    # Retries exhausted
+    final_code = last_error_code or "RETRIES_EXHAUSTED"
+    final_msg = last_error_msg or f"Exhausted {max_retries} retries"
+    logger.error(f"[Telnyx SMS] retries exhausted for {to}: {final_code}: {final_msg}")
+    await _persist({
+        "idempotency_key": idem_key,
+        "to": to, "from": from_number, "body": body,
+        "status": "failed",
+        "error_code": "RETRIES_EXHAUSTED", "error_message": final_msg,
+        "metadata": metadata,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return SMSResult(success=False, error_code="RETRIES_EXHAUSTED", error_message=final_msg)
 
 
 # ---------------------------------------------------------------------------
