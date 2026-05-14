@@ -37,6 +37,11 @@ try:
         FastAPIWebsocketTransport, FastAPIWebsocketParams,
     )
     from pipecat.serializers.twilio import TwilioFrameSerializer
+    try:
+        from pipecat.serializers.telnyx import TelnyxFrameSerializer
+        _TELNYX_SERIALIZER_AVAILABLE = True
+    except ImportError:
+        _TELNYX_SERIALIZER_AVAILABLE = False
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
     from pipecat.frames.frames import TextFrame, EndFrame, InputTextRawFrame, LLMContextFrame
     from pipecat.processors.aggregators.llm_response_universal import (
@@ -1040,6 +1045,7 @@ async def create_call_pipeline(
     on_call_complete: Optional[Callable] = None,
     session: Optional[CallSession] = None,
     voice: Optional[str] = None,
+    provider: str = "twilio",
 ):
     if not is_pipeline_available():
         logger.warning("[Pipeline] Not available — missing API keys")
@@ -1056,17 +1062,28 @@ async def create_call_pipeline(
 
         logger.info(f"[{call_sid}] Starting pipeline | model={model} voice={voice}")
 
+        if provider == "telnyx":
+            if not _TELNYX_SERIALIZER_AVAILABLE:
+                logger.error(f"[{call_sid}] TelnyxFrameSerializer not installed (pipecat-ai[telnyx] missing)")
+                return None
+            _serializer = TelnyxFrameSerializer(
+                stream_id=stream_sid or call_sid,
+                call_control_id=call_sid,
+                api_key=os.environ.get("TELNYX_API_KEY", ""),
+            )
+        else:
+            _serializer = TwilioFrameSerializer(
+                stream_sid=stream_sid or call_sid,
+                account_sid=os.environ.get("TWILIO_ACCOUNT_SID", ""),
+                auth_token=os.environ.get("TWILIO_AUTH_TOKEN", ""),
+                call_sid=call_sid,
+            )
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=FastAPIWebsocketParams(
                 audio_in_enabled=True,
                 audio_out_enabled=True,
-                serializer=TwilioFrameSerializer(
-                    stream_sid=stream_sid or call_sid,
-                    account_sid=os.environ.get("TWILIO_ACCOUNT_SID", ""),
-                    auth_token=os.environ.get("TWILIO_AUTH_TOKEN", ""),
-                    call_sid=call_sid,
-                ),
+                serializer=_serializer,
             ),
         )
 

@@ -3519,6 +3519,182 @@ async def send_menu_sms_endpoint(
     return {"sent": success}
 
 
+async def _prefetch_call_session_data(
+    *,
+    called_number: str,
+    caller_number: str,
+    call_sid: str,
+) -> Optional[dict]:
+    """Pre-fetch all session data for an incoming call (provider-agnostic).
+
+    Mirrors the inline pre-fetch logic in twilio_incoming_call so the Telnyx
+    handler can share the same data preparation flow without touching Twilio code.
+
+    Returns the dict to upsert into active_calls (with the system_prompt baked in),
+    or None if the called number isn't associated with an active restaurant.
+    """
+    import asyncio as _asyncio
+
+    _phone_results = await _asyncio.gather(
+        db.restaurants.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.clinics.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.salons.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.home_services.find_one({"phone_number": called_number}, {"_id": 0}),
+        db.legal.find_one({"phone_number": called_number}, {"_id": 0}),
+    )
+    restaurant = next((r for r in _phone_results if r), None)
+    if not restaurant or not restaurant.get("is_active"):
+        return None
+
+    restaurant_id = restaurant["id"]
+    business_type = restaurant.get("business_type", "restaurant")
+    plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+
+    if plan_features["customer_recognition"]:
+        config, menu_items, customer_profile = await _asyncio.gather(
+            get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}),
+            db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
+            db.customer_profiles.find_one({"phone_number": caller_number, "restaurant_id": restaurant_id}, {"_id": 0}),
+        )
+        logger.info(f"[{call_sid}] CRM lookup: caller={caller_number}, profile={customer_profile}")
+    else:
+        config, menu_items = await _asyncio.gather(
+            get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}),
+            db.menu_items.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(500),
+        )
+        customer_profile = None
+        logger.info(f"[{call_sid}] CRM skipped (plan: {restaurant.get('plan', 'STARTER')})")
+
+    # Enrich menu items with resolved modifier groups
+    if business_type == "restaurant" or config is None:
+        modifier_groups = await db.modifier_groups.find(
+            {"restaurant_id": restaurant_id, "active": True}, {"_id": 0}
+        ).to_list(200)
+        group_map = {g["id"]: g for g in modifier_groups}
+        for item in menu_items:
+            resolved = []
+            for assignment in item.get("modifier_group_assignments", []):
+                gid = assignment.get("modifier_group_id")
+                if gid in group_map:
+                    g = dict(group_map[gid])
+                    if assignment.get("override_required") is not None:
+                        g["required"] = assignment["override_required"]
+                    if assignment.get("override_min") is not None:
+                        g["min_selections"] = assignment["override_min"]
+                    if assignment.get("override_max") is not None:
+                        g["max_selections"] = assignment["override_max"]
+                    if assignment.get("override_name"):
+                        g["name"] = assignment["override_name"]
+                    g["display_order"] = assignment.get("display_order", g.get("display_order", 0))
+                    resolved.append(g)
+            resolved.sort(key=lambda x: x.get("display_order", 0))
+            item["resolved_modifiers"] = resolved
+
+    business_type = config.get("business_type", "restaurant") if config else "restaurant"
+
+    services = []
+    if business_type in ("clinic", "salon", "home_services", "legal"):
+        services = await db.services.find({"restaurant_id": restaurant_id, "available": True}, {"_id": 0}).to_list(100)
+
+    cached_availability = None
+    if business_type in ("clinic", "salon", "home_services", "legal"):
+        logger.info(f"[{call_sid}] Starting availability pre-fetch for {business_type}")
+        try:
+            from appointment_service import pre_fetch_availability
+            cached_availability = await pre_fetch_availability(
+                restaurant_id=restaurant_id,
+                services=services,
+                config={**(config or {}), "timezone": restaurant.get("timezone", "UTC")},
+                db=db,
+                days_ahead=7,
+            )
+            logger.info(f"[{call_sid}] Availability pre-fetched for {len(cached_availability)} days")
+        except Exception as _e:
+            logger.warning(f"[{call_sid}] Availability pre-fetch failed (non-fatal): {_e}")
+
+    from gemini_service import get_system_prompt
+
+    reservations_enabled = restaurant.get("reservations_enabled", config.get("reservations_enabled", False) if config else False)
+    reservation_settings = None
+    available_reservation_slots = None
+
+    if reservations_enabled and business_type == "restaurant":
+        reservation_settings = {
+            "max_party_size": config.get("reservation_max_party_size", 8) if config else 8,
+            "advance_booking_days": config.get("reservation_advance_booking_days", 30) if config else 30,
+        }
+        try:
+            from reservation_service import get_reservation_slots
+            from datetime import date, timedelta
+            import pytz
+            tz = pytz.timezone(restaurant.get("timezone", "America/Chicago"))
+            local_today = datetime.now(tz).date()
+            all_slots = []
+            for day_offset in range(7):
+                d = local_today + timedelta(days=day_offset)
+                day_slots = await get_reservation_slots(
+                    restaurant_id=restaurant_id,
+                    date_str=d.isoformat(),
+                    config=config or {},
+                    operating_hours=config.get("operating_hours", {}) if config else {},
+                    db=db,
+                    restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+                    restaurant=restaurant,
+                )
+                for s in day_slots:
+                    s["date"] = d.isoformat()
+                    s["day_label"] = d.strftime("%A %b %d")
+                all_slots.extend(day_slots)
+            available_reservation_slots = all_slots
+            logger.info(f"[{call_sid}] Reservation slots pre-fetched: {len(available_reservation_slots)} slots (7 days)")
+        except Exception as e:
+            logger.warning(f"[{call_sid}] Reservation slots pre-fetch failed: {e}")
+
+    system_prompt = get_system_prompt(
+        business_type=business_type,
+        customer_profile=customer_profile,
+        plan=restaurant.get("plan", "STARTER"),
+        restaurant_name=restaurant.get("name", "the restaurant"),
+        cuisine_type=restaurant.get("cuisine_type", ""),
+        persona=config.get("persona", "friendly") if config else "friendly",
+        business_rules=config.get("business_rules", []) if config else [],
+        escalation_rules=config.get("escalation_rules", []) if config else [],
+        menu_items=menu_items,
+        disclosure_text=config.get("disclosure_text", "Hi! I'm an AI assistant. How can I help you today?") if config else "Hi! I'm an AI assistant. How can I help you today?",
+        upsell_enabled=config.get("upsell_enabled", True) if config else True,
+        offers_delivery=restaurant.get("offers_delivery", True),
+        offers_reservations=restaurant.get("offers_reservations", True),
+        delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
+        delivery_fee=restaurant.get("delivery_fee", 0),
+        delivery_zip_codes=restaurant.get("delivery_zip_codes", []),
+        delivery_radius_miles=restaurant.get("delivery_radius_miles", 5.0),
+        delivery_eta_offset_minutes=restaurant.get("delivery_eta_offset_minutes", 15),
+        avg_prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
+        escalation_phone=config.get("escalation_phone_number") if config else None,
+        operating_hours=config.get("operating_hours") if config else None,
+        restaurant_timezone=restaurant.get("timezone", "UTC"),
+        restaurant_address=restaurant.get("address"),
+        services=services,
+        cached_availability=cached_availability,
+        reservations_enabled=reservations_enabled,
+        reservation_settings=reservation_settings,
+        available_reservation_slots=available_reservation_slots,
+    )
+
+    return {
+        "call_sid": call_sid,
+        "restaurant_id": restaurant_id,
+        "caller_number": caller_number,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "system_prompt": system_prompt,
+        "restaurant": restaurant,
+        "config": config or {},
+        "menu_items": menu_items,
+        "services": services,
+    }
+
+
 @api_router.post("/twilio/incoming")
 @limiter.limit(LIMIT_TWILIO)
 async def twilio_incoming_call(request: Request):
@@ -3728,7 +3904,11 @@ async def twilio_incoming_call(request: Request):
 
 @api_router.post("/telnyx/incoming")
 async def telnyx_incoming_call(request: Request):
-    """Phase 2a — Telnyx Call Control webhook. Receives all call events."""
+    """Telnyx Call Control webhook — handles inbound call event flow:
+    call.initiated -> pre-fetch session data, store in active_calls, answer
+    call.answered  -> start media streaming to our WebSocket
+    call.hangup    -> log; cleanup happens in WebSocket on disconnect
+    """
     import json
     import telnyx_service
 
@@ -3760,12 +3940,28 @@ async def telnyx_incoming_call(request: Request):
         from_number = event_payload.get("from", "")
         to_number = event_payload.get("to", "")
         direction = event_payload.get("direction", "")
-        logger.info(f"[Telnyx] {direction} call: {from_number} -> {to_number}")
-        if direction == "incoming":
-            await telnyx_service.answer_call(call_control_id)
+        if direction != "incoming":
+            return Response(status_code=200)
+        logger.info(f"[Telnyx] incoming call: {from_number} -> {to_number}")
+
+        active_call_data = await _prefetch_call_session_data(
+            called_number=to_number,
+            caller_number=from_number,
+            call_sid=call_control_id,
+        )
+        if not active_call_data:
+            logger.warning(f"[Telnyx] Inactive number called: {to_number}, hanging up")
+            await telnyx_service.hang_up_call(call_control_id)
+            return Response(status_code=200)
+
+        await db.active_calls.update_one(
+            {"call_sid": call_control_id},
+            {"$set": active_call_data},
+            upsert=True,
+        )
+        await telnyx_service.answer_call(call_control_id)
 
     elif event_type == "call.answered":
-        # Phase 2b.1: start bidirectional streaming to our WebSocket endpoint
         host = request.headers.get("host", "ringai-v2.onrender.com")
         scheme = "wss" if request.url.scheme == "https" else "ws"
         ws_url = f"{scheme}://{host}/api/telnyx/media-stream"
@@ -3924,32 +4120,263 @@ async def admin_cost_analytics(
 
 @app.websocket("/api/telnyx/media-stream")
 async def telnyx_media_stream(websocket: WebSocket):
-    """Phase 2b.1: minimal WebSocket — accept connection, log all messages.
-    Phase 2b.2 will replace this with full Pipecat integration."""
+    """Full Pipecat-integrated WebSocket — mirrors twilio_media_stream with
+    Telnyx-specific start-message parsing and provider="telnyx" in pipeline.
+    """
     await websocket.accept()
-    logger.info("[Telnyx WS] Connection accepted")
+    register_active_websocket(websocket)
+
     try:
-        frame_count = 0
-        while True:
-            msg = await websocket.receive()
-            if "text" in msg:
-                # JSON control message (start, stop, mark, etc.)
-                logger.info(f"[Telnyx WS] text msg: {msg['text'][:300]}")
-            elif "bytes" in msg:
-                # Binary audio frame
-                frame_count += 1
-                if frame_count <= 3 or frame_count % 100 == 0:
-                    logger.info(f"[Telnyx WS] audio frame #{frame_count} ({len(msg['bytes'])} bytes)")
-            elif msg.get("type") == "websocket.disconnect":
-                logger.info(f"[Telnyx WS] Disconnected after {frame_count} frames")
+        # Read messages until we get the start event with call_control_id.
+        # Telnyx sends:
+        #   {"version":"...","event":"connected"}                                       (control)
+        #   {"start": {"call_control_id":"...","to":"...","from":"...",...}}            (start)
+        #   {"stream_id":"...","event":"media","media":{"payload":"<base64>",...}}      (audio)
+        stream_id = ""
+        call_control_id = ""
+        while not call_control_id:
+            msg = await websocket.receive_json()
+            if "start" in msg and isinstance(msg["start"], dict):
+                start_data = msg["start"]
+                call_control_id = start_data.get("call_control_id", "")
+                stream_id = msg.get("stream_id", "") or start_data.get("stream_id", "")
+            elif msg.get("event") == "connected":
+                continue
+            else:
                 break
+
+        logger.info(f"[Telnyx WS] Stream started: call_control_id={call_control_id} stream_id={stream_id}")
+
+        # All data pre-fetched during POST /telnyx/incoming — just read it
+        call_sid = call_control_id
+        active_call = await db.active_calls.find_one({"call_sid": call_sid}, {"_id": 0})
+        if not active_call:
+            logger.error(f"No active call found for SID {call_sid}")
+            await websocket.close()
+            return
+
+        restaurant_id = active_call["restaurant_id"]
+        system_prompt = active_call.get("system_prompt", "")
+        restaurant = active_call.get("restaurant", {})
+        config = active_call.get("config", {})
+        menu_items = active_call.get("menu_items", [])
+
+        # Decrypt POS credentials
+        try:
+            from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
+            restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
+        except Exception:
+            pass
+
+        services = active_call.get("services", [])
+        session = CallSession(
+            call_sid=call_sid,
+            restaurant_id=restaurant_id,
+            caller_number=active_call.get("caller_number", ""),
+            restaurant=restaurant,
+            config=config or {},
+            menu_items=menu_items,
+            services=services,
+        )
+        session.is_open = calculate_is_open(
+            operating_hours=config.get("operating_hours") if config else None,
+            restaurant_timezone=restaurant.get("timezone", "UTC"),
+        )
+        if not session.is_open:
+            logger.info(f"[{call_sid}] Restaurant is CLOSED — order dispatch blocked")
+
+        async def on_call_complete(call_sid, restaurant_id, transcript, session=None):
+            """Save full call record including extracted order and quality eval."""
+            try:
+                if session:
+                    record_data = session.build_final_call_record()
+                    order_data = record_data.get("order")
+                    order_total = record_data.get("order_total", 0)
+                    quality_eval = record_data.get("quality_eval", {})
+                    quality_score = quality_eval.get("rule_based_score", 85)
+                    status = record_data.get("status", "COMPLETED")
+                    escalated = record_data.get("escalated_to_human", False)
+                    contained = record_data.get("contained_by_ai", True)
+                else:
+                    order_data = None
+                    order_total = 0
+                    quality_score = 85
+                    status = "COMPLETED"
+                    escalated = False
+                    contained = True
+
+                analysis = await analyse_call_transcript(transcript, order_data, menu_items)
+
+                call = CallRecord(
+                    restaurant_id=restaurant_id,
+                    call_sid=call_sid,
+                    caller_number=active_call.get("caller_number", ""),
+                    caller_name=record_data.get("caller_name") if session else None,
+                    started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
+                    ended_at=datetime.now(timezone.utc).isoformat(),
+                    duration_seconds=len(transcript) * 8,
+                    status=status,
+                    contained_by_ai=contained,
+                    escalated_to_human=escalated,
+                    transcript=transcript,
+                    order_json=order_data,
+                    quality_score=analysis.get("quality_score", quality_score),
+                    analysis_json={**analysis, "rule_eval": quality_eval if session else {}},
+                    order_total=order_total,
+                )
+                await db.call_records.insert_one(call.model_dump())
+                await db.active_calls.delete_one({"call_sid": call_sid})
+                logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
+
+                # Monthly call count + overage billing
+                try:
+                    for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+                        await _coll.update_one(
+                            {"id": restaurant_id},
+                            {"$inc": {"monthly_call_count": 1}}
+                        )
+                    _new_count = restaurant.get("monthly_call_count", 0) + 1
+                    _call_limit = restaurant.get("monthly_call_limit", 500)
+                    _cust_id = restaurant.get("stripe_customer_id")
+                    if restaurant.get("billing_status") == "active" and _cust_id and _new_count > _call_limit:
+                        _plan = restaurant.get("plan", "STARTER")
+                        _overage_cents = get_plan_features(_plan)["overage_per_call_cents"]
+                        stripe.InvoiceItem.create(
+                            customer=_cust_id,
+                            amount=_overage_cents,
+                            currency="usd",
+                            description=f"Overage call #{_new_count - _call_limit} ({_plan} plan)",
+                        )
+                        logger.info(f"[{call_sid}] Overage billed: call #{_new_count} (limit: {_call_limit}, {_overage_cents}¢)")
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] Overage billing failed (non-critical): {e}")
+
+                # CRM: upsert customer profile (PRO only)
+                customer_name = None
+                if session and session.order and session.order.customer_name:
+                    customer_name = session.order.customer_name
+                _plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+                if _plan_features["customer_recognition"] and (caller_number := active_call.get("caller_number")):
+                    _profile_update = {
+                        "phone_number": caller_number,
+                        "restaurant_id": restaurant_id,
+                        "last_call_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    _consent = None
+                    if session and session.order:
+                        _consent = session.order.save_name_consent
+                    if _consent is True and customer_name:
+                        _profile_update["last_name"] = customer_name
+                        _profile_update["name_consent"] = True
+                    elif _consent is False:
+                        _profile_update["name_consent"] = False
+                        _profile_update["last_name"] = None
+                    elif customer_name:
+                        existing_profile = await db.customer_profiles.find_one(
+                            {"phone_number": caller_number, "restaurant_id": restaurant_id},
+                            {"_id": 0, "name_consent": 1}
+                        )
+                        if existing_profile and existing_profile.get("name_consent") is True:
+                            _profile_update["last_name"] = customer_name
+                    if order_data:
+                        _profile_update["last_order"] = order_data
+                    await db.customer_profiles.update_one(
+                        {"phone_number": caller_number, "restaurant_id": restaurant_id},
+                        {"$set": _profile_update, "$inc": {"visit_count": 1}},
+                        upsert=True,
+                    )
+                    logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
+
+                # WebSocket notifications
+                try:
+                    from websocket_notifications import notify_new_call, notify_new_order
+                    await notify_new_call(
+                        restaurant_id=restaurant_id,
+                        call_sid=call_sid,
+                        caller_number=active_call.get("caller_number", ""),
+                        caller_name=record_data.get("caller_name") if session else None,
+                        status=status,
+                        order_total=order_total,
+                    )
+                    if order_total > 0 and order_data:
+                        await notify_new_order(
+                            restaurant_id=restaurant_id,
+                            order_id=call_sid,
+                            total=order_total,
+                            order_type=order_data.get("type", "pickup"),
+                            items_count=len(order_data.get("items", [])),
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not send WebSocket notification: {e}")
+
+                # SMS confirmation
+                sms_enabled = config.get("sms_enabled", True) if config else True
+                sms_payment_enabled = config.get("sms_payment_enabled", False) if config else False
+
+                if sms_enabled and session and session.order.items:
+                    payment_link = None
+                    if sms_payment_enabled and order_total > 0:
+                        _stripe_account_id = restaurant.get("stripe_account_id")
+                        payment_link = await create_stripe_payment_link(
+                            order_total_cents=order_total,
+                            restaurant_name=restaurant.get("name", "the restaurant"),
+                            call_sid=call_sid,
+                            restaurant_id=restaurant_id,
+                            stripe_account_id=_stripe_account_id,
+                        )
+                    await send_order_sms(
+                        caller_number=active_call.get("caller_number", ""),
+                        order=session.order,
+                        restaurant_name=restaurant.get("name", "the restaurant"),
+                        prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
+                        payment_link=payment_link,
+                        restaurant=restaurant,
+                        config=config,
+                    )
+                    if session:
+                        session._sms_count += 1
+
+                # Auto-learning (PRO only, non-blocking)
+                try:
+                    if analysis and session and session.business_type == "restaurant" and _plan_features.get("auto_learning"):
+                        learning_service = get_learning_service(db)
+                        learning_result = await learning_service.process_call_analysis(
+                            restaurant_id=restaurant_id,
+                            call_id=call_sid,
+                            analysis=analysis,
+                            order_completed=bool(order_data and order_data.get("items")),
+                            order_total=order_total,
+                        )
+                        logger.info(f"[{call_sid}] Learning: aliases={len(learning_result.get('aliases_learned', []))}, flagged={learning_result.get('flagged_for_review')}")
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] Auto-learning failed (non-critical): {e}")
+            except Exception as e:
+                logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
+
+        if is_pipeline_available():
+            await create_call_pipeline(
+                websocket=websocket,
+                system_prompt=system_prompt,
+                restaurant_id=restaurant_id,
+                call_sid=call_sid,
+                stream_sid=stream_id,
+                on_call_complete=on_call_complete,
+                session=session,
+                voice=config.get("voice_id") if config else None,
+                provider="telnyx",
+            )
+        else:
+            logger.warning("Pipecat pipeline not available — closing WebSocket")
+            await websocket.close()
+
     except Exception as e:
-        logger.error(f"[Telnyx WS] Error: {e}")
-    finally:
+        logger.error(f"[Telnyx WS] error: {e}", exc_info=True)
         try:
             await websocket.close()
         except Exception:
             pass
+    finally:
+        unregister_active_websocket(websocket)
 
 @app.websocket("/api/twilio/media-stream")
 async def twilio_media_stream(websocket: WebSocket):
