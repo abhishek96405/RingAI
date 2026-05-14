@@ -4984,7 +4984,7 @@ async def run_test_scenario(
 # CLOUDFLARE SECURITY MIDDLEWARE
 # ============================================================
 CF_SECRET_TOKEN = os.environ.get("CF_SECRET_TOKEN", "")
-CF_BYPASS_PREFIXES = ["/api/twilio", "/api/call", "/health", "/api/integrations/stripe/callback", "/api/calendar/google/callback", "/api/integrations/square/callback", "/api/webhooks/stripe"]
+CF_BYPASS_PREFIXES = ["/api/twilio", "/api/telnyx", "/api/call", "/health", "/api/integrations/stripe/callback", "/api/calendar/google/callback", "/api/integrations/square/callback", "/api/webhooks/stripe"]
 
 @app.middleware("http")
 async def cloudflare_security_middleware(request: Request, call_next):
