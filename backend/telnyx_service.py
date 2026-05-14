@@ -144,7 +144,7 @@ async def start_streaming(
                 headers=_auth_headers(),
                 json={
                     "stream_url": stream_url,
-                    "stream_track": "both_tracks",
+                    "stream_track": "inbound_track",
                     "stream_bidirectional_mode": "rtp",
                     "stream_bidirectional_codec": codec,
                 },
