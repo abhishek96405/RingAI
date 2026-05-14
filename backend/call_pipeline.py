@@ -1068,6 +1068,8 @@ async def create_call_pipeline(
                 return None
             _serializer = TelnyxFrameSerializer(
                 stream_id=stream_sid or call_sid,
+                outbound_encoding="PCMU",
+                inbound_encoding="PCMU",
                 call_control_id=call_sid,
                 api_key=os.environ.get("TELNYX_API_KEY", ""),
             )
