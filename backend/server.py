@@ -3765,17 +3765,17 @@ async def telnyx_incoming_call(request: Request):
             await telnyx_service.answer_call(call_control_id)
 
     elif event_type == "call.answered":
-        await telnyx_service.speak_text(
-            call_control_id,
-            "Hello! This is a Telnyx integration test from Duuutah AI. Phase 2A is working. Goodbye!",
-        )
-
-    elif event_type == "call.speak.ended":
-        logger.info(f"[Telnyx] Speak ended for {call_control_id}, hanging up")
-        await telnyx_service.hang_up_call(call_control_id)
+        # Phase 2b.1: start bidirectional streaming to our WebSocket endpoint
+        host = request.headers.get("host", "ringai-v2.onrender.com")
+        scheme = "wss" if request.url.scheme == "https" else "ws"
+        ws_url = f"{scheme}://{host}/api/telnyx/media-stream"
+        await telnyx_service.start_streaming(call_control_id, ws_url)
 
     elif event_type == "call.hangup":
         logger.info(f"[Telnyx] Call ended: {call_control_id}")
+
+    elif event_type in ("streaming.started", "streaming.stopped", "streaming.failed"):
+        logger.info(f"[Telnyx] {event_type}: {event_payload}")
 
     return Response(status_code=200)
 
@@ -3921,6 +3921,35 @@ async def admin_cost_analytics(
         "overall": overall,
         "per_restaurant": per_restaurant,
     }
+
+@app.websocket("/api/telnyx/media-stream")
+async def telnyx_media_stream(websocket: WebSocket):
+    """Phase 2b.1: minimal WebSocket — accept connection, log all messages.
+    Phase 2b.2 will replace this with full Pipecat integration."""
+    await websocket.accept()
+    logger.info("[Telnyx WS] Connection accepted")
+    try:
+        frame_count = 0
+        while True:
+            msg = await websocket.receive()
+            if "text" in msg:
+                # JSON control message (start, stop, mark, etc.)
+                logger.info(f"[Telnyx WS] text msg: {msg['text'][:300]}")
+            elif "bytes" in msg:
+                # Binary audio frame
+                frame_count += 1
+                if frame_count <= 3 or frame_count % 100 == 0:
+                    logger.info(f"[Telnyx WS] audio frame #{frame_count} ({len(msg['bytes'])} bytes)")
+            elif msg.get("type") == "websocket.disconnect":
+                logger.info(f"[Telnyx WS] Disconnected after {frame_count} frames")
+                break
+    except Exception as e:
+        logger.error(f"[Telnyx WS] Error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 @app.websocket("/api/twilio/media-stream")
 async def twilio_media_stream(websocket: WebSocket):

@@ -126,6 +126,36 @@ async def speak_text(call_control_id: str, text: str, voice: str = "female", lan
     except Exception as e:
         logger.error(f"[Telnyx] Speak failed for {call_control_id}: {e}")
         return False
+    
+async def start_streaming(
+    call_control_id: str,
+    stream_url: str,
+    codec: str = "PCMU",
+) -> bool:
+    """
+    Start bidirectional media streaming on an answered call.
+    Telnyx will open a WebSocket to stream_url and exchange audio frames there.
+    PCMU = μ-law 8kHz, the standard PSTN codec (matches what Pipecat expects).
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/streaming_start",
+                headers=_auth_headers(),
+                json={
+                    "stream_url": stream_url,
+                    "stream_track": "both_tracks",
+                    "stream_bidirectional_mode": "rtp",
+                    "stream_bidirectional_codec": codec,
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            logger.info(f"[Telnyx] Streaming started for {call_control_id} -> {stream_url}")
+            return True
+    except Exception as e:
+        logger.error(f"[Telnyx] Streaming start failed for {call_control_id}: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
