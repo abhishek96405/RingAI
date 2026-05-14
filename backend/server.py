@@ -3729,6 +3729,7 @@ async def twilio_incoming_call(request: Request):
 @api_router.post("/telnyx/incoming")
 async def telnyx_incoming_call(request: Request):
     """Phase 2a — Telnyx Call Control webhook. Receives all call events."""
+    import json
     import telnyx_service
 
     raw_body = await request.body()
