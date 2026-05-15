@@ -380,3 +380,180 @@ def verify_webhook_signature(
     except Exception as e:
         logger.warning(f"[Telnyx] Webhook signature verification failed: {e}")
         return False
+    
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phone number provisioning
+# ─────────────────────────────────────────────────────────────────────────
+
+def _get_voice_app_id() -> Optional[str]:
+    """Telnyx Voice API Application ID (used as connection_id for voice routing)."""
+    return (
+        os.environ.get("TELNYX_VOICE_APP_ID")
+        or os.environ.get("TELNYX_CONNECTION_ID")
+        or os.environ.get("TELNYX_TEXML_APP_ID")  # legacy name from Phase 1
+    )
+
+
+def _get_messaging_profile_id() -> Optional[str]:
+    return os.environ.get("TELNYX_MESSAGING_PROFILE_ID")
+
+
+async def search_available_numbers(
+    *,
+    country_code: str = "US",
+    area_code: Optional[str] = None,
+    features: Optional[List[str]] = None,
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """Search Telnyx for available phone numbers (voice + SMS capable by default)."""
+    features = features or ["voice", "sms"]
+    params: Dict[str, Any] = {
+        "filter[country_code]": country_code,
+        "filter[limit]": str(min(max(limit, 1), 100)),
+        "filter[features][]": features,
+    }
+    if area_code:
+        params["filter[national_destination_code]"] = area_code
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{TELNYX_API_BASE}/available_phone_numbers",
+            headers=_auth_headers(),
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", [])
+
+
+async def create_number_order(
+    phone_numbers: List[str],
+    *,
+    connection_id: Optional[str] = None,
+    messaging_profile_id: Optional[str] = None,
+    customer_reference: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a number order. Numbers are assigned to voice + messaging at order time.
+
+    Orders are usually async — completion in seconds. Use wait_for_order_completion().
+    """
+    payload: Dict[str, Any] = {
+        "phone_numbers": [{"phone_number": pn} for pn in phone_numbers],
+    }
+    if connection_id:
+        payload["connection_id"] = connection_id
+    if messaging_profile_id:
+        payload["messaging_profile_id"] = messaging_profile_id
+    if customer_reference:
+        payload["customer_reference"] = customer_reference
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{TELNYX_API_BASE}/number_orders",
+            headers=_auth_headers(),
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {})
+
+
+async def get_number_order(order_id: str) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{TELNYX_API_BASE}/number_orders/{order_id}",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {})
+
+
+async def wait_for_order_completion(
+    order_id: str,
+    *,
+    timeout_seconds: int = 30,
+    poll_interval_seconds: float = 1.5,
+) -> Dict[str, Any]:
+    """Poll an order until it reaches a terminal state. Raises TimeoutError if not done in time."""
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    while True:
+        order = await get_number_order(order_id)
+        status = (order.get("status") or "").lower()
+        if status in ("success", "failure"):
+            return order
+        if asyncio.get_event_loop().time() >= deadline:
+            raise TimeoutError(f"Order {order_id} did not complete in {timeout_seconds}s (last status={status!r})")
+        await asyncio.sleep(poll_interval_seconds)
+
+
+async def list_phone_numbers(
+    *,
+    phone_number: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    """List phone numbers owned by the account. Optionally filter by exact E.164."""
+    params: Dict[str, Any] = {"page[size]": str(min(max(limit, 1), 250))}
+    if phone_number:
+        params["filter[phone_number]"] = phone_number
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{TELNYX_API_BASE}/phone_numbers",
+            headers=_auth_headers(),
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", [])
+
+
+async def get_phone_number_details(phone_number_id: str) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{TELNYX_API_BASE}/phone_numbers/{phone_number_id}",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {})
+
+
+async def update_phone_number(
+    phone_number_id: str,
+    *,
+    connection_id: Optional[str] = None,
+    messaging_profile_id: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    customer_reference: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Update voice connection, messaging profile, tags, or customer_reference on a number."""
+    payload: Dict[str, Any] = {}
+    if connection_id is not None:
+        payload["connection_id"] = connection_id
+    if messaging_profile_id is not None:
+        payload["messaging_profile_id"] = messaging_profile_id
+    if tags is not None:
+        payload["tags"] = tags
+    if customer_reference is not None:
+        payload["customer_reference"] = customer_reference
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.patch(
+            f"{TELNYX_API_BASE}/phone_numbers/{phone_number_id}",
+            headers=_auth_headers(),
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {})
+
+
+async def release_phone_number(phone_number_id: str) -> bool:
+    """Release a phone number from the account (cannot be undone)."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.delete(
+                f"{TELNYX_API_BASE}/phone_numbers/{phone_number_id}",
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+            logger.info(f"[Telnyx] Released phone number {phone_number_id}")
+            return True
+    except Exception as e:
+        logger.error(f"[Telnyx] Release failed for {phone_number_id}: {e}")
+        return False

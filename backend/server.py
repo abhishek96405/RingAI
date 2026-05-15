@@ -632,6 +632,26 @@ class TwilioAssignNumberRequest(BaseModel):
     restaurant_id: str
     phone_number: str
 
+class TelnyxProvisionRequest(BaseModel):
+    restaurant_id: str
+    area_code: Optional[str] = None    # search if no phone_number given
+    phone_number: Optional[str] = None  # exact number from search results, E.164
+
+
+class TelnyxAssignNumberRequest(BaseModel):
+    restaurant_id: str
+    phone_number: str  # must already be owned by the Telnyx account
+
+
+class TelnyxReleaseRequest(BaseModel):
+    restaurant_id: str
+    phone_number_id: Optional[str] = None  # defaults to restaurant's current number
+
+
+class TelnyxSearchResponse(BaseModel):
+    available: List[Dict[str, Any]]
+    count: int
+
 
 class BootstrapResponse(BaseModel):
     user: Dict[str, Any]
@@ -2903,29 +2923,70 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
 
     if not existing.get("phone_number"):
         try:
-            twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-            twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
-            if twilio_sid and twilio_token:
-                twilio_client = TwilioClient(twilio_sid, twilio_token)
-                voice_url = f"{get_backend_public_url()}/api/twilio/incoming"
-                candidates = twilio_client.available_phone_numbers("US").local.list(
-                    sms_enabled=True,
-                    voice_enabled=True,
-                    limit=1,
-                )
-                if candidates:
-                    purchased = twilio_client.incoming_phone_numbers.create(
-                        phone_number=candidates[0].phone_number,
-                        voice_url=voice_url,
-                        voice_method="POST",
-                    )
-                    update_fields["phone_number"] = purchased.phone_number
-                    update_fields["phone_number_id"] = purchased.sid
-                    logger.info(f"Auto-provisioned Twilio number {purchased.phone_number} for restaurant {data.restaurant_id}")
+            import telnyx_service
+            voice_app_id = telnyx_service._get_voice_app_id()
+            messaging_profile_id = telnyx_service._get_messaging_profile_id()
+
+            if not (os.environ.get("TELNYX_API_KEY") and voice_app_id):
+                logger.warning("Telnyx auto-provision skipped — TELNYX_API_KEY or voice app ID not configured")
+            else:
+                available = await telnyx_service.search_available_numbers(country_code="US", limit=5)
+                if not available:
+                    logger.warning("No available Telnyx numbers found during onboarding")
                 else:
-                    logger.warning("No available Twilio numbers found during onboarding")
+                    target_number = available[0]["phone_number"]
+                    order = await telnyx_service.create_number_order(
+                        phone_numbers=[target_number],
+                        connection_id=voice_app_id,
+                        messaging_profile_id=messaging_profile_id,
+                        customer_reference=data.restaurant_id,
+                    )
+                    order_id = order.get("id")
+                    if order_id:
+                        await db.phone_number_orders.insert_one({
+                            "order_id": order_id,
+                            "restaurant_id": data.restaurant_id,
+                            "phone_number": target_number,
+                            "status": order.get("status", "pending"),
+                            "operation": "onboarding_auto_provision",
+                            "created_by": user.get("id"),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "completed_at": None,
+                            "phone_number_id": None,
+                            "error": None,
+                        })
+                        try:
+                            final_order = await telnyx_service.wait_for_order_completion(order_id, timeout_seconds=30)
+                            final_status = (final_order.get("status") or "").lower()
+                            pn_list = final_order.get("phone_numbers") or []
+                            pn_entry = next(
+                                (p for p in pn_list if p.get("phone_number") == target_number),
+                                pn_list[0] if pn_list else {},
+                            )
+                            phone_number_id = pn_entry.get("id")
+                            await db.phone_number_orders.update_one(
+                                {"order_id": order_id},
+                                {"$set": {
+                                    "status": final_status,
+                                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                                    "phone_number_id": phone_number_id,
+                                    "error": None if final_status == "success" else f"Final status: {final_status}",
+                                }},
+                            )
+                            if final_status == "success" and phone_number_id:
+                                update_fields["phone_number"] = target_number
+                                update_fields["phone_number_id"] = phone_number_id
+                                logger.info(f"Auto-provisioned Telnyx number {target_number} for restaurant {data.restaurant_id}")
+                            else:
+                                logger.warning(f"Telnyx onboarding order {order_id} ended with status '{final_status}' — restaurant left without number")
+                        except TimeoutError:
+                            await db.phone_number_orders.update_one(
+                                {"order_id": order_id},
+                                {"$set": {"status": "timeout", "error": "Order did not complete within 30s"}},
+                            )
+                            logger.warning(f"Telnyx onboarding order {order_id} did not complete in 30s — restaurant left without number, will be retried via /api/telnyx/numbers/provision")
         except Exception as e:
-            logger.warning(f"Could not auto-provision Twilio number: {e}")
+            logger.warning(f"Could not auto-provision Telnyx number during onboarding: {e}")
 
     result = await _biz_coll.update_one({"id": data.restaurant_id}, {"$set": update_fields})
     if result.matched_count == 0:
@@ -3401,6 +3462,296 @@ async def startup_seed():
             await simulate_call_internal("demo-restaurant-001", call_time)
 
         logger.info("Demo data seeded successfully!")
+
+
+# ============================================================
+# TELNYX NUMBER PROVISIONING ENDPOINTS
+# ============================================================
+
+@api_router.get("/telnyx/numbers/status")
+async def telnyx_numbers_status(
+    restaurant_id: str = Query(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Provisioning readiness + the restaurant's current number."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    import telnyx_service
+    voice_app_id = telnyx_service._get_voice_app_id()
+    messaging_profile_id = telnyx_service._get_messaging_profile_id()
+    return {
+        "configured": bool(os.environ.get("TELNYX_API_KEY") and voice_app_id),
+        "voice_app_configured": bool(voice_app_id),
+        "messaging_profile_configured": bool(messaging_profile_id),
+        "phone_number": restaurant.get("phone_number") or restaurant.get("telnyx_phone_number"),
+        "phone_number_id": restaurant.get("phone_number_id"),
+    }
+
+
+@api_router.get("/telnyx/numbers/search")
+async def telnyx_numbers_search(
+    country_code: str = Query("US"),
+    area_code: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Search Telnyx for available numbers. Returns up to `limit` matches."""
+    import telnyx_service
+    try:
+        numbers = await telnyx_service.search_available_numbers(
+            country_code=country_code, area_code=area_code, limit=limit,
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(f"[Telnyx Search] {e.response.status_code}: {e.response.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"Telnyx search failed ({e.response.status_code})")
+    except Exception as e:
+        logger.error(f"[Telnyx Search] Unexpected: {e}")
+        raise HTTPException(status_code=502, detail="Telnyx number search failed")
+
+    return {
+        "available": [
+            {
+                "phone_number": n.get("phone_number"),
+                "vanity_format": n.get("vanity_format"),
+                "region": (n.get("region_information") or [{}])[0].get("region_name"),
+                "monthly_cost_usd": (n.get("cost_information") or {}).get("monthly_cost"),
+                "features": [f.get("name") for f in (n.get("features") or [])],
+            }
+            for n in numbers
+        ],
+        "count": len(numbers),
+    }
+
+
+@api_router.post("/telnyx/numbers/provision")
+async def telnyx_provision_number(
+    data: TelnyxProvisionRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Buy a Telnyx number and assign to a restaurant (voice + messaging).
+
+    Flow:
+      1. Resolve target number (data.phone_number or first match in area)
+      2. Create order with auto-assignment to voice app + messaging profile
+      3. Persist order audit record (status=pending)
+      4. Poll order until success/failure (30s timeout)
+      5. On success: write phone_number + phone_number_id to restaurant doc
+    """
+    restaurant = await ensure_restaurant_access(data.restaurant_id, user)
+    import telnyx_service
+
+    voice_app_id = telnyx_service._get_voice_app_id()
+    messaging_profile_id = telnyx_service._get_messaging_profile_id()
+    if not voice_app_id:
+        raise HTTPException(status_code=400, detail="TELNYX_VOICE_APP_ID env var not configured")
+
+    # Refuse double-provision (force-release first if you truly want a swap)
+    existing = restaurant.get("phone_number") or restaurant.get("telnyx_phone_number")
+    if existing and (not data.phone_number or data.phone_number != existing):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Restaurant already has phone_number {existing}. Release it before provisioning a new one.",
+        )
+
+    # Resolve target number
+    target_number = data.phone_number
+    if not target_number:
+        try:
+            available = await telnyx_service.search_available_numbers(
+                country_code="US", area_code=data.area_code, limit=5,
+            )
+        except Exception as e:
+            logger.error(f"[Telnyx Provision] Search failed: {e}")
+            raise HTTPException(status_code=502, detail="Telnyx number search failed")
+        if not available:
+            raise HTTPException(status_code=404, detail="No available Telnyx numbers found")
+        target_number = available[0]["phone_number"]
+
+    # Submit order
+    try:
+        order = await telnyx_service.create_number_order(
+            phone_numbers=[target_number],
+            connection_id=voice_app_id,
+            messaging_profile_id=messaging_profile_id,
+            customer_reference=data.restaurant_id,
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(f"[Telnyx Provision] Order creation failed: {e.response.status_code} {e.response.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"Number order creation failed: {e.response.text[:300]}")
+
+    order_id = order.get("id")
+    if not order_id:
+        raise HTTPException(status_code=502, detail="Telnyx did not return an order ID")
+
+    # Audit record (pending)
+    await db.phone_number_orders.insert_one({
+        "order_id": order_id,
+        "restaurant_id": data.restaurant_id,
+        "phone_number": target_number,
+        "status": order.get("status", "pending"),
+        "operation": "provision",
+        "created_by": user.get("id"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "phone_number_id": None,
+        "error": None,
+    })
+
+    # Poll for completion
+    try:
+        final_order = await telnyx_service.wait_for_order_completion(order_id, timeout_seconds=30)
+    except TimeoutError as e:
+        await db.phone_number_orders.update_one(
+            {"order_id": order_id},
+            {"$set": {"status": "timeout", "error": str(e)}},
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"Order {order_id} did not complete in time. Poll status via GET /api/telnyx/numbers/order/{order_id}",
+        )
+
+    final_status = (final_order.get("status") or "").lower()
+    pn_list = final_order.get("phone_numbers") or []
+    pn_entry = next((p for p in pn_list if p.get("phone_number") == target_number), pn_list[0] if pn_list else {})
+    phone_number_id = pn_entry.get("id")
+
+    await db.phone_number_orders.update_one(
+        {"order_id": order_id},
+        {"$set": {
+            "status": final_status,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "phone_number_id": phone_number_id,
+            "error": None if final_status == "success" else f"Final status: {final_status}",
+        }},
+    )
+
+    if final_status != "success":
+        raise HTTPException(status_code=502, detail=f"Telnyx order ended with status '{final_status}'")
+
+    # Update restaurant across all business-type collections
+    for _coll in (db.restaurants, db.clinics, db.salons, db.home_services, db.legal):
+        await _coll.update_one(
+            {"id": data.restaurant_id},
+            {"$set": {"phone_number": target_number, "phone_number_id": phone_number_id}},
+        )
+
+    logger.info(f"[Telnyx Provision] {data.restaurant_id} -> {target_number} (id={phone_number_id})")
+    return {
+        "phone_number": target_number,
+        "phone_number_id": phone_number_id,
+        "order_id": order_id,
+        "status": final_status,
+    }
+
+
+@api_router.post("/telnyx/numbers/assign-existing")
+async def telnyx_assign_existing_number(
+    data: TelnyxAssignNumberRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Bind an already-owned Telnyx number to a restaurant."""
+    restaurant = await ensure_restaurant_access(data.restaurant_id, user)
+    import telnyx_service
+
+    voice_app_id = telnyx_service._get_voice_app_id()
+    messaging_profile_id = telnyx_service._get_messaging_profile_id()
+
+    try:
+        matches = await telnyx_service.list_phone_numbers(phone_number=data.phone_number)
+    except Exception as e:
+        logger.error(f"[Telnyx Assign] Lookup failed: {e}")
+        raise HTTPException(status_code=502, detail="Telnyx number lookup failed")
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"Number {data.phone_number} is not owned by this Telnyx account")
+
+    phone_number_id = matches[0].get("id")
+    try:
+        await telnyx_service.update_phone_number(
+            phone_number_id,
+            connection_id=voice_app_id,
+            messaging_profile_id=messaging_profile_id,
+            customer_reference=data.restaurant_id,
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(f"[Telnyx Assign] Update failed: {e.response.status_code} {e.response.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"Number update failed: {e.response.text[:300]}")
+
+    await db.phone_number_orders.insert_one({
+        "order_id": None,
+        "restaurant_id": data.restaurant_id,
+        "phone_number": data.phone_number,
+        "status": "success",
+        "operation": "assign",
+        "created_by": user.get("id"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "phone_number_id": phone_number_id,
+        "error": None,
+    })
+
+    for _coll in (db.restaurants, db.clinics, db.salons, db.home_services, db.legal):
+        await _coll.update_one(
+            {"id": data.restaurant_id},
+            {"$set": {"phone_number": data.phone_number, "phone_number_id": phone_number_id}},
+        )
+
+    logger.info(f"[Telnyx Assign] {data.restaurant_id} -> {data.phone_number} (id={phone_number_id})")
+    return {"phone_number": data.phone_number, "phone_number_id": phone_number_id, "status": "success"}
+
+
+@api_router.post("/telnyx/numbers/release")
+async def telnyx_release_number(
+    data: TelnyxReleaseRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Release the restaurant's Telnyx number. Irreversible."""
+    restaurant = await ensure_restaurant_access(data.restaurant_id, user)
+    import telnyx_service
+
+    phone_number_id = data.phone_number_id or restaurant.get("phone_number_id")
+    if not phone_number_id:
+        raise HTTPException(status_code=404, detail="No phone_number_id on file for this restaurant")
+
+    released = await telnyx_service.release_phone_number(phone_number_id)
+    if not released:
+        raise HTTPException(status_code=502, detail=f"Telnyx release failed for {phone_number_id}")
+
+    for _coll in (db.restaurants, db.clinics, db.salons, db.home_services, db.legal):
+        await _coll.update_one(
+            {"id": data.restaurant_id},
+            {"$unset": {"phone_number_id": "", "phone_number": ""}},
+        )
+
+    await db.phone_number_orders.insert_one({
+        "order_id": None,
+        "restaurant_id": data.restaurant_id,
+        "phone_number": restaurant.get("phone_number"),
+        "status": "success",
+        "operation": "release",
+        "created_by": user.get("id"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "phone_number_id": phone_number_id,
+        "error": None,
+    })
+
+    logger.info(f"[Telnyx Release] {data.restaurant_id} released {phone_number_id}")
+    return {"released": True, "phone_number_id": phone_number_id}
+
+
+@api_router.get("/telnyx/numbers/order/{order_id}")
+async def telnyx_get_order(
+    order_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Check status of a number order (for orders that didn't complete synchronously)."""
+    import telnyx_service
+    try:
+        order = await telnyx_service.get_number_order(order_id)
+    except Exception as e:
+        logger.error(f"[Telnyx Order Status] {e}")
+        raise HTTPException(status_code=502, detail="Telnyx order lookup failed")
+    record = await db.phone_number_orders.find_one({"order_id": order_id}, {"_id": 0})
+    return {"telnyx": order, "audit": record}
 
 
 # ============================================================
