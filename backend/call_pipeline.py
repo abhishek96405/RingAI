@@ -1,24 +1,23 @@
 """
 Pipecat + Gemini Live Audio Call Pipeline for RingAI
 
-Handles real-time phone calls:
-  Twilio → WebSocket → TwilioFrameSerializer
+Handles real-time phone calls via Telnyx:
+  Telnyx → WebSocket → TelnyxFrameSerializer
   → GeminiLiveLLMService (native audio: STT + LLM + TTS in one model, ~200-400ms latency)
-  → TwilioFrameSerializer → Twilio
+  → TelnyxFrameSerializer → Telnyx
 
-CHANGES IN THIS VERSION:
-  - on_call_complete now fires reliably from _schedule_hangup BEFORE pipeline cancel
-  - Previously on_client_disconnected was skipped when task.cancel() fired first
+Behavior:
+  - on_call_complete fires reliably from _schedule_hangup BEFORE pipeline cancel
   - _hangup_scheduled flag prevents double-call to on_call_complete
   - on_client_disconnected only fires on_call_complete if _schedule_hangup didn't
   - session._on_call_complete stored so _schedule_hangup can invoke it directly
-  - Auto-hangup after ORDER_CONFIRMED via Twilio REST API
+  - Hangup via pipeline task cancel (TelnyxFrameSerializer handles WS close)
   - Pipeline teardown stops Gemini Live billing
   - Order dispatch with 3 retries + backoff
 
 Requires:
-  - GOOGLE_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN env vars
-  - pip install 'pipecat-ai[google,websocket,silero]'
+  - GOOGLE_API_KEY, TELNYX_API_KEY env vars
+  - pip install 'pipecat-ai[google,websocket,silero,telnyx]'
 """
 import os
 import asyncio
@@ -36,7 +35,7 @@ try:
     from pipecat.transports.websocket.fastapi import (
         FastAPIWebsocketTransport, FastAPIWebsocketParams,
     )
-    from pipecat.serializers.twilio import TwilioFrameSerializer
+
     try:
         from pipecat.serializers.telnyx import TelnyxFrameSerializer
         _TELNYX_SERIALIZER_AVAILABLE = True
@@ -244,10 +243,8 @@ class RingAIGeminiLive(GeminiLiveLLMService):
 def is_pipeline_available() -> bool:
     return all([
         os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY"),
-        os.environ.get("TWILIO_ACCOUNT_SID"),
-        os.environ.get("TWILIO_AUTH_TOKEN"),
+        os.environ.get("TELNYX_API_KEY"),
     ])
-
 
 # ---------------------------------------------------------------------------
 # VAD configuration
@@ -259,44 +256,6 @@ VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 # Seconds to wait after farewell TTS before hanging up
 HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "1.5"))
 
-
-# ---------------------------------------------------------------------------
-# Twilio REST hangup
-# ---------------------------------------------------------------------------
-
-async def hang_up_twilio_call(call_sid: str) -> bool:
-    """
-    End a Twilio call via REST API by setting status to 'completed'.
-    Stops Twilio billing immediately and closes the media stream.
-    """
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN")
-    if not account_sid or not auth_token:
-        logger.warning(f"[{call_sid}] Cannot hang up — missing Twilio credentials")
-        return False
-
-    credentials = base64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}.json"
-
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                url,
-                data={"Status": "completed"},
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
-            if resp.status_code in (200, 204):
-                logger.info(f"[{call_sid}] ✅ Twilio call terminated via REST API")
-                return True
-            else:
-                logger.error(f"[{call_sid}] Twilio hangup failed: {resp.status_code} {resp.text}")
-                return False
-    except Exception as e:
-        logger.error(f"[{call_sid}] Twilio hangup error: {e}")
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +274,6 @@ class CallSession:
         config: Dict[str, Any],
         menu_items: List[Dict[str, Any]],
         services: Optional[List[Dict[str, Any]]] = None,
-        provider: str = "twilio",
     ):
         self.call_sid       = call_sid
         self.restaurant_id  = restaurant_id
@@ -324,7 +282,6 @@ class CallSession:
         self.config         = config
         self.menu_index     = MenuIndex(menu_items)
         self.services       = services or []  # For appointment businesses
-        self.provider       = provider  # "twilio" or "telnyx"
         self.transcript: List[Dict] = []
         self.started_at     = datetime.now(timezone.utc).isoformat()
         self.order          = LiveOrder(
@@ -343,7 +300,7 @@ class CallSession:
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
         self._call_timer_task = None     # auto-escalation after max duration
-        self._actual_duration_seconds = None  # exact duration from Twilio status callback
+        self._actual_duration_seconds = None  # exact duration from call status callback
 
         # Business type for horizontal platform support
         self.business_type = config.get("business_type", "restaurant") if config else "restaurant"
@@ -527,10 +484,8 @@ class CallSession:
             if escalation_phone:
                 transferred = await self._transfer_call(escalation_phone)
                 if transferred:
-                    return  # Don't hang up — Twilio handles it after transfer
+                    return  # Don't hang up — transfer takes over
 
-        if self.provider == "twilio":
-            await hang_up_twilio_call(self.call_sid)
         if self._pipeline_task is not None:
             try:
                 await self._pipeline_task.cancel()
@@ -539,41 +494,19 @@ class CallSession:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
 
     async def _transfer_call(self, to_number: str) -> bool:
-        """Transfer the call to a human agent via Twilio REST API."""
-        account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-        auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-        if not account_sid or not auth_token:
-            logger.warning(f"[{self.call_sid}] Cannot transfer — missing Twilio credentials")
-            return False
-        try:
-            credentials = base64.b64encode(
-                f"{account_sid}:{auth_token}".encode()
-            ).decode()
-            url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{self.call_sid}.json"
-            twiml = f'<Response><Dial>{to_number}</Dial></Response>'
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.post(
-                    url,
-                    data={"Twiml": twiml},
-                    headers={
-                        "Authorization": f"Basic {credentials}",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    },
-                )
-                if resp.status_code in (200, 204):
-                    logger.info(f"[{self.call_sid}] ✅ Call transferred to {to_number}")
-                    if self._pipeline_task is not None:
-                        try:
-                            await self._pipeline_task.cancel()
-                        except Exception:
-                            pass
-                    return True
-                else:
-                    logger.error(f"[{self.call_sid}] Transfer failed: {resp.status_code} {resp.text}")
-                    return False
-        except Exception as e:
-            logger.error(f"[{self.call_sid}] Transfer error: {e}")
-            return False
+        """
+        Transfer the call to a human agent.
+
+        TODO: Implement Telnyx Call Control transfer:
+            POST https://api.telnyx.com/v2/calls/{call_control_id}/actions/transfer
+            payload: {"to": to_number, "from": <restaurant_phone>}
+        For now, returns False so callers fall through to normal hangup flow.
+        """
+        logger.warning(
+            f"[{self.call_sid}] Call transfer not yet implemented for Telnyx — "
+            f"escalation to {to_number} skipped"
+        )
+        return False
     # ------------------------------------------------------------------
     # Order dispatch with retry
     # ------------------------------------------------------------------
@@ -634,23 +567,23 @@ class CallSession:
                         f"[{self.call_sid}] Delivery address outside radius: "
                         f"{validation.get('distance_miles', '?')} miles"
                     )
-                    # Send apology SMS
+                    # Send apology SMS via Telnyx
                     try:
-                        from twilio.rest import Client as TwilioClient
-                        import os
-                        client = TwilioClient(
-                            os.environ.get("TWILIO_ACCOUNT_SID"),
-                            os.environ.get("TWILIO_AUTH_TOKEN"),
-                        )
-                        client.messages.create(
+                        from telnyx_service import send_sms
+                        await send_sms(
+                            to=self.caller_number,
                             body=(
                                 f"Sorry, {self.restaurant.get('name', 'the restaurant')} "
                                 f"cannot deliver to your address — it's outside our delivery area "
                                 f"({validation.get('distance_miles', '?')} miles, max {self.restaurant.get('delivery_radius_miles', 5)} miles). "
                                 f"Please call back to place a pickup order instead."
                             ),
-                            from_=os.environ.get("TWILIO_PHONE_NUMBER"),
-                            to=self.caller_number,
+                            idempotency_key=f"delivery_reject:{self.call_sid}",
+                            metadata={
+                                "purpose": "delivery_rejection",
+                                "restaurant_id": self.restaurant_id,
+                                "call_sid": self.call_sid,
+                            },
                         )
                     except Exception as sms_err:
                         logger.error(f"[{self.call_sid}] Delivery rejection SMS error: {sms_err}")
@@ -726,11 +659,11 @@ class CallSession:
 
         duration_minutes = duration_secs / 60.0
 
-        # Twilio voice: $0.0085/min inbound, ceil per minute
+        # Voice cost: $0.0085/min ceil per minute — TODO: update for Telnyx (~$0.0046/min US local)
         import math
         cost_voice = math.ceil(duration_minutes) * 0.0085
 
-        # Twilio SMS: $0.0083/message
+        # SMS cost: $0.0083/message — TODO: update for Telnyx (~$0.0040/message US)
         sms_count = getattr(self, "_sms_count", 0)
         cost_sms = sms_count * 0.0083
 
@@ -1048,7 +981,6 @@ async def create_call_pipeline(
     on_call_complete: Optional[Callable] = None,
     session: Optional[CallSession] = None,
     voice: Optional[str] = None,
-    provider: str = "twilio",
 ):
     if not is_pipeline_available():
         logger.warning("[Pipeline] Not available — missing API keys")
@@ -1065,24 +997,16 @@ async def create_call_pipeline(
 
         logger.info(f"[{call_sid}] Starting pipeline | model={model} voice={voice}")
 
-        if provider == "telnyx":
-            if not _TELNYX_SERIALIZER_AVAILABLE:
-                logger.error(f"[{call_sid}] TelnyxFrameSerializer not installed (pipecat-ai[telnyx] missing)")
-                return None
-            _serializer = TelnyxFrameSerializer(
-                stream_id=stream_sid or call_sid,
-                outbound_encoding="PCMU",
-                inbound_encoding="PCMU",
-                call_control_id=call_sid,
-                api_key=os.environ.get("TELNYX_API_KEY", ""),
-            )
-        else:
-            _serializer = TwilioFrameSerializer(
-                stream_sid=stream_sid or call_sid,
-                account_sid=os.environ.get("TWILIO_ACCOUNT_SID", ""),
-                auth_token=os.environ.get("TWILIO_AUTH_TOKEN", ""),
-                call_sid=call_sid,
-            )
+        if not _TELNYX_SERIALIZER_AVAILABLE:
+            logger.error(f"[{call_sid}] TelnyxFrameSerializer not installed (pipecat-ai[telnyx] missing)")
+            return None
+        _serializer = TelnyxFrameSerializer(
+            stream_id=stream_sid or call_sid,
+            outbound_encoding="PCMU",
+            inbound_encoding="PCMU",
+            call_control_id=call_sid,
+            api_key=os.environ.get("TELNYX_API_KEY", ""),
+        )
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=FastAPIWebsocketParams(
@@ -1206,7 +1130,7 @@ async def create_call_pipeline(
             tools=_tools_list,
             params=InputParams(
                 thinking=ThinkingConfig(thinking_level="MINIMAL"),
-                output_sample_rate=8000,   # match Twilio — no resampling needed
+                output_sample_rate=8000,   # match Telnyx PCMU — no resampling needed
                 vad=GeminiVADParams(
                     start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
                     end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
@@ -1709,52 +1633,3 @@ def generate_twiml_stream_response(websocket_url: str, call_sid: str, status_cal
         </Stream>
     </Connect>
 </Response>"""
-
-
-# ---------------------------------------------------------------------------
-# Twilio helpers
-# ---------------------------------------------------------------------------
-
-def get_twilio_client():
-    sid   = os.environ.get("TWILIO_ACCOUNT_SID")
-    token = os.environ.get("TWILIO_AUTH_TOKEN")
-    if not sid or not token:
-        return None
-    from twilio.rest import Client
-    return Client(sid, token)
-
-
-async def provision_phone_number(area_code: str = "415") -> Optional[str]:
-    client = get_twilio_client()
-    if not client:
-        import random
-        return f"+1555{random.randint(1000000,9999999)}"
-    try:
-        available = client.available_phone_numbers("US").local.list(
-            area_code=area_code, limit=1
-        )
-        if not available:
-            return None
-        purchased = client.incoming_phone_numbers.create(
-            phone_number=available[0].phone_number,
-            voice_url=os.environ.get(
-                "TWILIO_WEBHOOK_URL", "https://your-domain/api/twilio/incoming"
-            ),
-            voice_method="POST",
-        )
-        return purchased.phone_number
-    except Exception as e:
-        logger.error(f"Twilio provisioning failed: {e}")
-        return None
-
-
-def validate_twilio_request(url: str, params: dict, signature: str) -> bool:
-    """Validate that a request is genuinely from Twilio."""
-    token = os.environ.get("TWILIO_AUTH_TOKEN")
-    if not token:
-        return True
-    try:
-        from twilio.request_validator import RequestValidator
-        return RequestValidator(token).validate(url, params, signature)
-    except Exception:
-        return False
