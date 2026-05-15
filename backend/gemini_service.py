@@ -381,45 +381,15 @@ Required JSON format:
 - modifiers: list of confirmed modifier option names the customer chose (e.g. ["Large", "Thin Crust", "Extra Cheese"])
 - special_instructions: any free-text customization the customer added (e.g. "no onions", "extra crispy")
 
-EXTRACTION ALGORITHM (follow strictly, in order):
-
-STEP 1 — Find the AI's FINAL read-back near the end of the transcript.
-  Scan from the BOTTOM up. Look for the last AI turn containing phrases like:
-  "let me read that back", "to confirm your order", "just to confirm",
-  "your order is", "to confirm", "let me confirm", "i have you down for".
-  This turn lists the agreed items.
-
-STEP 2 — Confirm the read-back was accepted.
-  The customer's NEXT turn after the read-back is "yes", "yeah", "yep",
-  "sounds good", "correct", "right", "that's right", "perfect", "sure",
-  or similar affirmative.
-
-STEP 3 — Extract items ONLY from the confirmed read-back.
-  - Map each item in the read-back to the matching menu name.
-  - IGNORE the customer's earlier "no"/"nothing" responses to "anything else" prompts.
-  - IGNORE the customer's response to upsell OFFERS — that response may be unclear,
-    in another language, or even appear negative. It does NOT determine the order.
-  - The read-back IS the contract. If the customer confirms it, those items are
-    the order — even if the customer never spoke the item's name themselves.
-
-STEP 4 — Fallback: if NO read-back exists, sum items the customer explicitly
-  named and the AI acknowledged with phrases like "got it" or "added".
-
-UPSELL EXAMPLE — accepted after initial decline (COMMON CASE):
-  CUSTOMER: "two samosa"
-  AI: "Got it, two samosas! Anything else?"
-  CUSTOMER: "Nothing"                                      ← IGNORE for final extraction
-  AI: "Rice Pudding pairs well — want one?"
-  CUSTOMER: "yeah" (or unclear / non-English / even silence)  ← IGNORE the response itself
-  AI: "Let me read that back: two Samosas and one Rice Pudding. Does that sound right?"
-  CUSTOMER: "Yes"                                          ← THIS confirms the read-back
-  → CORRECT EXTRACTION: two Samosas AND one Rice Pudding (BOTH items, not just samosas)
-
-GENERAL RULES:
+RULES:
 - order_confirmed must be true or false — never omit this field
-- CRITICAL: If SIGNAL below shows order_confirmed_signal=True, set order_confirmed=true — no exceptions
-- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears in the transcript
+- Focus on the FINAL order only — ignore any cancelled or restarted earlier attempts
 - If the customer said "cancel", "start over", "from the beginning" — ignore everything before that and extract only what came after
+- CRITICAL: If the SIGNAL above shows order_confirmed_signal detected=True, you MUST set order_confirmed=true — no exceptions
+- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears anywhere in the transcript
+- If ORDER_CONFIRMED appears in the transcript, set order_confirmed=true regardless of anything else
+- The AI's FINAL readback (e.g. "Let me read that back: one Chicken Biryani, two Samosas...") followed by customer confirmation ("yes","yeah","correct") is the MOST RELIABLE source. Always extract items from the confirmed readback even if some items don't appear in CUSTOMER lines.
+- Only include items from the FINAL order that the AI acknowledged
 - Never invent items not in the menu above
 - customer_name: always write in English/Latin characters, romanize if spoken in another script
   Example: "అభిషేక్" → "Abhishek", "अभिषेक" → "Abhishek", "அபிஷேக்" → "Abhishek"
