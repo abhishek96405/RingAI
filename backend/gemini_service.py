@@ -381,15 +381,45 @@ Required JSON format:
 - modifiers: list of confirmed modifier option names the customer chose (e.g. ["Large", "Thin Crust", "Extra Cheese"])
 - special_instructions: any free-text customization the customer added (e.g. "no onions", "extra crispy")
 
-RULES:
+EXTRACTION ALGORITHM (follow strictly, in order):
+
+STEP 1 — Find the AI's FINAL read-back near the end of the transcript.
+  Scan from the BOTTOM up. Look for the last AI turn containing phrases like:
+  "let me read that back", "to confirm your order", "just to confirm",
+  "your order is", "to confirm", "let me confirm", "i have you down for".
+  This turn lists the agreed items.
+
+STEP 2 — Confirm the read-back was accepted.
+  The customer's NEXT turn after the read-back is "yes", "yeah", "yep",
+  "sounds good", "correct", "right", "that's right", "perfect", "sure",
+  or similar affirmative.
+
+STEP 3 — Extract items ONLY from the confirmed read-back.
+  - Map each item in the read-back to the matching menu name.
+  - IGNORE the customer's earlier "no"/"nothing" responses to "anything else" prompts.
+  - IGNORE the customer's response to upsell OFFERS — that response may be unclear,
+    in another language, or even appear negative. It does NOT determine the order.
+  - The read-back IS the contract. If the customer confirms it, those items are
+    the order — even if the customer never spoke the item's name themselves.
+
+STEP 4 — Fallback: if NO read-back exists, sum items the customer explicitly
+  named and the AI acknowledged with phrases like "got it" or "added".
+
+UPSELL EXAMPLE — accepted after initial decline (COMMON CASE):
+  CUSTOMER: "two samosa"
+  AI: "Got it, two samosas! Anything else?"
+  CUSTOMER: "Nothing"                                      ← IGNORE for final extraction
+  AI: "Rice Pudding pairs well — want one?"
+  CUSTOMER: "yeah" (or unclear / non-English / even silence)  ← IGNORE the response itself
+  AI: "Let me read that back: two Samosas and one Rice Pudding. Does that sound right?"
+  CUSTOMER: "Yes"                                          ← THIS confirms the read-back
+  → CORRECT EXTRACTION: two Samosas AND one Rice Pudding (BOTH items, not just samosas)
+
+GENERAL RULES:
 - order_confirmed must be true or false — never omit this field
-- Focus on the FINAL order only — ignore any cancelled or restarted earlier attempts
+- CRITICAL: If SIGNAL below shows order_confirmed_signal=True, set order_confirmed=true — no exceptions
+- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears in the transcript
 - If the customer said "cancel", "start over", "from the beginning" — ignore everything before that and extract only what came after
-- CRITICAL: If the SIGNAL above shows order_confirmed_signal detected=True, you MUST set order_confirmed=true — no exceptions
-- The order IS confirmed if the AI said "Your order is confirmed" or "ORDER_CONFIRMED" appears anywhere in the transcript
-- If ORDER_CONFIRMED appears in the transcript, set order_confirmed=true regardless of anything else
-- The AI's FINAL readback (e.g. "Let me read that back: one Chicken Biryani, two Samosas...") followed by customer confirmation ("yes","yeah","correct") is the MOST RELIABLE source. Always extract items from the confirmed readback even if some items don't appear in CUSTOMER lines.
-- Only include items from the FINAL order that the AI acknowledged
 - Never invent items not in the menu above
 - customer_name: always write in English/Latin characters, romanize if spoken in another script
   Example: "అభిషేక్" → "Abhishek", "अभिषेक" → "Abhishek", "அபிஷேக்" → "Abhishek"
@@ -439,6 +469,37 @@ JSON:"""
     if confirmed is False:
         return None
 
+    # === SAFETY NET ===
+    # Deterministic read-back parser catches items the LLM missed.
+    # Additive only: never removes items the LLM correctly extracted.
+    try:
+        readback_items = _parse_readback_items(transcript, menu_index)
+        if readback_items:
+            existing_menu_ids = set()
+            for llm_item in data.get("items", []):
+                _name = (llm_item.get("name") or "").strip()
+                if _name:
+                    _match = menu_index.find(_name)
+                    if _match:
+                        existing_menu_ids.add(_match["id"])
+
+            for rb in readback_items:
+                if rb["menu_id"] in existing_menu_ids:
+                    continue
+                logger.warning(
+                    f"[Safety net] Read-back confirmed '{rb['name']}' x{rb['quantity']} "
+                    f"but LLM extraction missed it — adding to order"
+                )
+                data.setdefault("items", []).append({
+                    "name": rb["name"],
+                    "quantity": rb["quantity"],
+                    "modifiers": [],
+                    "special_instructions": "",
+                })
+                existing_menu_ids.add(rb["menu_id"])
+    except Exception as e:
+        logger.error(f"[Safety net] Read-back parser failed (non-fatal): {e}")
+
     order = LiveOrder(
         restaurant_id="", call_sid="", caller_number="",
         state=OrderState.CONFIRMED,
@@ -470,6 +531,140 @@ JSON:"""
         ))
 
     return order if order.items else None
+
+
+# ---------------------------------------------------------------------------
+# Read-back safety net — deterministic backup to LLM extraction
+# ---------------------------------------------------------------------------
+
+# Aligned with call_quality_analysis (~line 799) — these are the canonical
+# readback phrases the AI is instructed AND monitored to use.
+# If you change this list, also update the call_quality_analysis check list.
+_READBACK_TRIGGERS = (
+    "let me read that back",   # primary — used by format_order_readback()
+    "read that back",          # shorter form, also accepted
+    "let me confirm",          # alt phrasing
+    "does that sound",         # tail-of-sentence signal
+    "your total is",           # almost only appears in readbacks
+    "to confirm your order",
+    "just to confirm",
+    "your order is",
+    "i have you down for",
+)
+
+# Aligned with build_system_prompt's affirmative list — these are the customer
+# affirmatives the AI is trained to recognize. Keep in sync.
+_AFFIRMATIVES = {
+    "yes", "yeah", "yep", "yup",
+    "correct", "right", "that's right",
+    "sounds good", "perfect", "sure",
+    "ok", "okay", "absolutely", "mhm", "mm-hm",
+}
+
+_NUMBER_WORDS = {
+    "one": 1, "a": 1, "an": 1,
+    "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12,
+}
+
+
+def _parse_readback_items(transcript: List[Dict], menu_index: MenuIndex) -> List[Dict]:
+    """
+    Deterministic read-back parser. Returns [{name, quantity, menu_id}] where
+    name is the canonical menu name. Used as a safety net for LLM extraction —
+    purely ADDITIVE (caller adds missing items, never removes).
+
+    Algorithm:
+      1. Scan transcript from the END for the last AI turn matching a read-back phrase.
+      2. Verify the immediate next CUSTOMER turn is affirmative.
+      3. Parse the read-back text into "qty + item" segments via and/comma split.
+      4. Match each segment against the menu via MenuIndex.find (fuzzy).
+
+    COUPLING (read before modifying):
+      This parser depends on the AI saying one of the phrases in _READBACK_TRIGGERS
+      during its final readback. Those phrases are contractually enforced by:
+        - build_system_prompt() STEP 4 instructions (~line 1471)
+        - format_order_readback() output template (~line 490)
+        - call_quality_analysis violation check (~line 799)
+      If you change the AI's readback phrasing anywhere, update _READBACK_TRIGGERS
+      here AND the call_quality_analysis check list.
+    """
+    import re
+
+    if not transcript:
+        return []
+
+    # Step 1: find the last AI read-back turn
+    readback_idx = None
+    readback_text = None
+    for i in range(len(transcript) - 1, -1, -1):
+        entry = transcript[i]
+        if entry.get("role") == "customer":
+            continue
+        text_lower = (entry.get("text") or "").lower()
+        if any(trigger in text_lower for trigger in _READBACK_TRIGGERS):
+            readback_idx = i
+            readback_text = entry.get("text") or ""
+            break
+
+    if not readback_text:
+        return []
+
+    # Step 2: customer must confirm immediately after
+    confirmed = False
+    for j in range(readback_idx + 1, len(transcript)):
+        entry = transcript[j]
+        if entry.get("role") != "customer":
+            continue
+        response = (entry.get("text") or "").lower().strip().rstrip(".!?,")
+        tokens = response.split()
+        if response in _AFFIRMATIVES or any(t in _AFFIRMATIVES for t in tokens):
+            confirmed = True
+        break  # Only the immediate next customer turn counts
+
+    if not confirmed:
+        return []
+
+    # Step 3: strip prefix (e.g., "Let me read that back: ") and split into segments
+    text = readback_text
+    if ":" in text:
+        text = text.split(":", 1)[1]
+    parts = re.split(r"\s*,\s*and\s+|\s+and\s+|\s*,\s*", text)
+
+    items = []
+    seen_menu_ids = set()
+    for part in parts:
+        part = part.strip().rstrip(".!?")
+        if not part:
+            continue
+        words = part.split()
+        if not words:
+            continue
+
+        # Extract leading quantity (digit or number-word)
+        qty = 1
+        if words[0].isdigit():
+            qty = int(words[0])
+            words = words[1:]
+        elif words[0].lower() in _NUMBER_WORDS:
+            qty = _NUMBER_WORDS[words[0].lower()]
+            words = words[1:]
+
+        if not words:
+            continue
+
+        candidate_name = " ".join(words).strip()
+        menu_match = menu_index.find(candidate_name)
+        if menu_match and menu_match["id"] not in seen_menu_ids:
+            seen_menu_ids.add(menu_match["id"])
+            items.append({
+                "name": menu_match["name"],
+                "quantity": max(1, qty),
+                "menu_id": menu_match["id"],
+            })
+
+    return items
 
 
 # ---------------------------------------------------------------------------

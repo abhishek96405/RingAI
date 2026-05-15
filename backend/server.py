@@ -4003,7 +4003,7 @@ async def telnyx_incoming_call(request: Request):
     return Response(status_code=200)
 
 
-@api_router.post("/telnyx/sms-status")
+@api_router.post("/telnyx/sms-inbound")
 async def telnyx_sms_status(request: Request):
     """Telnyx SMS delivery status webhook. Updates db.sms_messages with delivery state and cost."""
     import json
