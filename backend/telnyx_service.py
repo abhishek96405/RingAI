@@ -1,5 +1,5 @@
 """
-telnyx_service.py — provider-agnostic Telnyx equivalents of Twilio helper calls.
+telnyx_service.py — Telnyx SMS, voice, and number provisioning helpers for Duuutah AI.
 All credentials read exclusively from environment variables — never hardcoded.
 """
 

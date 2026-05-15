@@ -6,7 +6,7 @@ When sandbox keys are provided, uses actual sandbox environments.
 Otherwise, uses intelligent simulation that mirrors real behavior.
 
 Supported Sandbox Modes:
-- Twilio Test Credentials: Uses Twilio's test phone numbers
+- Telnyx: Uses TELNYX_API_KEY when configured
 - Stripe Test Mode: Uses Stripe test keys (sk_test_*)
 - Gemini: Uses the official Google Gemini API when configured
 """
@@ -35,7 +35,7 @@ class IntegrationStatus:
         """Refresh integration status from environment."""
         self.integrations = {
             "gemini": self._check_gemini(),
-            "twilio": self._check_twilio(),
+            "telnyx": self._check_telnyx(),
             "stripe": self._check_stripe(),
             "clerk": self._check_clerk(),
         }
@@ -56,30 +56,22 @@ class IntegrationStatus:
             "message": "Using mock AI responses",
         }
     
-    def _check_twilio(self) -> Dict[str, Any]:
-        """Check Twilio integration status."""
-        account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-        auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-        
-        if account_sid.startswith("AC") and auth_token:
-            # Check if it's test credentials
-            is_test = account_sid.startswith("ACtest") or "test" in account_sid.lower()
+    def _check_telnyx(self) -> Dict[str, Any]:
+        """Check Telnyx integration status."""
+        api_key = os.environ.get("TELNYX_API_KEY", "")
+        phone_number = os.environ.get("TELNYX_PHONE_NUMBER", "")
+
+        if api_key and phone_number:
             return {
-                "status": TestModeStatus.SANDBOX if is_test else TestModeStatus.LIVE,
+                "status": TestModeStatus.LIVE,
                 "configured": True,
-                "message": "Twilio sandbox ready" if is_test else "Twilio live mode",
-                "phone_number": os.environ.get("TWILIO_PHONE_NUMBER"),
-                "test_numbers": {
-                    "valid": "+15005550006",
-                    "invalid": "+15005550001",
-                    "unavailable": "+15005550000",
-                } if is_test else None,
+                "message": "Telnyx live mode",
+                "phone_number": phone_number,
             }
         return {
             "status": TestModeStatus.SIMULATION,
             "configured": False,
-            "message": "Twilio not configured - using call simulation",
-            "test_numbers": None,
+            "message": "Telnyx not configured - using call simulation",
         }
     
     def _check_stripe(self) -> Dict[str, Any]:

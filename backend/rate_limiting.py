@@ -9,7 +9,6 @@ Rate limit tiers:
 - Bootstrap/auth: 30/minute
 - Restaurant reads: 60/minute
 - Restaurant writes: 20/minute
-- Twilio webhooks: 10/minute
 - Menu operations: 30/minute reads, 10/minute bulk
 - Analytics: 20/minute
 - POS credentials: 5/minute
@@ -96,9 +95,6 @@ LIMIT_RESTAURANT_READ = "60/minute"
 
 # Restaurant writes - 20/minute
 LIMIT_RESTAURANT_WRITE = "20/minute"
-
-# Twilio webhooks - 10/minute (per IP)
-LIMIT_TWILIO = "10/minute"
 
 # Menu reads - 30/minute
 LIMIT_MENU_READ = "30/minute"

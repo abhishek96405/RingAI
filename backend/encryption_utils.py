@@ -36,7 +36,6 @@ def _get_encryption_key() -> bytes:
     secret = (
         os.environ.get("ENCRYPTION_SECRET_KEY") or
         os.environ.get("CLERK_SECRET_KEY") or
-        os.environ.get("TWILIO_AUTH_TOKEN") or
         "duuutah-ai-default-encryption-key-change-in-production"
     )
     

@@ -2,7 +2,6 @@
 Security Middleware for RingAI - Production-Grade Hardening
 
 Provides:
-- Twilio webhook signature validation
 - Request size limits
 - Security headers
 - MongoDB injection prevention
@@ -57,84 +56,6 @@ def get_secure_cors_origins() -> list:
         return origins
     
     return ALLOWED_ORIGINS
-
-
-# ============================================================
-# TWILIO WEBHOOK SIGNATURE VALIDATION
-# ============================================================
-
-def validate_twilio_signature(
-    request_url: str,
-    params: Dict[str, str],
-    signature: str,
-    auth_token: Optional[str] = None
-) -> bool:
-    """
-    Validate Twilio webhook signature using HMAC-SHA1.
-    
-    Args:
-        request_url: Full URL of the webhook endpoint
-        params: POST parameters from the request
-        signature: X-Twilio-Signature header value
-        auth_token: Twilio auth token (from env if not provided)
-    
-    Returns:
-        True if signature is valid, False otherwise
-    """
-    if not signature:
-        logger.warning("Missing X-Twilio-Signature header")
-        return False
-    
-    token = auth_token or os.environ.get("TWILIO_AUTH_TOKEN", "")
-    if not token:
-        logger.warning("TWILIO_AUTH_TOKEN not configured - skipping validation in dev")
-        # In development without token, allow requests
-        return os.environ.get("ENVIRONMENT", "development") == "development"
-    
-    # Sort params and build string
-    sorted_params = sorted(params.items())
-    param_string = "".join(f"{k}{v}" for k, v in sorted_params)
-    
-    # Create signature
-    data = request_url + param_string
-    computed_sig = hmac.new(
-        token.encode(),
-        data.encode(),
-        hashlib.sha1
-    ).digest()
-    
-    import base64
-    computed_b64 = base64.b64encode(computed_sig).decode()
-    
-    return hmac.compare_digest(computed_b64, signature)
-
-
-async def verify_twilio_request(request: Request) -> bool:
-    """
-    Verify incoming Twilio webhook request.
-    Call this at the start of Twilio endpoints.
-    """
-    # Skip validation in test/development mode
-    if os.environ.get("SKIP_TWILIO_VALIDATION", "").lower() == "true":
-        return True
-    
-    signature = request.headers.get("X-Twilio-Signature", "")
-    
-    # Get the full URL
-    url = str(request.url)
-    # Twilio uses the public URL, not internal
-    public_url = os.environ.get("BACKEND_PUBLIC_URL", "")
-    if public_url:
-        url = public_url.rstrip("/") + request.url.path
-    
-    # Get form data
-    try:
-        form_data = await request.form()
-        params = {k: v for k, v in form_data.items()}
-    except Exception:
-        params = {}
-    
-    return validate_twilio_signature(url, params, signature)
 
 
 # ============================================================
