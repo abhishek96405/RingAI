@@ -169,12 +169,12 @@ const AdminPage = () => {
         <h3 className="font-display font-bold text-lg mb-2">Cost Benchmarks</h3>
         <div className="grid sm:grid-cols-3 gap-4 mt-4">
           <div className="p-4 rounded-xl bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Twilio Voice Rate</p>
+            <p className="text-xs text-muted-foreground mb-1">Telnyx Voice Rate</p>
             <p className="font-display font-bold">$0.0085/min</p>
             <p className="text-xs text-muted-foreground mt-1">inbound US local</p>
           </div>
           <div className="p-4 rounded-xl bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Twilio SMS Rate</p>
+            <p className="text-xs text-muted-foreground mb-1">Telnyx SMS Rate</p>
             <p className="font-display font-bold">$0.0083/msg</p>
             <p className="text-xs text-muted-foreground mt-1">US outbound</p>
           </div>

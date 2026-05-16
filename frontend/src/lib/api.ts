@@ -183,19 +183,17 @@ export const getSquareConnectUrl = (restaurantId?: string | null) =>
     params: { restaurant_id: requireRestaurantId(restaurantId) },
   });
 
-export const getTwilioStatus = (restaurantId?: string | null) =>
-  api.get(`/integrations/twilio/status`, {
+export const getTelnyxStatus = (restaurantId?: string | null) =>
+  api.get(`/telnyx/numbers/status`, {
     params: { restaurant_id: requireRestaurantId(restaurantId) },
   });
-
-export const provisionTwilioNumber = (restaurantId?: string | null, areaCode?: string) =>
-  api.post(`/integrations/twilio/provision-number`, {
+export const provisionTelnyxNumber = (restaurantId?: string | null, areaCode?: string) =>
+  api.post(`/telnyx/numbers/provision`, {
     restaurant_id: requireRestaurantId(restaurantId),
     area_code: areaCode || undefined,
   });
-
-export const assignTwilioNumber = (restaurantId: string | null | undefined, phoneNumber: string) =>
-  api.post(`/integrations/twilio/assign-existing-number`, {
+export const assignTelnyxNumber = (restaurantId: string | null | undefined, phoneNumber: string) =>
+  api.post(`/telnyx/numbers/assign-existing`, {
     restaurant_id: requireRestaurantId(restaurantId),
     phone_number: phoneNumber,
   });

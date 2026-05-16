@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTwilioStatus, getSquareConnectUrl, provisionTwilioNumber, assignTwilioNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection, getStripeConnectUrl, getStripeConnectStatus, disconnectStripeConnect } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTelnyxStatus, getSquareConnectUrl, provisionTelnyxNumber, assignTelnyxNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection, getStripeConnectUrl, getStripeConnectStatus, disconnectStripeConnect } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -251,7 +251,7 @@ const IntegrationsPage = () => {
   const { activeRestaurant } = useAppSession();
   const [testMode, setTestMode] = useState<any>(null);
   const [status, setStatus] = useState<any>(null);
-  const [twilioStatus, setTwilioStatusState] = useState<any>(null);
+  const [telnyxStatus, setTelnyxStatusState] = useState<any>(null);
   const [areaCode, setAreaCode] = useState("");
   const [existingNumber, setExistingNumber] = useState("");
   const [loading, setLoading] = useState(true);
@@ -260,15 +260,15 @@ const IntegrationsPage = () => {
   const fetchData = useCallback(async () => {
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const [testModeRes, statusRes, twilioRes, calendarRes] = await Promise.all([
+      const [testModeRes, statusRes, telnyxRes, calendarRes] = await Promise.all([
         getTestModeStatus(),
         getStatus(),
-        getTwilioStatus(restaurantId),
+        getTelnyxStatus(restaurantId),
         getCalendarStatus(restaurantId).catch(() => ({ data: { connected: false } })),
       ]);
       setTestMode(testModeRes.data);
       setStatus(statusRes.data);
-      setTwilioStatusState(twilioRes.data);
+      setTelnyxStatusState(telnyxRes.data);
       setCalendarConnected(calendarRes.data?.connected || false);
     } catch {
       toast.error("Failed to load integrations");
@@ -294,11 +294,11 @@ const IntegrationsPage = () => {
   const provisionNumber = async () => {
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      await provisionTwilioNumber(restaurantId, areaCode);
+      await provisionTelnyxNumber(restaurantId, areaCode);
       await fetchData();
-      toast.success("Twilio number provisioned");
+      toast.success("Telnyx number provisioned");
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to provision Twilio number");
+      toast.error(err?.response?.data?.detail || "Failed to provision Telnyx number");
     }
   };
 
@@ -309,12 +309,12 @@ const IntegrationsPage = () => {
     }
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      await assignTwilioNumber(restaurantId, existingNumber.trim());
+      await assignTelnyxNumber(restaurantId, existingNumber.trim());
       await fetchData();
-      toast.success("Twilio number assigned successfully");
+      toast.success("Telnyx number assigned successfully");
       setExistingNumber("");
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to assign Twilio number");
+      toast.error(err?.response?.data?.detail || "Failed to assign Telnyx number");
     }
   };
 
@@ -352,7 +352,7 @@ const IntegrationsPage = () => {
         <div className="space-y-3">
           {[
             { name: "Gemini AI", icon: Sparkles, configured: !!status?.gemini?.available, message: testMode?.integrations?.gemini?.message || "Not configured" },
-            { name: "Twilio Telephony", icon: Phone, configured: !!status?.twilio?.available, message: testMode?.integrations?.twilio?.message || "Not configured" },
+            { name: "Telnyx Telephony", icon: Phone, configured: !!status?.telnyx?.available, message: testMode?.integrations?.telnyx?.message || "Not configured" },
             { name: "Stripe Billing", icon: CreditCard, configured: !!testMode?.integrations?.stripe?.configured, message: testMode?.integrations?.stripe?.message || "Not configured" },
             { name: "Clerk Authentication", icon: ShieldAlert, configured: !!testMode?.integrations?.clerk?.configured, message: testMode?.integrations?.clerk?.message || "Not configured" },
           ].map((item) => <div key={item.name} className="flex items-center justify-between p-4 rounded-lg border border-border"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-lg flex items-center justify-center ${item.configured ? "bg-success/10" : "bg-muted"}`}><item.icon className={`w-5 h-5 ${item.configured ? "text-success" : "text-muted-foreground"}`} /></div><div><p className="text-sm font-medium">{item.name}</p><p className="text-xs text-muted-foreground">{item.message}</p></div></div>{item.configured ? <Badge variant="secondary" className="bg-success/10 text-success border-0 gap-1"><CheckCircle2 className="w-3 h-3" /> Active</Badge> : <Badge variant="secondary" className="bg-warning/10 text-warning border-0 gap-1"><TestTube className="w-3 h-3" /> Simulated</Badge>}</div>)}
@@ -360,8 +360,8 @@ const IntegrationsPage = () => {
       </Card>
 
       <Card className="premium-card p-6 space-y-4">
-        <h3 className="font-display font-bold text-lg">Twilio Number</h3>
-        <div className="space-y-2"><Label>Current Number</Label><Input value={twilioStatus?.phone_number || status?.twilio?.phone_number || ""} readOnly placeholder="No number assigned yet" /></div>
+        <h3 className="font-display font-bold text-lg">Telnyx Number</h3>
+        <div className="space-y-2"><Label>Current Number</Label><Input value={telnyxStatus?.phone_number || status?.telnyx?.phone_number || ""} readOnly placeholder="No number assigned yet" /></div>
         <div className="space-y-2"><Label>Preferred Area Code</Label><Input value={areaCode} onChange={(e) => setAreaCode(e.target.value)} placeholder="815" /></div>
         <div className="space-y-2"><Label>Or Assign Existing Number</Label><Input value={existingNumber} onChange={(e) => setExistingNumber(e.target.value)} placeholder="+19803515351" /></div>
         <div className="flex gap-2 flex-wrap">
@@ -408,8 +408,10 @@ const IntegrationsPage = () => {
           <p>VITE_BACKEND_URL=https://your-backend.onrender.com</p>
           <p>VITE_CLERK_PUBLISHABLE_KEY=pk_test_xxxxx</p>
           <p className="text-muted-foreground mt-3"># Backend</p>
-          <p>TWILIO_ACCOUNT_SID=ACxxxxxx</p>
-          <p>TWILIO_AUTH_TOKEN=xxxxxx</p>
+          <p>TELNYX_API_KEY=KEYxxxxxx</p>
+          <p>TELNYX_PUBLIC_KEY=xxxxxx</p>
+          <p>TELNYX_MESSAGING_PROFILE_ID=xxxxxx</p>
+          <p>TELNYX_TEXML_APP_ID=xxxxxx</p>
           <p>STRIPE_SECRET_KEY=sk_test_xxxxx</p>
           <p>STRIPE_DEFAULT_PRICE_ID=price_xxxxx</p>
           <p>CLERK_JWKS_URL=https://your-clerk/.well-known/jwks.json</p>
