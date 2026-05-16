@@ -484,7 +484,12 @@ class CallSession:
             if escalation_phone:
                 transferred = await self._transfer_call(escalation_phone)
                 if transferred:
-                    return  # Don't hang up — transfer takes over
+                    if self._pipeline_task is not None:
+                        try:
+                            await self._pipeline_task.cancel()
+                        except Exception:
+                            pass
+                    return  # Transfer took over — Telnyx controls the call
 
         if self._pipeline_task is not None:
             try:
@@ -494,19 +499,23 @@ class CallSession:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
 
     async def _transfer_call(self, to_number: str) -> bool:
-        """
-        Transfer the call to a human agent.
-
-        TODO: Implement Telnyx Call Control transfer:
-            POST https://api.telnyx.com/v2/calls/{call_control_id}/actions/transfer
-            payload: {"to": to_number, "from": <restaurant_phone>}
-        For now, returns False so callers fall through to normal hangup flow.
-        """
-        logger.warning(
-            f"[{self.call_sid}] Call transfer not yet implemented for Telnyx — "
-            f"escalation to {to_number} skipped"
-        )
-        return False
+        """Transfer the call to a human agent via Telnyx Call Control API."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"https://api.telnyx.com/v2/calls/{self.call_sid}/actions/transfer",
+                    json={"to": to_number},
+                    headers={
+                        "Authorization": f"Bearer {settings.TELNYX_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                resp.raise_for_status()
+            logger.info(f"[{self.call_sid}] Call transferred to {to_number}")
+            return True
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] Transfer to {to_number} failed: {e}")
+            return False
     # ------------------------------------------------------------------
     # Order dispatch with retry
     # ------------------------------------------------------------------
