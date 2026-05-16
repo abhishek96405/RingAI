@@ -44,14 +44,16 @@ The frontend will run on `http://localhost:3000` and call the backend at `http:/
 ### Required for real AI responses
 - `GOOGLE_API_KEY` (or `GOOGLE_GENAI_API_KEY`)
 
-### Required only for real phone calls / Twilio integration
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_PHONE_NUMBER`
-- `TWILIO_WEBHOOK_URL`
+### Required only for real phone calls / SMS / Telnyx integration
+- `TELNYX_API_KEY`
+- `TELNYX_PUBLIC_KEY`
+- `TELNYX_MESSAGING_PROFILE_ID`
+- `TELNYX_TEXML_APP_ID`
+- `TELNYX_CONNECTION_ID`
+- `TELNYX_PHONE_NUMBER`
 
 If you do not provide a Gemini key, the app still runs using mock AI responses for demo/testing flows.
 
 ## Notes
-- Live phone-call audio still uses Pipecat + Gemini Live + Twilio. That is not an Emergent dependency.
+- Live phone-call audio uses Pipecat + Gemini Live + Telnyx. That is not an Emergent dependency.
 - If MongoDB is not installed locally, you can point `MONGO_URL` to MongoDB Atlas instead.

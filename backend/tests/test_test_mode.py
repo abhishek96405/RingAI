@@ -39,7 +39,7 @@ class TestTestModeStatus:
         # Check all integrations are present
         integrations = data["integrations"]
         assert "gemini" in integrations, "Missing gemini integration"
-        assert "twilio" in integrations, "Missing twilio integration"
+        assert "telnyx" in integrations, "Missing telnyx integration"
         assert "stripe" in integrations, "Missing stripe integration"
         assert "clerk" in integrations, "Missing clerk integration"
         
@@ -51,7 +51,7 @@ class TestTestModeStatus:
         
         print(f"✓ Test mode status: mode={data['mode']}")
         print(f"  Gemini: {gemini['status']} - {gemini['message']}")
-        print(f"  Twilio: {integrations['twilio']['status']} - {integrations['twilio']['message']}")
+        print(f"  Telnyx: {integrations['telnyx']['status']} - {integrations['telnyx']['message']}")
         print(f"  Stripe: {integrations['stripe']['status']} - {integrations['stripe']['message']}")
         print(f"  Clerk: {integrations['clerk']['status']} - {integrations['clerk']['message']}")
 
@@ -206,10 +206,10 @@ class TestStatusEndpoint:
         assert "available" in data["gemini"], "Gemini should have 'available'"
         assert "model" in data["gemini"], "Gemini should have 'model'"
         
-        # Check twilio status
-        assert "twilio" in data, "Status should have 'twilio'"
-        assert "available" in data["twilio"], "Twilio should have 'available'"
-        assert "status" in data["twilio"], "Twilio should have 'status'"
+        # Check telnyx status
+        assert "telnyx" in data, "Status should have 'telnyx'"
+        assert "available" in data["telnyx"], "Telnyx should have 'available'"
+        assert "status" in data["telnyx"], "Telnyx should have 'status'"
         
         # Check stripe status
         assert "stripe" in data, "Status should have 'stripe'"
@@ -228,7 +228,7 @@ class TestStatusEndpoint:
         print(f"✓ Status endpoint includes all integration statuses:")
         print(f"  Mode: {data['mode']}")
         print(f"  Gemini: available={data['gemini']['available']}, model={data['gemini']['model']}")
-        print(f"  Twilio: available={data['twilio']['available']}, status={data['twilio']['status']}")
+        print(f"  Telnyx: available={data['telnyx']['available']}, status={data['telnyx']['status']}")
         print(f"  Stripe: status={data['stripe']['status']}, configured={data['stripe']['configured']}")
         print(f"  Clerk: status={data['clerk']['status']}, configured={data['clerk']['configured']}")
 
