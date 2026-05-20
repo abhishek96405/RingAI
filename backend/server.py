@@ -3929,12 +3929,113 @@ async def _prefetch_call_session_data(
     }
 
 
+def _decode_client_state(encoded: Optional[str]) -> Dict[str, Any]:
+    """Decode a Telnyx client_state base64-JSON blob. Returns {} on missing/invalid."""
+    if not encoded:
+        return {}
+    try:
+        import base64 as _b64
+        import json as _json
+        return _json.loads(_b64.b64decode(encoded))
+    except Exception as e:
+        logger.warning(f"[Telnyx] client_state decode failed: {e}")
+        return {}
+
+
+def _encode_client_state(state: Dict[str, Any]) -> str:
+    """Base64-JSON encode a dict for Telnyx client_state."""
+    import base64 as _b64
+    import json as _json
+    return _b64.b64encode(_json.dumps(state, separators=(",", ":")).encode()).decode()
+
+
+def _compute_language_routing(
+    active_call_data: Dict[str, Any],
+    customer_profile: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Decide language routing for this inbound call.
+
+    Returns a dict with two keys:
+        ivr_state — JSON-serializable, to be base64'd as Telnyx client_state.
+                    Always includes: needs_ivr (bool), default_lang (str).
+                    If needs_ivr: also includes digit_to_lang (Dict[str,str]).
+        lang      — The default language to store on active_calls.lang. Will
+                    be overwritten by the call.gather.ended handler if IVR fires.
+
+    Routing rules:
+      - Plan != PRO OR multilingual_enabled False  →  no IVR, lang=primary
+      - Only one supported language                →  no IVR, lang=primary
+      - Customer has saved preferred_language ∈ supported set  →  no IVR, lang=saved
+      - Otherwise                                  →  IVR, default=primary
+    """
+    from language_prompts import is_supported
+
+    restaurant = active_call_data.get("restaurant", {}) or {}
+    config = active_call_data.get("config", {}) or {}
+    customer_profile = customer_profile or {}
+
+    plan = (restaurant.get("plan") or "STARTER").upper()
+    multilingual_enabled = bool(config.get("multilingual_enabled", False)) and plan == "PRO"
+
+    primary = (config.get("primary_language") or "en").lower()
+    if not is_supported(primary):
+        primary = "en"
+
+    additional = [
+        c.lower() for c in (config.get("additional_languages") or [])
+        if is_supported(c.lower()) and c.lower() != primary
+    ]
+    supported = [primary] + additional
+    saved_pref = (customer_profile.get("preferred_language") or "").lower() or None
+
+    if not multilingual_enabled or len(supported) < 2:
+        return {"ivr_state": {"needs_ivr": False, "default_lang": primary}, "lang": primary}
+
+    if saved_pref and saved_pref in supported:
+        return {"ivr_state": {"needs_ivr": False, "default_lang": saved_pref}, "lang": saved_pref}
+
+    # Build digit map. "1" → primary, "2" → first additional, etc. Capped at 9.
+    supported_to_offer = supported[:9]
+    digit_to_lang = {str(i + 1): code for i, code in enumerate(supported_to_offer)}
+
+    return {
+        "ivr_state": {
+            "needs_ivr": True,
+            "digit_to_lang": digit_to_lang,
+            "default_lang": primary,
+        },
+        "lang": primary,
+    }
+
+
+def _build_ivr_speak_payload(digit_to_lang: Dict[str, str]) -> str:
+    """
+    Build the TTS payload string for the language-selection IVR.
+
+    Example for {"1": "en", "2": "te", "3": "hi"}:
+        "For English, press 1. For Telugu, press 2. For Hindi, press 3."
+
+    All segments use the Latin name of each language so Telnyx's single English
+    TTS voice can read them clearly. Native speakers recognize their language's
+    own name even when read by an English voice. For a future polish pass,
+    swap to gather_using_audio with pre-recorded native-speaker MP3s.
+    """
+    from language_prompts import LANGUAGE_NAMES
+    parts = []
+    for digit, lang in digit_to_lang.items():
+        name = (LANGUAGE_NAMES.get(lang) or {}).get("latin", lang.upper())
+        parts.append(f"For {name}, press {digit}.")
+    return " ".join(parts)
+
+
 @api_router.post("/telnyx/incoming")
 async def telnyx_incoming_call(request: Request):
-    """Telnyx Call Control webhook — handles inbound call event flow:
-    call.initiated -> pre-fetch session data, store in active_calls, answer
-    call.answered  -> start media streaming to our WebSocket
-    call.hangup    -> log; cleanup happens in WebSocket on disconnect
+    """Telnyx Call Control webhook — full event flow:
+    call.initiated     -> prefetch + compute IVR routing + answer with client_state
+    call.answered      -> if needs_ivr: gather_using_speak; else: start_streaming
+    call.gather.ended  -> map digit → lang, persist preference, start_streaming
+    streaming.* / call.hangup -> log
     """
     import json
     import telnyx_service
@@ -3981,14 +4082,86 @@ async def telnyx_incoming_call(request: Request):
             await telnyx_service.hang_up_call(call_control_id)
             return Response(status_code=200)
 
+        # Look up customer profile for language routing (cheap — indexed phone lookup)
+        try:
+            customer_profile = await db.customer_profiles.find_one(
+                {"phone": from_number}, {"_id": 0}
+            )
+        except Exception as _e:
+            logger.warning(f"[Telnyx] customer_profile lookup failed (non-fatal): {_e}")
+            customer_profile = None
+
+        routing = _compute_language_routing(active_call_data, customer_profile)
+        active_call_data["lang"] = routing["lang"]
+
         await db.active_calls.update_one(
             {"call_sid": call_control_id},
             {"$set": active_call_data},
             upsert=True,
         )
-        await telnyx_service.answer_call(call_control_id)
+
+        encoded_state = _encode_client_state(routing["ivr_state"])
+        logger.info(
+            f"[Telnyx] {call_control_id} routing: needs_ivr={routing['ivr_state'].get('needs_ivr')} "
+            f"default_lang={routing['lang']}"
+        )
+        await telnyx_service.answer_call(call_control_id, client_state=encoded_state)
 
     elif event_type == "call.answered":
+        host = request.headers.get("host", "ringai-v2.onrender.com")
+        scheme = "wss" if request.url.scheme == "https" else "ws"
+        ws_url = f"{scheme}://{host}/api/telnyx/media-stream"
+
+        ivr_state = _decode_client_state(event_payload.get("client_state"))
+        if ivr_state.get("needs_ivr"):
+            digit_to_lang = ivr_state.get("digit_to_lang", {})
+            speak_payload = _build_ivr_speak_payload(digit_to_lang)
+            # Re-encode the same state so call.gather.ended can read digit_to_lang
+            encoded_state = _encode_client_state(ivr_state)
+            await telnyx_service.gather_using_speak(
+                call_control_id=call_control_id,
+                payload=speak_payload,
+                valid_digits="".join(digit_to_lang.keys()) or "0123456789",
+                minimum_digits=1,
+                maximum_digits=1,
+                inter_digit_timeout_secs=6,
+                timeout_millis=10000,
+                client_state=encoded_state,
+            )
+        else:
+            await telnyx_service.start_streaming(call_control_id, ws_url)
+
+    elif event_type == "call.gather.ended":
+        ivr_state = _decode_client_state(event_payload.get("client_state"))
+        digits = event_payload.get("digits", "") or ""
+        digit_to_lang = ivr_state.get("digit_to_lang", {})
+        default_lang = ivr_state.get("default_lang", "en")
+        chosen_lang = digit_to_lang.get(digits, default_lang)
+        logger.info(
+            f"[Telnyx] {call_control_id} IVR complete: digits={digits!r} -> lang={chosen_lang}"
+        )
+
+        # Update active_calls with the chosen language (WS handler reads this)
+        await db.active_calls.update_one(
+            {"call_sid": call_control_id},
+            {"$set": {"lang": chosen_lang}},
+        )
+
+        # Persist preferred_language so next call from this number skips IVR
+        try:
+            active_call = await db.active_calls.find_one(
+                {"call_sid": call_control_id}, {"caller_number": 1, "_id": 0}
+            )
+            caller_number = (active_call or {}).get("caller_number")
+            if caller_number:
+                await db.customer_profiles.update_one(
+                    {"phone": caller_number},
+                    {"$set": {"preferred_language": chosen_lang}},
+                    upsert=True,
+                )
+        except Exception as _e:
+            logger.warning(f"[Telnyx] preferred_language persist failed (non-fatal): {_e}")
+
         host = request.headers.get("host", "ringai-v2.onrender.com")
         scheme = "wss" if request.url.scheme == "https" else "ws"
         ws_url = f"{scheme}://{host}/api/telnyx/media-stream"
@@ -4196,7 +4369,15 @@ async def telnyx_media_stream(websocket: WebSocket):
             return
 
         restaurant_id = active_call["restaurant_id"]
-        system_prompt = active_call.get("system_prompt", "")
+        base_prompt = active_call.get("system_prompt", "")
+        lang = (active_call.get("lang") or "en").lower()
+
+        # Prepend per-language directive. English directive is empty,
+        # so English calls produce a byte-identical prompt to the baseline.
+        from language_prompts import LANGUAGE_PROMPTS
+        _bundle = LANGUAGE_PROMPTS.get(lang) or LANGUAGE_PROMPTS["en"]
+        system_prompt = _bundle.directive + base_prompt
+
         restaurant = active_call.get("restaurant", {})
         config = active_call.get("config", {})
         menu_items = active_call.get("menu_items", [])
@@ -4217,6 +4398,7 @@ async def telnyx_media_stream(websocket: WebSocket):
             config=config or {},
             menu_items=menu_items,
             services=services,
+            lang=lang,
         )
         session.is_open = calculate_is_open(
             operating_hours=config.get("operating_hours") if config else None,

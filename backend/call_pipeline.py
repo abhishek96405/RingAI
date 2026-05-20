@@ -274,6 +274,7 @@ class CallSession:
         config: Dict[str, Any],
         menu_items: List[Dict[str, Any]],
         services: Optional[List[Dict[str, Any]]] = None,
+        lang: str = "en",
     ):
         self.call_sid       = call_sid
         self.restaurant_id  = restaurant_id
@@ -282,6 +283,7 @@ class CallSession:
         self.config         = config
         self.menu_index     = MenuIndex(menu_items)
         self.services       = services or []  # For appointment businesses
+        self.lang           = lang  # ISO 639-1 code; drives signals_for() phrase matching
         self.transcript: List[Dict] = []
         self.started_at     = datetime.now(timezone.utc).isoformat()
         self.order          = LiveOrder(
@@ -327,7 +329,15 @@ class CallSession:
             # from duplicate add_transcript_entry calls for the same AI message)
             if getattr(self, '_last_signal_text', None) == text:
                 return
-            signals = detect_call_signals(text)
+            # Merge the existing English keyword + ESCALATE_TO_HUMAN token detection
+            # with per-language phrase triggers. OR-merge: either source can set True.
+            from language_prompts import signals_for
+            base_signals = detect_call_signals(text)
+            lang_signals = signals_for(self.lang, text)
+            signals = {
+                k: bool(base_signals.get(k)) or bool(lang_signals.get(k))
+                for k in (set(base_signals) | set(lang_signals))
+            }
             if not any(signals.values()):
                 return  # no signals — skip processing
             self._last_signal_text = text  # mark this message as processed

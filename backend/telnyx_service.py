@@ -257,14 +257,25 @@ async def transfer_call(call_control_id: str, to_number: str) -> bool:
         return False
     
 
-async def answer_call(call_control_id: str) -> bool:
-    """Answer an incoming call via Telnyx Call Control API."""
+async def answer_call(call_control_id: str, client_state: Optional[str] = None) -> bool:
+    """Answer an incoming call via Telnyx Call Control API.
+
+    Args:
+        call_control_id: Telnyx call_control_id for the inbound call.
+        client_state: Optional base64-encoded string. Telnyx echoes this back in
+            the client_state field of every subsequent webhook event for this
+            call, enabling stateless per-call routing logic (e.g. IVR language
+            selection) without server-side session storage.
+    """
+    body: Dict[str, Any] = {}
+    if client_state:
+        body["client_state"] = client_state
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/answer",
                 headers=_auth_headers(),
-                json={},
+                json=body,
                 timeout=10.0,
             )
             resp.raise_for_status()
@@ -300,23 +311,27 @@ async def start_streaming(
     call_control_id: str,
     stream_url: str,
     codec: str = "PCMU",
+    client_state: Optional[str] = None,
 ) -> bool:
     """
     Start bidirectional media streaming on an answered call.
     Telnyx will open a WebSocket to stream_url and exchange audio frames there.
     PCMU = μ-law 8kHz, the standard PSTN codec (matches what Pipecat expects).
     """
+    body: Dict[str, Any] = {
+        "stream_url": stream_url,
+        "stream_track": "inbound_track",
+        "stream_bidirectional_mode": "rtp",
+        "stream_bidirectional_codec": codec,
+    }
+    if client_state:
+        body["client_state"] = client_state
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/streaming_start",
                 headers=_auth_headers(),
-                json={
-                    "stream_url": stream_url,
-                    "stream_track": "inbound_track",
-                    "stream_bidirectional_mode": "rtp",
-                    "stream_bidirectional_codec": codec,
-                },
+                json=body,
                 timeout=10.0,
             )
             resp.raise_for_status()
@@ -324,6 +339,60 @@ async def start_streaming(
             return True
     except Exception as e:
         logger.error(f"[Telnyx] Streaming start failed for {call_control_id}: {e}")
+        return False
+
+
+async def gather_using_speak(
+    call_control_id: str,
+    payload: str,
+    *,
+    valid_digits: str = "0123456789",
+    minimum_digits: int = 1,
+    maximum_digits: int = 1,
+    inter_digit_timeout_secs: int = 5,
+    timeout_millis: int = 10000,
+    voice: str = "female",
+    language: str = "en-US",
+    client_state: Optional[str] = None,
+) -> bool:
+    """
+    Play a TTS prompt and collect DTMF digits from the caller.
+
+    On completion (digit pressed OR timeout), Telnyx fires a call.gather.ended
+    webhook with the collected digits and the client_state echoed back.
+
+    Note on multilingual IVR prompts: Telnyx's English voice handles short
+    multi-language strings passably for digit prompts. For higher quality in a
+    Phase 2 polish, switch to gather_using_audio with pre-recorded MP3s.
+    """
+    body: Dict[str, Any] = {
+        "payload": payload,
+        "valid_digits": valid_digits,
+        "minimum_digits": minimum_digits,
+        "maximum_digits": maximum_digits,
+        "inter_digit_timeout_secs": inter_digit_timeout_secs,
+        "timeout_millis": timeout_millis,
+        "voice": voice,
+        "language": language,
+    }
+    if client_state:
+        body["client_state"] = client_state
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/gather_using_speak",
+                headers=_auth_headers(),
+                json=body,
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            logger.info(
+                f"[Telnyx] Gather started on {call_control_id} "
+                f"(valid={valid_digits}, max={maximum_digits})"
+            )
+            return True
+    except Exception as e:
+        logger.error(f"[Telnyx] Gather failed for {call_control_id}: {e}")
         return False
 
 
