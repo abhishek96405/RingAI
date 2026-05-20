@@ -23,6 +23,13 @@ const voiceOptions = [
   { id: "Charon", name: "Charon - Deep",          accent: "American" },
 ];
 
+const SUPPORTED_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "te", label: "Telugu (తెలుగు)" },
+  { code: "hi", label: "Hindi (हिंदी)" },
+  { code: "es", label: "Spanish (Español)" },
+] as const;
+
 const defaultHours = {
   monday: { closed: false, open: "09:00", close: "21:00" },
   tuesday: { closed: false, open: "09:00", close: "21:00" },
@@ -207,6 +214,8 @@ const SettingsPage = () => {
         persona: config?.persona,
         voice_id: config?.voice_id,
         primary_language: config?.primary_language,
+        multilingual_enabled: config?.multilingual_enabled ?? false,
+        additional_languages: config?.additional_languages || [],
         business_rules: config?.business_rules,
         escalation_rules: config?.escalation_rules,
         disclosure_text: config?.disclosure_text,
@@ -322,10 +331,12 @@ const SettingsPage = () => {
                 <Select value={restaurant?.primary_language || "en"} onValueChange={(v) => setRestaurant({ ...restaurant, primary_language: v })}>
                   <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="es">Spanish</SelectItem>
+                    {SUPPORTED_LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.code} value={lang.code}>{lang.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">For multi-language IVR, configure under Voice & AI → Language Support.</p>
               </div>
               <div className="space-y-2"><Label>Duuutah AI Phone Number</Label><Input value={restaurant?.phone_number || ""} readOnly className="h-11 rounded-xl opacity-60" /></div>
 
@@ -494,28 +505,96 @@ const SettingsPage = () => {
               </div>
             </div>
             <div className="space-y-2"><Label>Custom Greeting</Label><Textarea value={config?.disclosure_text || ""} onChange={(e) => setConfig({ ...config, disclosure_text: e.target.value })} className="rounded-xl min-h-[80px]" /></div>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label>Primary Language</Label>
-                  {restaurant?.plan !== "PRO" && <span className="text-xs text-muted-foreground">(Pro for multi-language)</span>}
-                </div>
-                <Select value={config?.primary_language || "en"} disabled={restaurant?.plan !== "PRO"} onValueChange={(v) => setConfig({ ...config, primary_language: v })}>
-                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="en">English</SelectItem><SelectItem value="es">Spanish</SelectItem></SelectContent>
-                </Select>
+            {/* ── Language Section ── */}
+            <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
+              <div>
+                <h4 className="text-sm font-semibold mb-1">Language Support</h4>
+                <p className="text-xs text-muted-foreground">
+                  {restaurant?.plan === "PRO"
+                    ? "Configure the AI's spoken language. With multilingual on, callers press a digit at the start of the call to pick a language. Returning callers skip the menu — their last choice is remembered."
+                    : "Upgrade to Pro to let callers choose their language via IVR. Starter plans use the primary language only."}
+                </p>
               </div>
+
               <div className="space-y-2">
-                <Label>After-hours Behavior</Label>
-                <Select value={config?.after_hours_mode || "voicemail"} onValueChange={(v) => setConfig({ ...config, after_hours_mode: v })}>
+                <Label>Primary Language</Label>
+                <Select value={config?.primary_language || "en"} onValueChange={(v) => setConfig({ ...config, primary_language: v })}>
                   <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="voicemail">Take voicemail</SelectItem>
-                    <SelectItem value="close_message">Play closed message</SelectItem>
-                    <SelectItem value="forward">Forward to escalation number</SelectItem>
+                    {SUPPORTED_LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.code} value={lang.code}>{lang.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">The default for all calls. On Pro, also used as the fallback if a caller doesn't pick a digit at the IVR.</p>
               </div>
+
+              <div className="flex items-center justify-between p-3 rounded-lg bg-card border border-border">
+                <div>
+                  <p className="text-sm font-medium">
+                    Multilingual IVR
+                    {restaurant?.plan !== "PRO" && <span className="ml-2 text-xs text-muted-foreground font-normal">(Pro)</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Callers hear a menu and press a digit to choose their language</p>
+                </div>
+                <Switch
+                  checked={config?.multilingual_enabled || false}
+                  disabled={restaurant?.plan !== "PRO"}
+                  onCheckedChange={(v) => setConfig({ ...config, multilingual_enabled: v })}
+                />
+              </div>
+
+              {config?.multilingual_enabled && restaurant?.plan === "PRO" && (
+                <div className="space-y-2">
+                  <Label>Additional Languages</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Each selected language becomes an IVR option. "1" is always the primary language; additional ones get "2", "3", etc. in the order shown below.
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {SUPPORTED_LANGUAGES.filter((l) => l.code !== (config?.primary_language || "en")).map((lang) => {
+                      const selected = (config?.additional_languages || []).includes(lang.code);
+                      return (
+                        <label
+                          key={lang.code}
+                          className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                            selected ? "border-primary bg-primary/10" : "border-border hover:border-primary/30 bg-card"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-primary"
+                            checked={selected}
+                            onChange={(e) => {
+                              const current: string[] = config?.additional_languages || [];
+                              const updated = e.target.checked
+                                ? [...current, lang.code]
+                                : current.filter((c) => c !== lang.code);
+                              setConfig({ ...config, additional_languages: updated });
+                            }}
+                          />
+                          <span className="text-sm">{lang.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {(config?.additional_languages?.length ?? 0) === 0 && (
+                    <p className="text-xs text-warning">⚠ Select at least one additional language, or turn multilingual off.</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* After-hours moved to its own row since Primary Language now lives in the Language Section above */}
+            <div className="space-y-2">
+              <Label>After-hours Behavior</Label>
+              <Select value={config?.after_hours_mode || "voicemail"} onValueChange={(v) => setConfig({ ...config, after_hours_mode: v })}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="voicemail">Take voicemail</SelectItem>
+                  <SelectItem value="close_message">Play closed message</SelectItem>
+                  <SelectItem value="forward">Forward to escalation number</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2"><Label>Escalation Phone Number</Label><Input value={config?.escalation_phone_number || ""} onChange={(e) => setConfig({ ...config, escalation_phone_number: e.target.value })} className="h-11 rounded-xl" /></div>
             <div className="grid sm:grid-cols-2 gap-4">
