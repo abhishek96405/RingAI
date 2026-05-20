@@ -4372,11 +4372,14 @@ async def telnyx_media_stream(websocket: WebSocket):
         base_prompt = active_call.get("system_prompt", "")
         lang = (active_call.get("lang") or "en").lower()
 
-        # Prepend per-language directive. English directive is empty,
-        # so English calls produce a byte-identical prompt to the baseline.
+        # APPEND per-language directive at the END of the prompt. Gemini Live
+        # anchors on the most recent instructions; the English prompt body has
+        # many concrete English example phrases ("Got it!", "Perfect!", etc.)
+        # that would otherwise dominate a top-positioned directive. The English
+        # directive is empty so English calls are byte-identical to the baseline.
         from language_prompts import LANGUAGE_PROMPTS
         _bundle = LANGUAGE_PROMPTS.get(lang) or LANGUAGE_PROMPTS["en"]
-        system_prompt = _bundle.directive + base_prompt
+        system_prompt = base_prompt + _bundle.directive
 
         restaurant = active_call.get("restaurant", {})
         config = active_call.get("config", {})
