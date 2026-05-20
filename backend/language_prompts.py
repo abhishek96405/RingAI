@@ -71,6 +71,13 @@ _TE = LanguagePromptBundle(
         "  • Do not transliterate Telugu in Latin script ('Sare, oka Biryani') —\n"
         "    speak in proper Telugu script or English script, not romanized Telugu.\n"
         "\n"
+        "NUMBERS — USE TELUGU NUMERALS, NOT ENGLISH TRANSLITERATIONS:\n"
+        "  • 1 → 'ఒక' / 'ఒకటి' (NEVER 'వన్')\n"
+        "  • 2 → 'రెండు' (NEVER 'టూ')\n"
+        "  • 3 → 'మూడు' (NEVER 'త్రీ')\n"
+        "  • 4 → 'నాలుగు', 5 → 'ఐదు' ... etc.\n"
+        "  • Example: 'ఒక Chicken Biryani, రెండు Mango Lassi' — NOT 'వన్ Chicken Biryani'.\n"
+        "\n"
         "PHRASE REPLACEMENTS (use the Telugu form on the right):\n"
         "  Greeting new customer        → 'నమస్తే! ఈరోజు ఏం ఆర్డర్ చేస్తారు?'\n"
         "  Greeting returning customer  → 'తిరిగి స్వాగతం, [Name]! ఏం తీసుకుంటారు?'\n"
@@ -80,13 +87,16 @@ _TE = LanguagePromptBundle(
         "  Does that sound right?       → 'అంతా సరిగా ఉందా?'\n"
         "  Order is confirmed           → 'మీ ఆర్డర్ కన్ఫర్మ్ అయింది.' (PAST tense)\n"
         "  Sending SMS                  → 'మీకు పికప్ టైం టెక్స్ట్ ద్వారా పంపిస్తాను.'\n"
-        "  Thanks for calling           → 'Bawarchii కి కాల్ చేసినందుకు ధన్యవాదాలు!'\n"
+        "  Thanks for calling           → '[Restaurant] కి కాల్ చేసినందుకు ధన్యవాదాలు!'\n"
         "  Unclear input                → 'మళ్ళీ చెప్పగలరా?' (NOT 'Can you repeat?')\n"
         "\n"
         "MENU & NAME RULES:\n"
         "  • Menu item names stay in Latin form: 'Chicken Biryani', 'Mango Lassi'.\n"
         "    Do NOT transliterate them into Telugu script.\n"
         "  • Customer names stay in their original Latin form: 'Abhishek'.\n"
+        "  • Restaurant names stay in their original form with all letters intact:\n"
+        "    say 'Bawarchii' (with both i's), 'Desi Chowrastha', etc. Do NOT shorten\n"
+        "    or simplify restaurant names when speaking Telugu.\n"
         "  • Do NOT invent menu items. Stick strictly to the menu shown above.\n"
         "    If asked for something not on the menu, decline politely in Telugu.\n"
         "  • Apply ALL order protocol steps, menu rules, escalation rules, and\n"
@@ -113,12 +123,14 @@ _TE = LanguagePromptBundle(
             "ఆర్డర్ ఖరారు అయిపోయింది",
             "ఆర్డర్ ప్లేస్ అయింది",
             "ఆర్డర్ ప్లేస్ అయిపోయింది",
+            "ఆర్డర్ పూర్తి అయింది",
             "your order is confirmed",
             "your order is placed",
         ],
         "appointment_confirmed": [
             "అపాయింట్‌మెంట్ కన్ఫర్మ్ అయింది",
             "అపాయింట్మెంట్ ఖరారు అయింది",
+            "అపాయింట్‌మెంట్ బుక్ అయింది",
         ],
         "reservation_confirmed": [
             "టేబుల్ రిజర్వ్ అయింది",
@@ -128,6 +140,7 @@ _TE = LanguagePromptBundle(
         "sending_menu_sms": [
             "మెనూ టెక్స్ట్ చేస్తాను",
             "మెనూ టెక్స్ట్ పంపిస్తాను",
+            "మెనూ పంపిస్తాను",
         ],
         "call_ending": [
             "ధన్యవాదాలు",
@@ -154,6 +167,12 @@ _HI = LanguagePromptBundle(
         "  • Do not write Hindi in romanized script ('Theek hai, ek Biryani') —\n"
         "    use Devanagari script properly.\n"
         "\n"
+        "NUMBERS — USE HINDI NUMERALS, NOT ENGLISH TRANSLITERATIONS:\n"
+        "  • 1 → 'एक' (NEVER 'वन्')\n"
+        "  • 2 → 'दो' (NEVER 'टू')\n"
+        "  • 3 → 'तीन' (NEVER 'थ्री')\n"
+        "  • Example: 'एक Chicken Biryani, दो Mango Lassi' — NOT 'वन् Chicken Biryani'.\n"
+        "\n"
         "PHRASE REPLACEMENTS (use the Hindi form on the right):\n"
         "  Greeting new customer        → 'नमस्ते! आज क्या ऑर्डर लेंगे?'\n"
         "  Greeting returning customer  → 'फिर से स्वागत है, [Name]! क्या लेंगे आज?'\n"
@@ -170,6 +189,8 @@ _HI = LanguagePromptBundle(
         "  • Menu item names stay in Latin form: 'Chicken Biryani', 'Mango Lassi'.\n"
         "    Do NOT transliterate them into Devanagari script.\n"
         "  • Customer names stay in their original Latin form: 'Abhishek'.\n"
+        "  • Restaurant names stay intact: 'Bawarchii' (with both i's), 'Desi\n"
+        "    Chowrastha', etc. Do NOT shorten or simplify them.\n"
         "  • Do NOT invent menu items. Stick strictly to the menu shown above.\n"
         "  • Apply ALL order protocol steps, menu rules, escalation rules, and\n"
         "    edge cases from the sections above — just say them in Hindi.\n"
