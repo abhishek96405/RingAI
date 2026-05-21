@@ -3886,7 +3886,7 @@ async def _prefetch_call_session_data(
         except Exception as e:
             logger.warning(f"[{call_sid}] Reservation slots pre-fetch failed: {e}")
 
-    system_prompt = get_system_prompt(
+    prompt_kwargs = dict(
         business_type=business_type,
         customer_profile=customer_profile,
         plan=restaurant.get("plan", "STARTER"),
@@ -3917,6 +3917,10 @@ async def _prefetch_call_session_data(
         reservation_settings=reservation_settings,
         available_reservation_slots=available_reservation_slots,
     )
+    # Build the English variant eagerly (fast path for English callers).
+    # The WS handler rebuilds with prompt_kwargs if the caller picked a
+    # different language at the IVR.
+    system_prompt = get_system_prompt(**prompt_kwargs)
 
     return {
         "call_sid": call_sid,
@@ -3924,6 +3928,7 @@ async def _prefetch_call_session_data(
         "caller_number": caller_number,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "system_prompt": system_prompt,
+        "prompt_kwargs": prompt_kwargs,
         "restaurant": restaurant,
         "config": config or {},
         "menu_items": menu_items,
@@ -3951,10 +3956,7 @@ def _encode_client_state(state: Dict[str, Any]) -> str:
     return _b64.b64encode(_json.dumps(state, separators=(",", ":")).encode()).decode()
 
 
-def _compute_language_routing(
-    active_call_data: Dict[str, Any],
-    customer_profile: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
+def _compute_language_routing(active_call_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Decide language routing for this inbound call.
 
@@ -3968,14 +3970,15 @@ def _compute_language_routing(
     Routing rules:
       - Plan != PRO OR multilingual_enabled False  →  no IVR, lang=primary
       - Only one supported language                →  no IVR, lang=primary
-      - Customer has saved preferred_language ∈ supported set  →  no IVR, lang=saved
       - Otherwise                                  →  IVR, default=primary
+        (Language is NEVER persisted across calls. Phones are often shared
+         between family members who may speak different languages — every
+         call gets the language menu.)
     """
     from language_prompts import is_supported
 
     restaurant = active_call_data.get("restaurant", {}) or {}
     config = active_call_data.get("config", {}) or {}
-    customer_profile = customer_profile or {}
 
     plan = (restaurant.get("plan") or "STARTER").upper()
     multilingual_enabled = bool(config.get("multilingual_enabled", False)) and plan == "PRO"
@@ -3989,13 +3992,9 @@ def _compute_language_routing(
         if is_supported(c.lower()) and c.lower() != primary
     ]
     supported = [primary] + additional
-    saved_pref = (customer_profile.get("preferred_language") or "").lower() or None
 
     if not multilingual_enabled or len(supported) < 2:
         return {"ivr_state": {"needs_ivr": False, "default_lang": primary}, "lang": primary}
-
-    if saved_pref and saved_pref in supported:
-        return {"ivr_state": {"needs_ivr": False, "default_lang": saved_pref}, "lang": saved_pref}
 
     # Build digit map. "1" → primary, "2" → first additional, etc. Capped at 9.
     supported_to_offer = supported[:9]
@@ -4084,16 +4083,7 @@ async def telnyx_incoming_call(request: Request):
             await telnyx_service.hang_up_call(call_control_id)
             return Response(status_code=200)
 
-        # Look up customer profile for language routing (cheap — indexed phone lookup)
-        try:
-            customer_profile = await db.customer_profiles.find_one(
-                {"phone": from_number}, {"_id": 0}
-            )
-        except Exception as _e:
-            logger.warning(f"[Telnyx] customer_profile lookup failed (non-fatal): {_e}")
-            customer_profile = None
-
-        routing = _compute_language_routing(active_call_data, customer_profile)
+        routing = _compute_language_routing(active_call_data)
         active_call_data["lang"] = routing["lang"]
 
         await db.active_calls.update_one(
@@ -4148,21 +4138,6 @@ async def telnyx_incoming_call(request: Request):
             {"call_sid": call_control_id},
             {"$set": {"lang": chosen_lang}},
         )
-
-        # Persist preferred_language so next call from this number skips IVR
-        try:
-            active_call = await db.active_calls.find_one(
-                {"call_sid": call_control_id}, {"caller_number": 1, "_id": 0}
-            )
-            caller_number = (active_call or {}).get("caller_number")
-            if caller_number:
-                await db.customer_profiles.update_one(
-                    {"phone": caller_number},
-                    {"$set": {"preferred_language": chosen_lang}},
-                    upsert=True,
-                )
-        except Exception as _e:
-            logger.warning(f"[Telnyx] preferred_language persist failed (non-fatal): {_e}")
 
         host = request.headers.get("host", "ringai-v2.onrender.com")
         scheme = "wss" if request.url.scheme == "https" else "ws"
@@ -4371,17 +4346,20 @@ async def telnyx_media_stream(websocket: WebSocket):
             return
 
         restaurant_id = active_call["restaurant_id"]
-        base_prompt = active_call.get("system_prompt", "")
         lang = (active_call.get("lang") or "en").lower()
 
-        # APPEND per-language directive at the END of the prompt. Gemini Live
-        # anchors on the most recent instructions; the English prompt body has
-        # many concrete English example phrases ("Got it!", "Perfect!", etc.)
-        # that would otherwise dominate a top-positioned directive. The English
-        # directive is empty so English calls are byte-identical to the baseline.
-        from language_prompts import LANGUAGE_PROMPTS
-        _bundle = LANGUAGE_PROMPTS.get(lang) or LANGUAGE_PROMPTS["en"]
-        system_prompt = base_prompt + _bundle.directive
+        # English path: use the pre-built prompt from call.initiated (fast path).
+        # Non-English: rebuild with lang baked in. Build is pure string composition
+        # — no LLM calls — typically 50-200ms. The build_system_prompt function
+        # weaves language guidance into the prompt at the right places instead of
+        # appending a directive at the end (which used to override the menu via
+        # Gemini's recency bias).
+        if lang == "en":
+            system_prompt = active_call.get("system_prompt", "")
+        else:
+            from gemini_service import get_system_prompt
+            prompt_kwargs = active_call.get("prompt_kwargs", {})
+            system_prompt = get_system_prompt(lang=lang, **prompt_kwargs)
 
         restaurant = active_call.get("restaurant", {})
         config = active_call.get("config", {})

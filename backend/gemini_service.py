@@ -941,6 +941,214 @@ def calculate_is_open(operating_hours: Optional[Dict], restaurant_timezone: str 
     except Exception:
         return True
 
+def _build_language_section(lang: str, restaurant_name: str) -> str:
+    """
+    Returns a LANGUAGE section to inject into the system prompt for non-English calls.
+    Returns empty string for English so the prompt is byte-identical to baseline.
+
+    The section sits among the other prompt blocks (not appended at the end as a
+    "FINAL OVERRIDE"). It's deliberately concise — Gemini's recency bias means long
+    blocks dominate, so we keep this short and let the menu/protocol sections that
+    surround it do the heavy lifting.
+    """
+    if lang == "en":
+        return ""
+
+    if lang == "te":
+        return f"""
+═══════════════════════════
+LANGUAGE — TELUGU (తెలుగు)
+═══════════════════════════
+This caller chose Telugu from the language menu. Speak Telugu naturally,
+the way a real bilingual employee at an Indian restaurant in the US would
+— with natural English code-mixing, NOT pure Sanskritized Telugu.
+
+CODE-MIXING (do this — it sounds natural):
+- English for menu items: "Chicken Biryani", "Mango Lassi", "Gulab Jamun"
+- English for business words: "order", "pickup", "delivery", "confirm",
+  "cancel", "add", "address", "name", "minutes", "total"
+- Telugu for connectives, greetings, questions, acknowledgments
+
+NATURAL EXAMPLES — this is how real bilingual people actually speak:
+✓ "మీ order confirm చేస్తాను."
+✓ "ఒక Chicken Biryani add చేస్తున్నాను."
+✓ "Pickup కోసమా delivery కోసమా?"
+✓ "Address చెప్తారా please?"
+✓ "ఇంకా ఏమైనా order చేస్తారా?"
+✓ "మీ name చెప్తారా?"
+✓ "Total $24.50. Twenty minutes లో ready అవుతుంది."
+✓ "మళ్ళీ చెప్తారా please?" (when input is garbled)
+
+DO NOT:
+✗ Sanskritize Telugu — "Pickup కోసమా?" not "తీసుకువెళ్ళటానికి?"
+✗ Use Roman script for Telugu words — use Telugu script
+✗ Transliterate menu items — keep "Chicken Biryani" not "చికెన్ బిర్యానీ"
+
+STAY IN TELUGU FOR THE ENTIRE CALL:
+Even if the caller asks mid-call to switch languages ("can you speak
+English?", "Hindi lo matlaadu"), DO NOT switch. Reply in Telugu:
+"Sorry, నేను ఈ call లో Telugu లో మాత్రమే help చేయగలను. Hang up చేసి
+మళ్ళీ call చేస్తే language menu లో English select చేయవచ్చు."
+Then continue in Telugu.
+
+ESCALATE_TO_HUMAN is a literal English token — say it as English at the
+end of your Telugu sentence when escalating. It's a backend signal.
+"""
+
+    if lang == "hi":
+        return f"""
+═══════════════════════════
+LANGUAGE — HINDI (हिंदी)
+═══════════════════════════
+This caller chose Hindi from the language menu. Speak Hindi naturally,
+the way a real bilingual employee at an Indian restaurant in the US would
+— with natural English code-mixing, NOT pure Sanskritized Hindi.
+
+CODE-MIXING (do this — it sounds natural):
+- English for menu items: "Chicken Biryani", "Mango Lassi", "Gulab Jamun"
+- English for business words: "order", "pickup", "delivery", "confirm",
+  "cancel", "add", "address", "name", "minutes", "total"
+- Hindi for connectives, greetings, questions, acknowledgments
+
+NATURAL EXAMPLES:
+✓ "आपका order confirm हो गया।"
+✓ "एक Chicken Biryani add कर रहा हूँ।"
+✓ "Pickup के लिए या delivery के लिए?"
+✓ "Address बता दीजिए please।"
+✓ "और कुछ order करना है?"
+✓ "आपका name क्या है?"
+✓ "Total $24.50. बीस minutes में ready हो जाएगा।"
+✓ "फिर से बता सकते हैं please?" (when input is garbled)
+
+DO NOT:
+✗ Sanskritize Hindi — "आदेश पुष्ट" sounds robotic, use "order confirm"
+✗ Use Roman script for Hindi — use Devanagari
+✗ Transliterate menu items — keep "Chicken Biryani" not "चिकन बिरयानी"
+
+STAY IN HINDI FOR THE ENTIRE CALL:
+Even if the caller asks mid-call to switch languages, DO NOT switch.
+Reply in Hindi: "Sorry, मैं इस call में सिर्फ Hindi में help कर सकता हूँ।
+आप hang up कर के दोबारा call कीजिए, language menu में English select
+कर सकते हैं।" Then continue in Hindi.
+
+ESCALATE_TO_HUMAN is a literal English token — say it as English at the
+end of your Hindi sentence when escalating. It's a backend signal.
+"""
+
+    if lang == "es":
+        return f"""
+═══════════════════════════
+LANGUAGE — SPANISH (Español)
+═══════════════════════════
+This caller chose Spanish from the language menu. Speak Spanish naturally,
+the way a real bilingual employee at a US restaurant would.
+
+CODE-MIXING (do this — it sounds natural):
+- English for menu items: "Chicken Biryani", "Mango Lassi" — never translate
+- English is fine for some business words: "pickup", "delivery"
+- Spanish for connectives, greetings, questions
+
+NATURAL EXAMPLES:
+✓ "¿Es para pickup o delivery?"
+✓ "Voy a agregar un Chicken Biryani a su orden."
+✓ "¿Me da su dirección por favor?"
+✓ "¿Algo más?"
+✓ "¿Su nombre?"
+✓ "Su total es $24.50. Estará listo en veinte minutos."
+✓ "¿Puede repetir por favor?" (when input is garbled)
+
+STAY IN SPANISH FOR THE ENTIRE CALL:
+Even if the caller asks mid-call to switch languages, DO NOT switch.
+Reply in Spanish: "Lo siento, en esta llamada solo puedo ayudar en
+español. Por favor cuelgue y llame de nuevo, en el menú puede
+seleccionar inglés." Then continue in Spanish.
+
+ESCALATE_TO_HUMAN is a literal English token — say it as English at the
+end of your Spanish sentence when escalating. It's a backend signal.
+"""
+
+    return ""  # Unknown language code — no addition
+
+
+def _translate_greeting(
+    lang: str,
+    is_open: bool,
+    restaurant_name: str,
+    customer_name: Optional[str],
+    delivery_enabled: bool,
+    reservations_enabled: bool,
+    default_greeting: str,
+) -> str:
+    """
+    Return the greeting in the active language. The greeting is the very first
+    sentence the AI utters — if it's in English, Gemini tends to lock to English
+    for the rest of the call regardless of any LANGUAGE block downstream.
+
+    For English, returns default_greeting unchanged.
+    """
+    if lang == "en":
+        return default_greeting
+
+    if lang == "te":
+        if not is_open:
+            name = f" {customer_name}" if customer_name else ""
+            return (
+                f"నమస్తే{name}! {restaurant_name} కి call చేసినందుకు thanks. "
+                f"మేము ఇప్పుడు closed గా ఉన్నాము కానీ menu గురించి, hours గురించి help చేయగలను."
+            )
+        if delivery_enabled and reservations_enabled:
+            q = "Pickup కోసమా, delivery కోసమా, లేక table reserve చేస్తారా?"
+        elif delivery_enabled:
+            q = "Pickup కోసమా delivery కోసమా?"
+        elif reservations_enabled:
+            q = "Order place చేస్తారా లేక table reserve చేస్తారా?"
+        else:
+            q = "ఈరోజు ఏం order చేస్తారు?"
+        if customer_name:
+            return f"నమస్తే {customer_name}! {restaurant_name} కి welcome back. {q}"
+        return f"నమస్తే! {restaurant_name} నుండి AI assistant మాట్లాడుతున్నాను. {q}"
+
+    if lang == "hi":
+        if not is_open:
+            name = f" {customer_name}" if customer_name else ""
+            return (
+                f"नमस्ते{name}! {restaurant_name} में call करने के लिए thanks. "
+                f"हम अभी closed हैं लेकिन menu और hours के बारे में help कर सकता हूँ।"
+            )
+        if delivery_enabled and reservations_enabled:
+            q = "Pickup के लिए, delivery के लिए, या table reserve करना है?"
+        elif delivery_enabled:
+            q = "Pickup के लिए या delivery के लिए?"
+        elif reservations_enabled:
+            q = "Order place करना है या table reserve करना है?"
+        else:
+            q = "आज क्या order करना है?"
+        if customer_name:
+            return f"नमस्ते {customer_name}! {restaurant_name} में welcome back. {q}"
+        return f"नमस्ते! {restaurant_name} के लिए AI assistant बोल रहा हूँ। {q}"
+
+    if lang == "es":
+        if not is_open:
+            name = f" {customer_name}" if customer_name else ""
+            return (
+                f"¡Hola{name}! Gracias por llamar a {restaurant_name}. "
+                f"Estamos cerrados ahora, pero puedo ayudar con el menú o el horario."
+            )
+        if delivery_enabled and reservations_enabled:
+            q = "¿Es para pickup, delivery, o para hacer una reservación?"
+        elif delivery_enabled:
+            q = "¿Es para pickup o delivery?"
+        elif reservations_enabled:
+            q = "¿Quiere hacer un pedido o una reservación?"
+        else:
+            q = "¿Qué le puedo ofrecer hoy?"
+        if customer_name:
+            return f"¡Hola {customer_name}! Bienvenido de nuevo a {restaurant_name}. {q}"
+        return f"¡Hola! Soy el asistente AI de {restaurant_name}. {q}"
+
+    return default_greeting
+
+
 def build_system_prompt(
     restaurant_name: str,
     cuisine_type: str,
@@ -968,6 +1176,7 @@ def build_system_prompt(
     reservation_settings: Optional[Dict] = None,
     available_reservation_slots: Optional[List[Dict]] = None,
     plan: str = "STARTER",
+    lang: str = "en",
 ) -> str:
     # ── Plan-based feature enforcement ──
     # Import here to avoid circular imports
@@ -1170,6 +1379,20 @@ This restaurant DOES take reservations, but reservations must be handled by our 
         else:
             greeting_line = f"Hi! I'm an AI assistant for {restaurant_name}. {_type_question}"
 
+    # Override greeting for non-English languages. The greeting is the very
+    # first sentence the AI utters; if it's in English, Gemini tends to lock
+    # to English for the rest of the call regardless of any LANGUAGE block.
+    if lang != "en":
+        greeting_line = _translate_greeting(
+            lang=lang,
+            is_open=is_open,
+            restaurant_name=restaurant_name,
+            customer_name=(customer_profile or {}).get("last_name"),
+            delivery_enabled=delivery_enabled,
+            reservations_enabled=reservations_enabled,
+            default_greeting=greeting_line,
+        )
+
     if delivery_enabled and reservations_enabled:
         step1_block = """STEP 1: The greeting asked pickup, delivery, or reservation.
   Customer says "pickup" → "Great! What would you like to order?"
@@ -1245,27 +1468,12 @@ CLOSED — STRICT RULES
 - End the call politely after helping with questions
 """
 
-    # Multilingual support block
-    multilingual_block = """
-═══════════════════════════
-MULTILINGUAL SUPPORT
-═══════════════════════════
-SUPPORTED LANGUAGES: English, Spanish, Mandarin, Hindi, Urdu, Punjabi, Korean, 
-Japanese, French, German, Portuguese, Vietnamese, Tagalog, Arabic, Russian
-
-LANGUAGE DETECTION AND RESPONSE:
-- If the customer speaks in any language listed above, RESPOND IN THE SAME LANGUAGE.
-- Maintain the same warmth, personality, and conversational style in all languages.
-- Use natural, colloquial phrases — not formal translations.
-- Keep all ORDER PROTOCOL steps and MENU rules — just in their language.
-- If customer switches languages mid-call, switch with them.
-
-EDGE CASES:
-- If unsure of the language: respond in English naturally — do NOT ask about language preference
-- If language is not in the supported list: "I can help in English — shall we continue?"
-- Accented English: respond in English but be patient with pronunciation variations.
-- Code-switching (mixing languages): match their style, respond in the dominant language.
-"""
+    # Language section. For English (default), this stays empty so the prompt
+    # is byte-identical to the pre-multilingual baseline. For other languages,
+    # _build_language_section returns a short integrated section with code-mixing
+    # examples and a no-switch rule. It's placed mid-prompt (not appended at the
+    # end as a "FINAL OVERRIDE"), so it doesn't dominate the menu and protocol.
+    multilingual_block = _build_language_section(lang, restaurant_name)
 
     # Reservation system block (only if enabled)
     reservation_block = ""
@@ -2033,17 +2241,19 @@ def get_system_prompt(
     business_type: str,
     customer_profile: dict = None,
     plan: str = "STARTER",
+    lang: str = "en",
     **kwargs
 ) -> str:
     """
     Routes to the correct prompt builder based on business type.
 
-    restaurant → build_system_prompt() [EXISTING — DO NOT MODIFY]
-    appointment → build_appointment_prompt() [NEW]
+    restaurant → build_system_prompt() with lang
+    appointment → build_appointment_prompt() — multilingual deferred for the
+                  appointment vertical, always English for now.
     """
     if business_type in ("restaurant",):
         restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
-        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile, plan=plan)
+        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile, plan=plan, lang=lang)
 
     elif business_type in ("clinic", "salon", "home_services", "legal"):
         try:
@@ -2067,4 +2277,4 @@ def get_system_prompt(
             return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
     else:
         restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability", "customer_profile")}
-        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
+        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile, lang=lang)
