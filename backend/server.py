@@ -651,6 +651,8 @@ class RestaurantConfig(BaseModel):
     persona: str = "friendly"
     voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     primary_language: str = "en"
+    multilingual_enabled: bool = False
+    additional_languages: List[str] = []
 
     business_rules: List[str] = []
     few_shot_examples: List[Dict] = []
@@ -701,6 +703,8 @@ class RestaurantConfigUpdate(BaseModel):
     persona: Optional[str] = None
     voice_id: Optional[str] = None
     primary_language: Optional[str] = None
+    multilingual_enabled: Optional[bool] = None
+    additional_languages: Optional[List[str]] = None
 
     business_rules: Optional[List[str]] = None
     escalation_rules: Optional[List[str]] = None
