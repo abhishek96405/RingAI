@@ -871,6 +871,30 @@ def generate_menu_examples(menu_index: MenuIndex) -> str:
                 wrong_item = suggestion
                 break
 
+    # Find a partial-match scenario: menu item with 3+ words → drop middle word(s)
+    # E.g. "Veg Cooker Pulav" → "Veg Pulav" (the way customers casually say it)
+    #      "Chicken Dum Biryani" → "Chicken Biryani"
+    partial_match = None
+    partial_match_item = None
+    for _item in items:
+        if not _item.get("available", True):
+            continue
+        _w = _item["name"].split()
+        if len(_w) >= 3:
+            partial_match = f"{_w[0]} {_w[-1]}"
+            partial_match_item = _item["name"]
+            break
+
+    partial_match_example = ""
+    if partial_match and partial_match_item:
+        partial_match_example = f"""
+EXAMPLE 5 — Partial match (CLARIFY before adding, never silently expand):
+Customer: "I want one {partial_match}"
+You: "We have {partial_match_item} — is that what you mean?"
+[After customer confirms] You: "Got it, one {partial_match_item}. Anything else?"
+[Reason: "{partial_match}" overlaps with "{partial_match_item}" but isn't the EXACT menu name. The customer might mean something else. ALWAYS ask before adding. Never silently expand a short customer term to a longer menu name.]
+"""
+
     return f"""
 ═══════════════════════════
 BEHAVIORAL EXAMPLES — FOLLOW EXACTLY
@@ -896,7 +920,7 @@ EXAMPLE 4 — Batched order with one item off-menu (REJECT the bad item FIRST, n
 Customer: "Let me get one {real_name}, one {real_name2}, and two {wrong_item}."
 You: "Hold on — I don't see {wrong_item} on our menu. The {real_name} and {real_name2} I've got. Want to swap {wrong_item} for something else, or skip it?"
 [Reason: When a customer batches items, validate EACH one against the menu BEFORE saying "Got it". An off-menu item in the middle of a valid batch must be addressed first — never silently dropped, never accepted.]
-
+{partial_match_example}
 NEVER DO THIS:
 Customer: "Do you have {wrong_item}?"
 You: "Yes, we have {wrong_item} for $X.XX." ← HALLUCINATION — never confirm unlisted items
@@ -1612,14 +1636,25 @@ MENU — YOUR ONLY SOURCE OF TRUTH
 
 CRITICAL MENU RULES — NEVER VIOLATE:
 1. Only confirm, recommend, or discuss items listed above.
-2. If a customer asks for an item NOT in this list: "I'm sorry, we don't have that. Can I suggest something similar?"
-   Phonetic mispronunciations ARE acceptable — match them to the correct menu item name.
-   Example: "gobby manchurian" = "Gobi Manchurian" ✅
-   Example: "zera rice" = "Jeera Rice" ✅
-   Different items with similar names are NOT acceptable — ALWAYS ask before substituting.
-   Example: Customer says "Mutton Biryani" → say "We don't have Mutton Biryani — would Lamb Biryani work instead?" — WAIT for yes before adding.
-   NEVER silently add a substitute. NEVER assume the customer accepts a replacement.
-   Only add the substitute after the customer explicitly says yes.
+2. Four categories of customer input — handle each correctly:
+
+   A) EXACT MATCH or PHONETIC MISPRONUNCIATION → accept silently, use the EXACT menu name in your response.
+      Example: "gobby manchurian" → "Gobi Manchurian" ✅
+      Example: "zera rice" → "Jeera Rice" ✅
+      Example: "chicken byriyani" → "Chicken Biryani" ✅
+
+   B) PARTIAL MATCH (customer's term is a subset of a longer menu item name) → CLARIFY, never silently expand.
+      Example: Menu has "Veg Cooker Pulav". Customer says "Veg Pulao" → ASK: "We have Veg Cooker Pulav — is that what you mean?" WAIT for yes.
+      Example: Menu has "Chicken Dum Biryani". Customer says "Chicken Biryani" → ASK: "We have Chicken Dum Biryani — is that the one?" WAIT for yes.
+      Example: Menu has "Chicken Tikka Masala". Customer says "Chicken Tikka" → ASK: "We have Chicken Tikka Masala — is that what you're looking for?" WAIT for yes.
+      Once the customer confirms, use the EXACT menu name in all subsequent responses (readback, total, confirmation).
+
+   C) DIFFERENT ITEM with similar name → reject and offer alternative, WAIT for yes before substituting.
+      Example: Menu has Lamb Biryani but NOT Mutton Biryani. Customer says "Mutton Biryani" → "We don't have Mutton Biryani — would Lamb Biryani work instead?" WAIT for yes.
+
+   D) ITEM NOT ON MENU at all → "I'm sorry, we don't have [item]. Can I suggest [valid item from menu] instead?"
+
+   NEVER silently add, substitute, or expand. NEVER assume the customer accepts. Only add the item after the customer explicitly says yes.
 3. NEVER invent items, prices, descriptions, or availability.
 4. Prices are exact. Never estimate, round, or calculate yourself.
    ALWAYS use the exact price shown in the menu above — never do your own math.
