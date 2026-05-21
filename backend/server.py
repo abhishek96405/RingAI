@@ -664,7 +664,6 @@ class RestaurantConfig(BaseModel):
     delivery_minimum: int = 1500
 
     after_hours_mode: str = "voicemail"
-    voicemail_enabled: bool = True
     escalation_phone_number: Optional[str] = None
     sms_enabled: bool = True
     sms_payment_enabled: bool = False
@@ -717,7 +716,6 @@ class RestaurantConfigUpdate(BaseModel):
     delivery_minimum: Optional[int] = None
 
     after_hours_mode: Optional[str] = None
-    voicemail_enabled: Optional[bool] = None
     escalation_phone_number: Optional[str] = None
     operating_hours: Optional[Dict[str, Any]] = None
 

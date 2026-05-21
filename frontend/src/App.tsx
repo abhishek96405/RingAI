@@ -13,7 +13,7 @@ import DashboardHome from "./pages/dashboard/DashboardHome";
 import CallsPage from "./pages/dashboard/CallsPage";
 import MenuPage from "./pages/dashboard/MenuPage";
 import OrdersPage from "./pages/dashboard/OrdersPage";
-import SettingsPage from "./pages/dashboard/SettingsPage";
+import SettingsPage from "./pages/dashboard/settings/SettingsPage";
 import BillingPage from "./pages/dashboard/BillingPage";
 import IntegrationsPage from "./pages/dashboard/IntegrationsPage";
 import ServicesPage from "./pages/dashboard/ServicesPage";
