@@ -20,9 +20,9 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-def test_conftest_constants_are_defined_and_distinct():
+def test_constants_are_defined_and_distinct():
     """Tenant constants used across the suite must be present and distinct."""
-    from backend.tests.conftest import (
+    from tests._constants import (
         TENANT_A_ID,
         TENANT_B_ID,
         TENANT_A_USER_ID,

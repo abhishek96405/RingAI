@@ -39,16 +39,19 @@ if str(_BACKEND_DIR) not in sys.path:
 # not invent ad-hoc tenant IDs that drift apart over time.
 # ---------------------------------------------------------------------------
 
-TENANT_A_ID = "tenant_a_restaurant"
-TENANT_B_ID = "tenant_b_restaurant"
-
-TENANT_A_USER_ID = "user_tenant_a"
-TENANT_B_USER_ID = "user_tenant_b"
-
-TENANT_A_ORG_ID = "org_tenant_a"
-TENANT_B_ORG_ID = "org_tenant_b"
-
-ADMIN_USER_ID = "user_admin"
+# Re-exported from tests._constants so individual test modules can import the
+# same identifiers via a stable, non-conftest path (importing from a conftest
+# under pytest 9's importlib mode is unreliable, and the repo root cannot be
+# made importable because backend/ has no __init__.py).
+from tests._constants import (  # noqa: E402
+    TENANT_A_ID,
+    TENANT_B_ID,
+    TENANT_A_USER_ID,
+    TENANT_B_USER_ID,
+    TENANT_A_ORG_ID,
+    TENANT_B_ORG_ID,
+    ADMIN_USER_ID,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +151,18 @@ async def patched_server_db(async_db, monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def app(patched_server_db):
-    """The in-process FastAPI app with db swapped to the in-memory store."""
+def app(patched_server_db, monkeypatch):
+    """The in-process FastAPI app with db swapped to the in-memory store.
+
+    ``server.setup_signal_handlers`` is patched to a no-op for the test
+    lifespan: Starlette's TestClient drives the FastAPI lifespan on a worker
+    thread, and ``asyncio.add_signal_handler`` refuses to register handlers
+    on a non-main-thread event loop, raising ``RuntimeError: set_wakeup_fd
+    only works in main thread of the main interpreter``. The production
+    issue is logged in tests/FINDINGS.md.
+    """
     server = pytest.importorskip("server")
+    monkeypatch.setattr(server, "setup_signal_handlers", lambda: None, raising=False)
     return server.app
 
 
