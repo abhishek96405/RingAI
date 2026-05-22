@@ -1,0 +1,18 @@
+{
+  "id": "evt_test_acct_updated",
+  "object": "event",
+  "type": "account.updated",
+  "created": 1779840100,
+  "data": {
+    "object": {
+      "id": "acct_test_connect",
+      "object": "account",
+      "type": "standard",
+      "details_submitted": true,
+      "charges_enabled": true,
+      "payouts_enabled": true,
+      "metadata": {"restaurant_id": "rest_test"}
+    }
+  },
+  "livemode": false
+}

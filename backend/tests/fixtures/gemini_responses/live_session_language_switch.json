@@ -1,0 +1,10 @@
+{
+  "session_events": [
+    {"type": "user_turn", "text": "Hi can I order"},
+    {"type": "assistant_turn", "text": "Yes, what would you like?"},
+    {"type": "user_turn", "text": "मुझे एक मार्गेरिटा पिज़्ज़ा चाहिए", "language": "hi"},
+    {"type": "assistant_turn", "text": "एक मार्गेरिटा पिज़्ज़ा। और कुछ?", "language": "hi"}
+  ],
+  "final_state": "completed",
+  "detected_languages": ["en", "hi"]
+}

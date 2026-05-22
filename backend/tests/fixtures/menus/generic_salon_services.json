@@ -1,0 +1,12 @@
+{
+  "salon_id": "salon_generic_test",
+  "name": "Generic Salon (Test)",
+  "services": [
+    {"name": "Haircut", "category": "Hair", "duration_minutes": 30, "price": 35.0},
+    {"name": "Hair Color", "category": "Hair", "duration_minutes": 90, "price": 95.0},
+    {"name": "Beard Trim", "category": "Hair", "duration_minutes": 15, "price": 15.0},
+    {"name": "Manicure", "category": "Nails", "duration_minutes": 45, "price": 30.0},
+    {"name": "Pedicure", "category": "Nails", "duration_minutes": 60, "price": 45.0},
+    {"name": "Facial — Classic", "category": "Skin", "duration_minutes": 60, "price": 75.0}
+  ]
+}

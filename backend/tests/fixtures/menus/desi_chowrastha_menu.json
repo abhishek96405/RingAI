@@ -1,0 +1,21 @@
+{
+  "_note": "Fixture inspired by a real Duuutah AI tenant. All prices are placeholders for test purposes only.",
+  "restaurant_id": "rest_desi_chowrastha_test",
+  "name": "Desi Chowrastha (Test)",
+  "categories": [
+    {"name": "Appetizers", "items": ["Samosa", "Veg Manchurian", "Chicken 65"]},
+    {"name": "Biryani", "items": ["Chicken Dum Biryani", "Vegetable Biryani", "Mutton Biryani"]},
+    {"name": "Curries", "items": ["Butter Chicken", "Paneer Tikka Masala", "Dal Tadka"]}
+  ],
+  "items": [
+    {"name": "Samosa", "category": "Appetizers", "price": 4.99, "aliases": ["veg samosa"]},
+    {"name": "Veg Manchurian", "category": "Appetizers", "price": 9.99, "aliases": []},
+    {"name": "Chicken 65", "category": "Appetizers", "price": 11.99, "aliases": []},
+    {"name": "Chicken Dum Biryani", "category": "Biryani", "price": 15.99, "aliases": ["chicken biryani"]},
+    {"name": "Vegetable Biryani", "category": "Biryani", "price": 13.99, "aliases": ["veg biryani"]},
+    {"name": "Mutton Biryani", "category": "Biryani", "price": 17.99, "aliases": ["lamb biryani"]},
+    {"name": "Butter Chicken", "category": "Curries", "price": 14.99, "aliases": []},
+    {"name": "Paneer Tikka Masala", "category": "Curries", "price": 13.99, "aliases": ["paneer tikka"]},
+    {"name": "Dal Tadka", "category": "Curries", "price": 9.99, "aliases": ["dal"]}
+  ]
+}

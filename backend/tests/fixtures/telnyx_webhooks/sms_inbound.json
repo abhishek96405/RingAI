@@ -1,0 +1,16 @@
+{
+  "data": {
+    "event_type": "message.received",
+    "id": "evt_test_sms_inbound",
+    "occurred_at": "2026-05-21T12:05:00.000Z",
+    "payload": {
+      "id": "msg_test_inbound",
+      "from": {"phone_number": "+15555550120"},
+      "to": [{"phone_number": "+15555550100"}],
+      "text": "Hi do you deliver?",
+      "direction": "inbound",
+      "type": "SMS"
+    },
+    "record_type": "event"
+  }
+}

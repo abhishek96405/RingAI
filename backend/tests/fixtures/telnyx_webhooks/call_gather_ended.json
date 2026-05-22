@@ -1,0 +1,13 @@
+{
+  "data": {
+    "event_type": "call.gather.ended",
+    "id": "evt_test_gather_ended",
+    "occurred_at": "2026-05-21T12:00:10.000Z",
+    "payload": {
+      "call_control_id": "call_ctrl_test_initiated",
+      "digits": "1",
+      "status": "valid"
+    },
+    "record_type": "event"
+  }
+}

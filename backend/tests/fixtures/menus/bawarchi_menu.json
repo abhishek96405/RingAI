@@ -1,0 +1,13 @@
+{
+  "_note": "Fixture inspired by a real Duuutah AI tenant. All prices are placeholders for test purposes only.",
+  "restaurant_id": "rest_bawarchi_test",
+  "name": "Bawarchi (Test)",
+  "items": [
+    {"name": "Bawarchi Special Biryani", "category": "Biryani", "price": 18.99, "aliases": ["special biryani"]},
+    {"name": "Hyderabadi Chicken Biryani", "category": "Biryani", "price": 16.99, "aliases": ["hyderabadi biryani"]},
+    {"name": "Goat Biryani", "category": "Biryani", "price": 19.99, "aliases": []},
+    {"name": "Tandoori Chicken Half", "category": "Tandoor", "price": 12.99, "aliases": []},
+    {"name": "Garlic Naan", "category": "Breads", "price": 3.99, "aliases": []},
+    {"name": "Mango Lassi", "category": "Beverages", "price": 4.99, "aliases": []}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "access_token": "sq0atp-test-access-token",
+  "token_type": "bearer",
+  "expires_at": "2027-05-21T12:00:00Z",
+  "merchant_id": "MLTEST123",
+  "refresh_token": "sq0rtp-test-refresh-token",
+  "short_lived": false
+}

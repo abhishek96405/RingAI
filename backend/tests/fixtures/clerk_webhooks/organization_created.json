@@ -1,0 +1,12 @@
+{
+  "type": "organization.created",
+  "object": "event",
+  "data": {
+    "id": "org_test_new",
+    "name": "New Diner Org",
+    "slug": "new-diner-org",
+    "created_by": "user_test_new",
+    "created_at": 1779667300000,
+    "updated_at": 1779667300000
+  }
+}

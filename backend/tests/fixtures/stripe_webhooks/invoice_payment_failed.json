@@ -1,0 +1,20 @@
+{
+  "id": "evt_test_invoice_failed",
+  "object": "event",
+  "type": "invoice.payment_failed",
+  "created": 1779840000,
+  "data": {
+    "object": {
+      "id": "in_test_failed",
+      "object": "invoice",
+      "customer": "cus_test_123",
+      "subscription": "sub_test_123",
+      "amount_due": 4900,
+      "amount_paid": 0,
+      "status": "open",
+      "attempt_count": 1,
+      "next_payment_attempt": 1780012800
+    }
+  },
+  "livemode": false
+}

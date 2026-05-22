@@ -1,0 +1,10 @@
+{
+  "session_events": [
+    {"type": "user_turn", "text": "I'll have a Pepperoni Pizza"},
+    {"type": "assistant_turn", "text": "Sure — would you like to add Garlic Knots or a soda?"},
+    {"type": "user_turn", "text": "Add the Garlic Knots"},
+    {"type": "assistant_turn", "text": "One Pepperoni Pizza and Garlic Knots. Anything else?"}
+  ],
+  "final_state": "completed",
+  "_note": "Upsell behavior is an OPEN ISSUE — see tests/FINDINGS.md."
+}

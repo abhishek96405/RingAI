@@ -1,0 +1,15 @@
+{
+  "type": "user.created",
+  "object": "event",
+  "data": {
+    "id": "user_test_new",
+    "email_addresses": [
+      {"id": "ema_test", "email_address": "new@duuutah.test", "verification": {"status": "verified"}}
+    ],
+    "primary_email_address_id": "ema_test",
+    "first_name": "New",
+    "last_name": "Owner",
+    "created_at": 1779667200000,
+    "updated_at": 1779667200000
+  }
+}

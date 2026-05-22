@@ -9,3 +9,12 @@ __pycache__/
 .env.*
 *.log
 .DS_Store
+
+# Test artifacts
+.coverage
+.coverage.*
+htmlcov/
+test_reports/
+.pytest_cache/
+.hypothesis/
+frontend/coverage/

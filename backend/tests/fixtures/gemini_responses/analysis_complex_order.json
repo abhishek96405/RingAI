@@ -1,0 +1,15 @@
+{
+  "summary": "Customer ordered 2 Pepperoni Pizzas, a Fettuccine Alfredo, 3 Cannolis, and 3 Espressos for pickup.",
+  "outcome": "order_placed",
+  "order_type": "pickup",
+  "items": [
+    {"name": "Pepperoni Pizza", "quantity": 2, "price": 16.99, "modifiers": []},
+    {"name": "Fettuccine Alfredo", "quantity": 1, "price": 17.50, "modifiers": []},
+    {"name": "Cannoli", "quantity": 3, "price": 4.50, "modifiers": []},
+    {"name": "Espresso", "quantity": 3, "price": 3.00, "modifiers": []}
+  ],
+  "total": 73.48,
+  "customer": {"name": "James Wilson", "phone": null},
+  "issues": [],
+  "language": "en"
+}

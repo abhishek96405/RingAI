@@ -1,0 +1,100 @@
+# Duuutah AI — Test configuration.
+# Production code is configured elsewhere; this file is test-scoped on purpose.
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["backend/tests", "tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--showlocals",
+    "-p", "no:cacheprovider",
+    "--timeout=30",
+    "--import-mode=importlib",
+    "--cov=backend",
+    "--cov-report=term-missing",
+    "--cov-report=html:test_reports/coverage_html",
+    "--cov-report=xml:test_reports/coverage.xml",
+]
+markers = [
+    "unit: fast, no I/O",
+    "integration: requires in-process app + mongomock + mocked externals",
+    "webhook: webhook payload + signature tests",
+    "security: tenant isolation, auth, rate-limiting, input validation",
+    "voice: pipecat pipeline tests with mocked frames",
+    "e2e_in_process: full in-process flows with mocked externals",
+    "live: hits real external APIs — skipped by default",
+    "slow: takes > 1 second",
+]
+env = [
+    "ENVIRONMENT=test",
+    "MONGO_URL=mongodb://localhost:27017",
+    "DB_NAME=duuutah_test",
+    "ENCRYPTION_SECRET_KEY=test_only_do_not_use_in_prod_32_chars_xxxxxx",
+    "STRIPE_SECRET_KEY=sk_test_fake",
+    "STRIPE_WEBHOOK_SECRET=whsec_test_fake",
+    "STRIPE_CLIENT_ID=ca_test_fake",
+    "TELNYX_API_KEY=KEY_test_fake",
+    "TELNYX_CONNECTION_ID=test_conn",
+    "TELNYX_PHONE_NUMBER=+15555550100",
+    "CLERK_PUBLISHABLE_KEY=pk_test_fake",
+    "CLERK_SECRET_KEY=sk_test_fake",
+    "GOOGLE_GENAI_API_KEY=fake-genai-key",
+    "GOOGLE_API_KEY=fake-google-key",
+    "GOOGLE_CLIENT_ID=fake-client-id",
+    "GOOGLE_CLIENT_SECRET=fake-client-secret",
+    "GOOGLE_CALENDAR_REDIRECT_URI=http://localhost:8000/api/calendar/google/callback",
+    "GOOGLE_MAPS_API_KEY=fake-maps-key",
+    "SQUARE_APPLICATION_ID=fake-square-app",
+    "SQUARE_ENVIRONMENT=sandbox",
+    "SQUARE_REDIRECT_URI=http://localhost:8000/api/integrations/square/callback",
+    "CLOVER_API_TOKEN=fake-clover-token",
+    "CLOVER_ENV=sandbox",
+    "CLOVER_MERCHANT_ID=fake-merchant",
+    "CORS_ORIGINS=http://localhost:3000",
+    "FRONTEND_URL=http://localhost:3000",
+    "BACKEND_PUBLIC_URL=http://localhost:8000",
+    "ENABLE_DEMO_MODE=false",
+    "SEED_DEMO_DATA=false",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:google.*",
+    "ignore::DeprecationWarning:passlib.*",
+    "ignore::PendingDeprecationWarning",
+    # CoverageWarning fires when the suite collects zero items (e.g. when
+    # filtering by a marker that no test carries yet). Treating it as an
+    # error makes early-stage runs unusable; ignore it explicitly.
+    "ignore::coverage.exceptions.CoverageWarning",
+]
+
+[tool.coverage.run]
+source = ["backend"]
+omit = [
+    "backend/tests/*",
+    "backend/temp_*.py",
+    "backend/debug_*.py",
+    "backend/seed_*.py",
+    "backend/runtime.txt",
+]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+precision = 1
+
+[tool.coverage.html]
+directory = "test_reports/coverage_html"
