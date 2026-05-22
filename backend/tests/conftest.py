@@ -204,21 +204,38 @@ _TOKEN_TO_CLAIMS: dict[str, dict] = {
 
 
 @pytest.fixture
-def mock_clerk(monkeypatch):
-    """Replace Clerk JWKS-based JWT verification with a deterministic map.
+def mock_clerk(app):
+    """Override the FastAPI auth dependency with deterministic claims.
 
-    Tests pass tokens by string key (``tenant_a``, ``tenant_b``, ``admin``).
-    Unknown tokens raise ``ValueError`` to mirror Clerk's failure mode.
+    Tests pass tokens by string key (``tenant_a``, ``tenant_b``, ``admin``)
+    in the Authorization header; the override returns the matching claim
+    dict directly, bypassing JWKS entirely.
+
+    Why dependency_overrides instead of monkeypatching ``verify_clerk_token``:
+    ``server.py`` does ``from auth_helpers import verify_clerk_token`` at
+    import time, which binds the function into ``server``'s namespace.
+    Patching ``auth_helpers.verify_clerk_token`` afterwards does not affect
+    the binding ``server.get_current_user`` already captured. Overriding the
+    dependency itself is the idiomatic FastAPI approach and works regardless
+    of how the verifier is imported.
     """
-    import auth_helpers
+    from fastapi import Header, HTTPException
 
-    async def _fake_verify(token: str) -> dict:
+    import server
+
+    async def _fake_get_current_user(authorization: str = Header(default=None)):
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="missing bearer")
+        token = authorization[len("Bearer "):].strip()
         if token in _TOKEN_TO_CLAIMS:
             return dict(_TOKEN_TO_CLAIMS[token])
-        raise ValueError(f"unknown test token: {token}")
+        raise HTTPException(status_code=401, detail=f"unknown test token: {token}")
 
-    monkeypatch.setattr(auth_helpers, "verify_clerk_token", _fake_verify)
-    return _TOKEN_TO_CLAIMS
+    app.dependency_overrides[server.get_current_user] = _fake_get_current_user
+    try:
+        yield _TOKEN_TO_CLAIMS
+    finally:
+        app.dependency_overrides.pop(server.get_current_user, None)
 
 
 @pytest.fixture
