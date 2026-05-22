@@ -1,0 +1,14 @@
+{
+  "kind": "calendar#events",
+  "summary": "Test Calendar",
+  "timeZone": "America/Chicago",
+  "items": [
+    {
+      "id": "event_test_1",
+      "status": "confirmed",
+      "summary": "Existing appointment",
+      "start": {"dateTime": "2026-06-01T13:00:00-05:00"},
+      "end": {"dateTime": "2026-06-01T13:30:00-05:00"}
+    }
+  ]
+}

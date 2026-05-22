@@ -1,0 +1,9 @@
+{
+  "session_events": [
+    {"type": "user_turn", "text": "I want delivery"},
+    {"type": "assistant_turn", "text": "Sure — what would you like and what's the address?"},
+    {"type": "user_turn", "text": "Spaghetti Bolognese and a Caesar Salad to 456 Oak Street Apt 12"},
+    {"type": "assistant_turn", "text": "Got it. Estimated delivery is 40 minutes."}
+  ],
+  "final_state": "completed"
+}

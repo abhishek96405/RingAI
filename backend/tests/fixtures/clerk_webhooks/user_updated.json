@@ -1,0 +1,14 @@
+{
+  "type": "user.updated",
+  "object": "event",
+  "data": {
+    "id": "user_test_new",
+    "email_addresses": [
+      {"id": "ema_test", "email_address": "owner@duuutah.test", "verification": {"status": "verified"}}
+    ],
+    "primary_email_address_id": "ema_test",
+    "first_name": "Updated",
+    "last_name": "Owner",
+    "updated_at": 1779753600000
+  }
+}

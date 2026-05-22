@@ -1,0 +1,21 @@
+{
+  "id": "evt_test_checkout_completed",
+  "object": "event",
+  "type": "checkout.session.completed",
+  "created": 1779667200,
+  "data": {
+    "object": {
+      "id": "cs_test_completed",
+      "object": "checkout.session",
+      "customer": "cus_test_123",
+      "subscription": "sub_test_123",
+      "client_reference_id": "rest_test",
+      "amount_total": 4900,
+      "currency": "usd",
+      "payment_status": "paid",
+      "metadata": {"plan": "PRO"}
+    }
+  },
+  "livemode": false,
+  "api_version": "2024-04-10"
+}

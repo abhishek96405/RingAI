@@ -1,0 +1,10 @@
+{
+  "summary": "Call ended before order was confirmed.",
+  "outcome": "abandoned",
+  "order_type": null,
+  "items": [],
+  "total": 0,
+  "customer": {"name": null, "phone": null},
+  "issues": ["customer_hung_up", "no_items_extracted"],
+  "language": "en"
+}

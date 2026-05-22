@@ -1,0 +1,15 @@
+{
+  "summary": "Reservation request for 4 people on Saturday at 7pm.",
+  "outcome": "reservation_requested",
+  "order_type": "reservation",
+  "items": [],
+  "total": 0,
+  "customer": {"name": "Emily Davis", "phone": null},
+  "reservation": {
+    "party_size": 4,
+    "requested_time": "2026-05-23T19:00:00",
+    "special_requests": null
+  },
+  "issues": [],
+  "language": "en"
+}

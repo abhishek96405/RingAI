@@ -1,0 +1,9 @@
+{
+  "session_events": [
+    {"type": "user_turn", "text": "Hi I'd like a Margherita Pizza for pickup"},
+    {"type": "assistant_turn", "text": "Sure, one Margherita Pizza for pickup. Anything else?"},
+    {"type": "user_turn", "text": "That's all"},
+    {"type": "assistant_turn", "text": "Your total is $14.99. See you in 20 minutes."}
+  ],
+  "final_state": "completed"
+}

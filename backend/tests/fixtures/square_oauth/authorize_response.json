@@ -1,0 +1,11 @@
+{
+  "_note": "Square OAuth authorize is a redirect, not a JSON body. This fixture documents the expected query params on the redirect URL.",
+  "redirect_url": "https://connect.squareupsandbox.com/oauth2/authorize",
+  "expected_params": {
+    "client_id": "fake-square-app",
+    "scope": "MERCHANT_PROFILE_READ ITEMS_READ ITEMS_WRITE ORDERS_READ ORDERS_WRITE",
+    "session": false,
+    "state": "<csrf-state>",
+    "redirect_uri": "http://localhost:8000/api/integrations/square/callback"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "data": {
+    "event_type": "message.finalized",
+    "id": "evt_test_sms_delivered",
+    "occurred_at": "2026-05-21T12:05:05.000Z",
+    "payload": {
+      "id": "msg_test_outbound",
+      "to": [{"phone_number": "+15555550120", "status": "delivered"}],
+      "from": {"phone_number": "+15555550100"},
+      "direction": "outbound"
+    },
+    "record_type": "event"
+  }
+}

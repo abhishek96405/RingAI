@@ -1,0 +1,12 @@
+{
+  "summary": "Customer placed a pickup order for one Margherita Pizza.",
+  "outcome": "order_placed",
+  "order_type": "pickup",
+  "items": [
+    {"name": "Margherita Pizza", "quantity": 1, "price": 14.99, "modifiers": []}
+  ],
+  "total": 14.99,
+  "customer": {"name": null, "phone": null},
+  "issues": [],
+  "language": "en"
+}

@@ -1,0 +1,119 @@
+name: tests
+
+on:
+  push:
+    branches: [ringai-deploy]
+  pull_request:
+    branches: [ringai-deploy, main]
+  schedule:
+    # Nightly live-tests run, 07:00 UTC. Live tests need real credentials —
+    # wire them via repository secrets before flipping this on.
+    - cron: "0 7 * * *"
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: backend
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-dev.txt
+
+      - name: Run tests
+        run: |
+          pytest -m "unit or integration or webhook or security or voice or e2e_in_process" \
+            -ra --tb=short
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: test_reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend-tests:
+    name: frontend
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  nightly-live-tests:
+    # Runs only on the scheduled cron. Hits real third-party APIs against a
+    # deployed backend. Requires REACT_APP_BACKEND_URL plus live credentials
+    # to be configured as GitHub Actions secrets before this is useful.
+    name: nightly-live
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-dev.txt
+
+      - name: Run live tests
+        env:
+          REACT_APP_BACKEND_URL: ${{ secrets.LIVE_BACKEND_URL }}
+        run: |
+          if [ -z "$REACT_APP_BACKEND_URL" ]; then
+            echo "LIVE_BACKEND_URL secret not set — skipping live tests."
+            exit 0
+          fi
+          pytest --run-live -ra --tb=short --no-cov

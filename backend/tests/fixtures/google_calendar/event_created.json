@@ -1,0 +1,9 @@
+{
+  "kind": "calendar#event",
+  "id": "event_test_created",
+  "status": "confirmed",
+  "summary": "Haircut — Jane Doe",
+  "start": {"dateTime": "2026-06-01T14:00:00-05:00"},
+  "end": {"dateTime": "2026-06-01T14:30:00-05:00"},
+  "htmlLink": "https://www.google.com/calendar/event?eid=test"
+}

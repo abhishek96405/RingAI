@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"name": "Pizza", "quantity": 1, "price": null, "needs_disambiguation": true, "candidates": ["Margherita Pizza", "Pepperoni Pizza"]}
+  ],
+  "total": null,
+  "confidence": "low"
+}

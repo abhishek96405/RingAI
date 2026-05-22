@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"name": "Margherita Pizza", "quantity": 1, "price": 14.99}
+  ],
+  "total": 14.99,
+  "confidence": "high"
+}

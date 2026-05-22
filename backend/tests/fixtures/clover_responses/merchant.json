@@ -1,0 +1,16 @@
+{
+  "id": "TESTMERCHANT123",
+  "name": "Test Diner",
+  "owner": {
+    "id": "OWNER123",
+    "name": "Test Owner",
+    "email": "owner@test.duuutah.test"
+  },
+  "address": {
+    "country": "US",
+    "state": "TX",
+    "city": "Austin",
+    "zip": "78701"
+  },
+  "phoneNumber": "+15555550100"
+}

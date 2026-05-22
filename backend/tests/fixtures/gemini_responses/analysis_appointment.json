@@ -1,0 +1,15 @@
+{
+  "summary": "Customer booked a haircut appointment for next Tuesday at 2pm.",
+  "outcome": "appointment_booked",
+  "order_type": "appointment",
+  "items": [],
+  "total": 35.0,
+  "customer": {"name": "Jane Doe", "phone": "+15555550110"},
+  "appointment": {
+    "service": "Haircut",
+    "requested_time": "2026-05-26T14:00:00",
+    "duration_minutes": 30
+  },
+  "issues": [],
+  "language": "en"
+}

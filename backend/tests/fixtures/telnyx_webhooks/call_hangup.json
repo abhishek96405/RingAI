@@ -1,0 +1,15 @@
+{
+  "data": {
+    "event_type": "call.hangup",
+    "id": "evt_test_call_hangup",
+    "occurred_at": "2026-05-21T12:03:30.000Z",
+    "payload": {
+      "call_control_id": "call_ctrl_test_initiated",
+      "hangup_cause": "normal_clearing",
+      "hangup_source": "callee",
+      "from": "+15555550120",
+      "to": "+15555550100"
+    },
+    "record_type": "event"
+  }
+}

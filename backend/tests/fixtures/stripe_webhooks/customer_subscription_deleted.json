@@ -1,0 +1,17 @@
+{
+  "id": "evt_test_sub_deleted",
+  "object": "event",
+  "type": "customer.subscription.deleted",
+  "created": 1779840000,
+  "data": {
+    "object": {
+      "id": "sub_test_123",
+      "object": "subscription",
+      "customer": "cus_test_123",
+      "status": "canceled",
+      "ended_at": 1779840000,
+      "metadata": {"plan": "PRO", "restaurant_id": "rest_test"}
+    }
+  },
+  "livemode": false
+}

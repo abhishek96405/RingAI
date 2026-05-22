@@ -1,0 +1,23 @@
+{
+  "elements": [
+    {
+      "id": "ITEM_MARGHERITA",
+      "name": "Margherita Pizza",
+      "price": 1499,
+      "priceType": "FIXED",
+      "hidden": false,
+      "available": true,
+      "categories": {"elements": [{"id": "CAT_PIZZA", "name": "Pizza"}]}
+    },
+    {
+      "id": "ITEM_PEPPERONI",
+      "name": "Pepperoni Pizza",
+      "price": 1699,
+      "priceType": "FIXED",
+      "hidden": false,
+      "available": true,
+      "categories": {"elements": [{"id": "CAT_PIZZA", "name": "Pizza"}]}
+    }
+  ],
+  "href": "https://sandbox.dev.clover.com/v3/merchants/TESTMERCHANT123/items"
+}

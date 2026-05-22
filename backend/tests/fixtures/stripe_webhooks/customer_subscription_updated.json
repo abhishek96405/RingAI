@@ -1,0 +1,24 @@
+{
+  "id": "evt_test_sub_updated",
+  "object": "event",
+  "type": "customer.subscription.updated",
+  "created": 1779753600,
+  "data": {
+    "object": {
+      "id": "sub_test_123",
+      "object": "subscription",
+      "customer": "cus_test_123",
+      "status": "active",
+      "current_period_start": 1779667200,
+      "current_period_end": 1782345600,
+      "items": {
+        "data": [
+          {"id": "si_test_1", "price": {"id": "price_test_starter", "product": "prod_test_starter"}}
+        ]
+      },
+      "metadata": {"plan": "STARTER", "restaurant_id": "rest_test"}
+    },
+    "previous_attributes": {"items": {"data": [{"price": {"id": "price_test_pro"}}]}}
+  },
+  "livemode": false
+}
