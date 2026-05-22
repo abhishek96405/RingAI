@@ -116,6 +116,15 @@ _TE = LanguagePromptBundle(
     ),
     triggers={
         "order_confirmed": [
+            # Code-mixed forms (what the AI actually says with commit 2's code-mixing prompt)
+            "order confirm చేశాను",
+            "order confirm అయింది",
+            "order confirm అయిపోయింది",
+            "order confirm అయ్యింది",
+            "order place అయింది",
+            "order place అయిపోయింది",
+            "మీ order confirm",
+            # Pure Telugu forms (preserved for safety)
             "ఆర్డర్ కన్ఫర్మ్ అయింది",
             "ఆర్డర్ కన్ఫర్మ్ అయిపోయింది",
             "ఆర్డర్ కన్ఫర్మ్ అయ్యింది",
@@ -124,8 +133,10 @@ _TE = LanguagePromptBundle(
             "ఆర్డర్ ప్లేస్ అయింది",
             "ఆర్డర్ ప్లేస్ అయిపోయింది",
             "ఆర్డర్ పూర్తి అయింది",
+            # English fallback (covers any English emitted by the AI)
             "your order is confirmed",
             "your order is placed",
+            "order is confirmed",
         ],
         "appointment_confirmed": [
             "అపాయింట్‌మెంట్ కన్ఫర్మ్ అయింది",
@@ -143,6 +154,8 @@ _TE = LanguagePromptBundle(
             "మెనూ పంపిస్తాను",
         ],
         "call_ending": [
+            "thank you for calling",
+            "thanks for calling",
             "ధన్యవాదాలు",
             "మంచి రోజు",
         ],
@@ -207,12 +220,20 @@ _HI = LanguagePromptBundle(
     ),
     triggers={
         "order_confirmed": [
+            # Code-mixed forms
+            "order confirm हो गया",
+            "order confirm कर दिया",
+            "order place हो गया",
+            "आपका order confirm",
+            # Pure Hindi forms
             "ऑर्डर कन्फर्म हो गया",
             "ऑर्डर कन्फर्म हो गई",
             "ऑर्डर पक्का हो गया",
             "ऑर्डर प्लेस हो गया",
+            # English fallback
             "your order is confirmed",
             "your order is placed",
+            "order is confirmed",
         ],
         "appointment_confirmed": [
             "अपॉइंटमेंट कन्फर्म हो गया",
@@ -228,6 +249,8 @@ _HI = LanguagePromptBundle(
             "मेन्यू भेज दूँगा",
         ],
         "call_ending": [
+            "thank you for calling",
+            "thanks for calling",
             "धन्यवाद",
             "अच्छा दिन",
         ],
