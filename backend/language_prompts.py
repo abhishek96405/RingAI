@@ -1,15 +1,17 @@
 """
-language_prompts.py — Per-language directives and signal trigger phrases.
+language_prompts.py — Per-language signal trigger phrases.
 
-This module is the single source of truth for:
-  1. The short directive prepended to the system prompt so the AI converses
-     in the chosen language (English directive is empty by design — English
-     calls produce a byte-identical prompt to the pre-multilingual baseline).
-  2. The phrase triggers used by signals_for() to detect events like
+The per-language conversational guidance for the AI lives in
+gemini_service._build_language_section. This module is the single source
+of truth for:
+  1. The phrase triggers used by signals_for() to detect events like
      ORDER_CONFIRMED in any language, without an LLM classifier.
+  2. LANGUAGE_NAMES — display strings used by the IVR menu.
 
-Adding a language: write the directive, fill in the triggers, register it
-in LANGUAGE_PROMPTS. No other code changes are required.
+Adding a language: fill in the triggers, register the bundle in
+LANGUAGE_PROMPTS, and add a row to LANGUAGE_NAMES. No other code changes
+are required here (you also need to extend _build_language_section in
+gemini_service.py for the AI's conversational style).
 """
 
 from dataclasses import dataclass, field
@@ -18,12 +20,10 @@ from typing import Dict, List
 
 @dataclass(frozen=True)
 class LanguagePromptBundle:
-    directive: str
     triggers: Dict[str, List[str]] = field(default_factory=dict)
 
 
 _EN = LanguagePromptBundle(
-    directive="",  # No directive — preserves byte-identical English prompt.
     triggers={
         "order_confirmed": [
             "your order is confirmed",
@@ -53,67 +53,6 @@ _EN = LanguagePromptBundle(
 )
 
 _TE = LanguagePromptBundle(
-    directive=(
-        "\n\n"
-        "═══════════════════════════════════════════════════════════════════\n"
-        "FINAL LANGUAGE OVERRIDE — HIGHEST PRIORITY (OVERRIDES ALL ABOVE)\n"
-        "═══════════════════════════════════════════════════════════════════\n"
-        "\n"
-        "This entire call is in TELUGU (తెలుగు). Every example phrase shown\n"
-        "earlier in this prompt that is in English MUST be replaced with its\n"
-        "natural Telugu equivalent. Speak as a native Telugu speaker — NOT as\n"
-        "an English speaker patching Telugu words in.\n"
-        "\n"
-        "DO NOT MIX ENGLISH GREETINGS OR FILLER PHRASES. Specifically forbidden:\n"
-        "  • 'Welcome back', 'Got it!', 'Perfect!', 'Sure!', 'Thanks for calling',\n"
-        "    'Of course!', 'Alright!', 'Awesome!' — translate ALL of these.\n"
-        "  • Do not start a sentence in English and switch to Telugu mid-sentence.\n"
-        "  • Do not transliterate Telugu in Latin script ('Sare, oka Biryani') —\n"
-        "    speak in proper Telugu script or English script, not romanized Telugu.\n"
-        "\n"
-        "NUMBERS — USE TELUGU NUMERALS, NOT ENGLISH TRANSLITERATIONS:\n"
-        "  • 1 → 'ఒక' / 'ఒకటి' (NEVER 'వన్')\n"
-        "  • 2 → 'రెండు' (NEVER 'టూ')\n"
-        "  • 3 → 'మూడు' (NEVER 'త్రీ')\n"
-        "  • 4 → 'నాలుగు', 5 → 'ఐదు' ... etc.\n"
-        "  • Example: 'ఒక Chicken Biryani, రెండు Mango Lassi' — NOT 'వన్ Chicken Biryani'.\n"
-        "\n"
-        "PHRASE REPLACEMENTS (use the Telugu form on the right):\n"
-        "  Greeting new customer        → 'నమస్తే! ఈరోజు ఏం ఆర్డర్ చేస్తారు?'\n"
-        "  Greeting returning customer  → 'తిరిగి స్వాగతం, [Name]! ఏం తీసుకుంటారు?'\n"
-        "  Acknowledging an item        → 'సరే, ఒక [Item].' or 'అలాగే!'\n"
-        "  Anything else?               → 'ఇంకా ఏమైనా కావాలా?'\n"
-        "  Read-back intro              → 'మీ ఆర్డర్ చదువుతాను —'\n"
-        "  Does that sound right?       → 'అంతా సరిగా ఉందా?'\n"
-        "  Order is confirmed           → 'మీ ఆర్డర్ కన్ఫర్మ్ అయింది.' (PAST tense)\n"
-        "  Sending SMS                  → 'మీకు పికప్ టైం టెక్స్ట్ ద్వారా పంపిస్తాను.'\n"
-        "  Thanks for calling           → '[Restaurant] కి కాల్ చేసినందుకు ధన్యవాదాలు!'\n"
-        "  Unclear input                → 'మళ్ళీ చెప్పగలరా?' (NOT 'Can you repeat?')\n"
-        "\n"
-        "MENU & NAME RULES:\n"
-        "  • Menu item names stay in Latin form: 'Chicken Biryani', 'Mango Lassi'.\n"
-        "    Do NOT transliterate them into Telugu script.\n"
-        "  • Customer names stay in their original Latin form: 'Abhishek'.\n"
-        "  • Restaurant names stay in their original form with all letters intact:\n"
-        "    say 'Bawarchii' (with both i's), 'Desi Chowrastha', etc. Do NOT shorten\n"
-        "    or simplify restaurant names when speaking Telugu.\n"
-        "  • Do NOT invent menu items. Stick strictly to the menu shown above.\n"
-        "    If asked for something not on the menu, decline politely in Telugu.\n"
-        "  • Apply ALL order protocol steps, menu rules, escalation rules, and\n"
-        "    edge cases from the sections above — just say them in Telugu using\n"
-        "    the replacements above as the style guide.\n"
-        "\n"
-        "When you need to transfer the call to a human, still say the literal\n"
-        "token ESCALATE_TO_HUMAN in English at the end of your Telugu sentence.\n"
-        "It is a backend signal, not for the customer.\n"
-        "\n"
-        "If the customer EXPLICITLY asks mid-call to switch languages, comply.\n"
-        "Otherwise do NOT switch. Even if the customer's Telugu transcription\n"
-        "comes through garbled, stay in Telugu and ask 'మళ్ళీ చెప్పగలరా?'\n"
-        "\n"
-        "REMEMBER: This entire conversation is in Telugu. The very first word\n"
-        "of your greeting must be in Telugu. Speak naturally and warmly.\n"
-    ),
     triggers={
         "order_confirmed": [
             # Code-mixed forms (what the AI actually says with commit 2's code-mixing prompt)
@@ -163,61 +102,6 @@ _TE = LanguagePromptBundle(
 )
 
 _HI = LanguagePromptBundle(
-    directive=(
-        "\n\n"
-        "═══════════════════════════════════════════════════════════════════\n"
-        "FINAL LANGUAGE OVERRIDE — HIGHEST PRIORITY (OVERRIDES ALL ABOVE)\n"
-        "═══════════════════════════════════════════════════════════════════\n"
-        "\n"
-        "This entire call is in HINDI (हिंदी). Every example phrase shown\n"
-        "earlier in this prompt that is in English MUST be replaced with its\n"
-        "natural Hindi equivalent. Speak as a native Hindi speaker.\n"
-        "\n"
-        "DO NOT MIX ENGLISH GREETINGS OR FILLER. Specifically forbidden:\n"
-        "  • 'Welcome back', 'Got it!', 'Perfect!', 'Sure!', 'Thanks for calling',\n"
-        "    'Of course!', 'Alright!', 'Awesome!' — translate ALL of these.\n"
-        "  • Do not start a sentence in English and switch to Hindi mid-sentence.\n"
-        "  • Do not write Hindi in romanized script ('Theek hai, ek Biryani') —\n"
-        "    use Devanagari script properly.\n"
-        "\n"
-        "NUMBERS — USE HINDI NUMERALS, NOT ENGLISH TRANSLITERATIONS:\n"
-        "  • 1 → 'एक' (NEVER 'वन्')\n"
-        "  • 2 → 'दो' (NEVER 'टू')\n"
-        "  • 3 → 'तीन' (NEVER 'थ्री')\n"
-        "  • Example: 'एक Chicken Biryani, दो Mango Lassi' — NOT 'वन् Chicken Biryani'.\n"
-        "\n"
-        "PHRASE REPLACEMENTS (use the Hindi form on the right):\n"
-        "  Greeting new customer        → 'नमस्ते! आज क्या ऑर्डर लेंगे?'\n"
-        "  Greeting returning customer  → 'फिर से स्वागत है, [Name]! क्या लेंगे आज?'\n"
-        "  Acknowledging an item        → 'ठीक है, एक [Item].' or 'अच्छा!'\n"
-        "  Anything else?               → 'और कुछ चाहिए?'\n"
-        "  Read-back intro              → 'मैं आपका ऑर्डर दोहराता हूँ —'\n"
-        "  Does that sound right?       → 'क्या यह सही है?'\n"
-        "  Order is confirmed           → 'आपका ऑर्डर कन्फर्म हो गया है।' (PAST tense)\n"
-        "  Sending SMS                  → 'पिकअप टाइम मैं आपको टेक्स्ट कर दूँगा।'\n"
-        "  Thanks for calling           → 'Bawarchii को कॉल करने के लिए धन्यवाद!'\n"
-        "  Unclear input                → 'क्या आप दोबारा कह सकते हैं?'\n"
-        "\n"
-        "MENU & NAME RULES:\n"
-        "  • Menu item names stay in Latin form: 'Chicken Biryani', 'Mango Lassi'.\n"
-        "    Do NOT transliterate them into Devanagari script.\n"
-        "  • Customer names stay in their original Latin form: 'Abhishek'.\n"
-        "  • Restaurant names stay intact: 'Bawarchii' (with both i's), 'Desi\n"
-        "    Chowrastha', etc. Do NOT shorten or simplify them.\n"
-        "  • Do NOT invent menu items. Stick strictly to the menu shown above.\n"
-        "  • Apply ALL order protocol steps, menu rules, escalation rules, and\n"
-        "    edge cases from the sections above — just say them in Hindi.\n"
-        "\n"
-        "When you need to transfer the call, still say the literal token\n"
-        "ESCALATE_TO_HUMAN in English at the end of your Hindi sentence.\n"
-        "\n"
-        "If the customer EXPLICITLY asks mid-call to switch languages, comply.\n"
-        "Otherwise do NOT switch. If Hindi transcription comes through garbled,\n"
-        "stay in Hindi and ask 'क्या आप दोबारा कह सकते हैं?'\n"
-        "\n"
-        "REMEMBER: This entire conversation is in Hindi. The very first word\n"
-        "of your greeting must be in Hindi. Speak naturally and warmly.\n"
-    ),
     triggers={
         "order_confirmed": [
             # Code-mixed forms
@@ -258,49 +142,6 @@ _HI = LanguagePromptBundle(
 )
 
 _ES = LanguagePromptBundle(
-    directive=(
-        "\n\n"
-        "═══════════════════════════════════════════════════════════════════\n"
-        "FINAL LANGUAGE OVERRIDE — HIGHEST PRIORITY (OVERRIDES ALL ABOVE)\n"
-        "═══════════════════════════════════════════════════════════════════\n"
-        "\n"
-        "This entire call is in SPANISH (Español). Every example phrase shown\n"
-        "earlier in this prompt that is in English MUST be replaced with its\n"
-        "natural Spanish equivalent. Speak as a native Spanish speaker.\n"
-        "\n"
-        "DO NOT MIX ENGLISH GREETINGS OR FILLER. Specifically forbidden:\n"
-        "  • 'Welcome back', 'Got it!', 'Perfect!', 'Sure!', 'Thanks for calling',\n"
-        "    'Of course!', 'Alright!', 'Awesome!' — translate ALL of these.\n"
-        "  • Do not start a sentence in English and switch to Spanish mid-sentence.\n"
-        "\n"
-        "PHRASE REPLACEMENTS (use the Spanish form on the right):\n"
-        "  Greeting new customer        → '¡Hola! ¿Qué le puedo ofrecer hoy?'\n"
-        "  Greeting returning customer  → '¡Bienvenido de nuevo, [Name]! ¿Qué desea?'\n"
-        "  Acknowledging an item        → '¡Listo, un [Item]!' or '¡Claro!'\n"
-        "  Anything else?               → '¿Algo más?'\n"
-        "  Read-back intro              → 'Déjeme repetir su pedido —'\n"
-        "  Does that sound right?       → '¿Está todo bien?'\n"
-        "  Order is confirmed           → 'Su pedido está confirmado.' (use 'está')\n"
-        "  Sending SMS                  → 'Le enviaré la hora de recogida por mensaje.'\n"
-        "  Thanks for calling           → '¡Gracias por llamar a Bawarchii!'\n"
-        "  Unclear input                → '¿Puede repetir, por favor?'\n"
-        "\n"
-        "MENU & NAME RULES:\n"
-        "  • Menu item names stay in their English/Latin form: 'Chicken Biryani'.\n"
-        "  • Customer names stay in their original form.\n"
-        "  • Do NOT invent menu items. Stick to the menu shown above.\n"
-        "  • Apply ALL order protocol steps, menu rules, and edge cases from\n"
-        "    above — just say them in Spanish.\n"
-        "\n"
-        "When you need to transfer, still say the literal token ESCALATE_TO_HUMAN\n"
-        "in English at the end of your Spanish sentence.\n"
-        "\n"
-        "If the customer EXPLICITLY asks mid-call to switch languages, comply.\n"
-        "Otherwise do NOT switch. Adapt formality (tú vs usted) to the customer.\n"
-        "\n"
-        "REMEMBER: This entire conversation is in Spanish. The very first word\n"
-        "of your greeting must be in Spanish. Speak naturally and warmly.\n"
-    ),
     triggers={
         "order_confirmed": [
             "pedido está confirmado",

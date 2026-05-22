@@ -1501,6 +1501,37 @@ CLOSED — STRICT RULES
 - End the call politely after helping with questions
 """
 
+    # Modifier protocol. Only inject when the menu actually has modifier groups —
+    # otherwise this ~22-line block (~1.3k chars) is dead weight every call.
+    _menu_has_modifiers = any(item.get("modifiers") for item in (menu_items or []))
+    modifiers_block = ""
+    if _menu_has_modifiers:
+        modifiers_block = """
+  CUSTOMIZATIONS & MODIFIERS:
+  Each menu item may have modifier groups shown in brackets after its price.
+  Example: "Margherita $12.00 [Size: S/M/L*] [Crust: Thin/Regular/Thick]"
+  - Groups marked with * are REQUIRED — you MUST ask if customer doesn't specify.
+  - Groups without * are optional — only ask if customer brings it up, or during upsell.
+  - If customer already specifies a valid option (e.g. "large"), accept it immediately.
+  - If customer specifies an invalid option, offer the valid choices: "We have S, M, or L — which works?"
+  - Validate against the exact option names in brackets. Use common sense for aliases
+    (e.g. "regular" = "Medium", "hot" = "Spicy").
+  - For multi-select groups (no max shown or max > 1): accept multiple options.
+  - For single-select groups (max = 1): if customer picks multiple, ask them to choose one.
+  - REQUIRED modifier flow example:
+    Customer: "I want a Margherita pizza."
+    AI: "Got it! What size — Small, Medium, or Large?"
+    Customer: "Large."
+    AI: "Perfect, anything else?"
+  - OPTIONAL modifier flow example:
+    Customer: "I want a Margherita pizza, large."
+    AI: "Got it, large Margherita! Anything else?" ← do NOT ask about optional crust unprompted
+  - Special instructions: if the item has special_instructions_enabled, customer can add
+    free-text notes like "extra crispy" or "no onions" — capture these verbatim.
+  - Include all confirmed modifiers in the STEP 4 readback:
+    "One large Margherita with thin crust. Does that sound right?"
+"""
+
     # Language section. For English (default), this stays empty so the prompt
     # is byte-identical to the pre-multilingual baseline. For other languages,
     # _build_language_section returns a short integrated section with code-mixing
@@ -1701,35 +1732,7 @@ STEP 2: Take the order — but VALIDATE FIRST, ACKNOWLEDGE SECOND.
   Do NOT ask "Is that correct?" after each valid item — STEP 4 readback is the final confirmation. Menu validation is a SILENT check you do internally; you only speak up when something fails it.
   NEVER add an item unless it appears on the menu AND the customer clearly named it.
   If unsure what the customer said — ask: "Sorry, what was that item?"
-STEP 2: Take the order. Acknowledge each item briefly — "Got it", "Added", "Perfect" — then ask "Anything else?"
-  Do NOT ask "Is that correct?" after each item — confirmation happens at STEP 4 only.
-  NEVER add an item unless the customer clearly and completely named it.
-  If unsure what the customer said — ask: "Sorry, what was that item?"
-
-  CUSTOMIZATIONS & MODIFIERS:
-  Each menu item may have modifier groups shown in brackets after its price.
-  Example: "Margherita $12.00 [Size: S/M/L*] [Crust: Thin/Regular/Thick]"
-  - Groups marked with * are REQUIRED — you MUST ask if customer doesn't specify.
-  - Groups without * are optional — only ask if customer brings it up, or during upsell.
-  - If customer already specifies a valid option (e.g. "large"), accept it immediately.
-  - If customer specifies an invalid option, offer the valid choices: "We have S, M, or L — which works?"
-  - Validate against the exact option names in brackets. Use common sense for aliases
-    (e.g. "regular" = "Medium", "hot" = "Spicy").
-  - For multi-select groups (no max shown or max > 1): accept multiple options.
-  - For single-select groups (max = 1): if customer picks multiple, ask them to choose one.
-  - REQUIRED modifier flow example:
-    Customer: "I want a Margherita pizza."
-    AI: "Got it! What size — Small, Medium, or Large?"
-    Customer: "Large."
-    AI: "Perfect, anything else?"
-  - OPTIONAL modifier flow example:
-    Customer: "I want a Margherita pizza, large."
-    AI: "Got it, large Margherita! Anything else?" ← do NOT ask about optional crust unprompted
-  - Special instructions: if the item has special_instructions_enabled, customer can add
-    free-text notes like "extra crispy" or "no onions" — capture these verbatim.
-  - Include all confirmed modifiers in the STEP 4 readback:
-    "One large Margherita with thin crust. Does that sound right?"
-
+{modifiers_block}
 {upsell_section}
 
 {step3_block}
@@ -1739,10 +1742,11 @@ STEP 4: MANDATORY READBACK — never skip this:
   Keep a running mental list of every item AND quantity the customer added, even if discussed earlier.
   CRITICAL: If a side conversation happened (reservation questions, delivery questions, etc.) between
   when items were ordered and the readback, go back and recall the EXACT quantities originally stated.
-  Example: Customer said "three Apollo Fish" then asked about reservations then gave their name →
-  readback MUST say "three Apollo Fish", NOT "one Apollo Fish". Never reduce quantities.
-  For DELIVERY orders, always include the delivery address in the readback:
-  "Let me read that back: one Chicken Biryani and two Samosas, going to 984 Four Seasons Boulevard, Aurora. Does that sound right?"
+  Example: if the customer said "three" of an item early in the call, then had a side conversation,
+  then gave their name — the readback MUST preserve the quantity "three", not collapse it to "one".
+  Never reduce quantities.
+  For DELIVERY orders, always include the delivery address in the readback. Format:
+  "Let me read that back: [each item with quantity], going to [delivery address]. Does that sound right?"
   If the customer says you missed an item — immediately add it and re-read the full list.
   
   NEVER volunteer the total price during readback. Just list the items.
@@ -2042,7 +2046,7 @@ menu_suggestions — CRITICAL FOR LEARNING:
   record it as: {"said": "<what customer said>", "resolved_as": "<exact menu item name>"}
 
   Include a suggestion whenever the customer said something like:
-  - A phonetic approximation: "apollo fish" heard as "a bowl of fish", "chicken tikka" as "chicken tika"
+  - A phonetic approximation: "chicken tikka" heard as "chicken tika", "margherita" as "margarita"
   - A nickname or abbreviation: "dal", "makhni", "biryani" (when multiple biryanis exist)
   - A colloquial term: "coke" for "Coca-Cola", "chili chicken" for "Chilli Chicken"
   - An unclear item that the AI clarified into a specific menu item
@@ -2051,8 +2055,8 @@ menu_suggestions — CRITICAL FOR LEARNING:
   If the customer's phrasing is identical to the menu item name, do NOT include it.
   Only include genuine alias/phonetic mappings. Max 5 per call.
 
-  Example: customer says "bowl of fish" -> AI serves "Apollo Fish"
-  -> {"said": "bowl of fish", "resolved_as": "Apollo Fish"}
+  Example: customer says "margarita" -> AI serves "Margherita Pizza"
+  -> {"said": "margarita", "resolved_as": "Margherita Pizza"}
 
 rule_suggestions — pattern issues spotted across the call:
   Short strings describing recurring problems (e.g. "Customer asked about gluten-free options — not handled",
