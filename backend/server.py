@@ -8,6 +8,10 @@ import math
 import logging
 import signal
 import asyncio
+import hmac
+import hashlib
+import base64
+import json
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any, Set
@@ -5096,8 +5100,74 @@ async def refund_order(
 
 @api_router.post("/webhooks/square")
 async def square_webhook(request: Request):
-    payload = await request.body()
-    logger.info("Received Square webhook", extra={"payload_size": len(payload)})
+    """Square webhook handler with HMAC-SHA256 signature verification + idempotency.
+
+    Verification: Square signs each webhook with HMAC-SHA256 over
+    f"{notification_url}{body}" using the merchant's webhook signature key.
+    The signature arrives in the X-Square-Hmacsha256-Signature header.
+
+    Idempotency: Square retries failed deliveries. We dedupe on event_id,
+    storing seen ids in the webhook_events collection with a 7-day TTL.
+
+    If SQUARE_WEBHOOK_SIGNATURE_KEY is not configured, the endpoint returns
+    503 — refusing to process unsigned traffic is safer than accepting it.
+    """
+    signature_key = os.environ.get("SQUARE_WEBHOOK_SIGNATURE_KEY", "").strip()
+    if not signature_key:
+        logger.warning("square_webhook called but SQUARE_WEBHOOK_SIGNATURE_KEY is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Square webhook handler is not configured. Set SQUARE_WEBHOOK_SIGNATURE_KEY.",
+        )
+
+    body = await request.body()
+    provided_sig = request.headers.get("X-Square-Hmacsha256-Signature", "")
+    if not provided_sig:
+        raise HTTPException(status_code=401, detail="Missing X-Square-Hmacsha256-Signature header")
+
+    # Reconstruct the notification URL from the request rather than trusting an env var.
+    notification_url = str(request.url)
+    signed_payload = (notification_url + body.decode("utf-8")).encode("utf-8")
+    expected_sig = base64.b64encode(
+        hmac.new(signature_key.encode("utf-8"), signed_payload, hashlib.sha256).digest()
+    ).decode("utf-8")
+
+    if not hmac.compare_digest(expected_sig, provided_sig):
+        logger.warning("square_webhook signature mismatch")
+        raise HTTPException(status_code=401, detail="Invalid Square signature")
+
+    try:
+        event = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_id = event.get("event_id") or event.get("id")
+    event_type = event.get("type", "")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Missing event_id in payload")
+
+    existing = await db.webhook_events.find_one({"provider": "square", "event_id": event_id})
+    if existing:
+        return JSONResponse({"received": True, "deduped": True})
+
+    if event_type == "oauth.authorization.revoked":
+        merchant_id = (event.get("data") or {}).get("object", {}).get("merchant_id") or event.get("merchant_id")
+        if merchant_id:
+            await db.integrations.update_many(
+                {"provider": "square", "merchant_id": merchant_id},
+                {"$set": {"status": "disconnected", "disconnected_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            logger.info(f"square_webhook: marked merchant {merchant_id} as disconnected")
+    else:
+        logger.info(f"square_webhook: received unhandled event type {event_type}")
+
+    await db.webhook_events.insert_one({
+        "provider": "square",
+        "event_id": event_id,
+        "event_type": event_type,
+        "received_at": datetime.now(timezone.utc),
+    })
+
     return JSONResponse({"received": True})
 
 
@@ -5432,6 +5502,20 @@ async def websocket_notifications(websocket: WebSocket, restaurant_id: Optional[
         logger.warning(f"WebSocket error: {e}")
     finally:
         await manager.disconnect(websocket)
+
+
+@app.on_event("startup")
+async def _ensure_webhook_idempotency_index():
+    """Create the TTL index for the webhook_events idempotency collection.
+
+    Square retries failed deliveries. We dedupe on event_id; the index
+    expires entries 7 days after receipt to bound storage growth.
+    """
+    try:
+        await db.webhook_events.create_index("received_at", expireAfterSeconds=7 * 24 * 60 * 60)
+        logger.info("webhook_events TTL index ensured")
+    except Exception as e:
+        logger.warning(f"Could not create webhook_events TTL index: {e}")
 
 
 @app.on_event("startup")
