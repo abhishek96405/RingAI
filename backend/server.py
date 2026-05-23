@@ -1086,30 +1086,16 @@ async def me_bootstrap(
 
 @api_router.post("/me/repair-membership")
 async def repair_membership(user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    Dev/fix endpoint: finds any restaurant where the user is NOT yet a member
-    and auto-creates an owner membership. Safe to call multiple times.
-    """
-    import asyncio as _asyncio
-    all_results = await _asyncio.gather(
-        db.restaurants.find({}, {"_id": 0}).to_list(100),
-        db.clinics.find({}, {"_id": 0}).to_list(100),
-        db.salons.find({}, {"_id": 0}).to_list(100),
-        db.home_services.find({}, {"_id": 0}).to_list(100),
-        db.legal.find({}, {"_id": 0}).to_list(100),
+    # Removed: previously iterated every business collection and granted the
+    # caller owner-membership on every restaurant where they had no row,
+    # which let any authenticated user take ownership of every unowned
+    # tenant in the database. Restoring memberships must go through an
+    # admin-authenticated path that verifies the user's prior Clerk org
+    # membership; until that exists, the route is permanently gone.
+    raise HTTPException(
+        status_code=410,
+        detail="This endpoint has been removed. Contact support to restore memberships.",
     )
-    all_restaurants = [r for results in all_results for r in results]
-    repaired = []
-    for restaurant in all_restaurants:
-        rid = restaurant.get("id")
-        if not rid:
-            continue
-        existing = await db.memberships.find_one({"user_id": user["id"], "restaurant_id": rid})
-        if not existing:
-            membership = Membership(user_id=user["id"], restaurant_id=rid, role="owner")
-            await db.memberships.insert_one(membership.model_dump())
-            repaired.append(rid)
-    return {"repaired": repaired, "message": f"Created {len(repaired)} membership(s)"}
 
 
 async def select_restaurant(data: RestaurantSelection, user: Dict[str, Any] = Depends(get_current_user)):
