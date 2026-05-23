@@ -17,6 +17,7 @@ Responsibilities:
 Production code is never modified. Test isolation is achieved entirely
 through fixture-level patching and FastAPI dependency overrides.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -53,6 +54,7 @@ if str(_BACKEND_DIR) not in sys.path:
 # don't kill conftest import.
 # ---------------------------------------------------------------------------
 import warnings as _warnings
+
 with _warnings.catch_warnings():
     _warnings.simplefilter("ignore", DeprecationWarning)
     _warnings.simplefilter("ignore", PendingDeprecationWarning)
@@ -72,12 +74,15 @@ with _warnings.catch_warnings():
 # stops it from probing into the lazy-import chain.
 try:
     import freezegun as _freezegun
-    _freezegun.configure(extend_ignore_list=[
-        "transformers",
-        "huggingface_hub",
-        "pipecat",
-        "torch",
-    ])
+
+    _freezegun.configure(
+        extend_ignore_list=[
+            "transformers",
+            "huggingface_hub",
+            "pipecat",
+            "torch",
+        ]
+    )
 except Exception:
     pass
 
@@ -101,10 +106,10 @@ from tests._constants import (  # noqa: E402
     ADMIN_USER_ID,
 )
 
-
 # ---------------------------------------------------------------------------
 # Custom CLI flag for running live tests against a deployed backend.
 # ---------------------------------------------------------------------------
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
@@ -163,6 +168,7 @@ def pytest_collection_modifyitems(
 # rebinds it for the lifetime of a test.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 async def async_db():
     """Fresh in-memory async MongoDB instance, isolated per test."""
@@ -197,6 +203,7 @@ async def patched_server_db(async_db, monkeypatch):
 # overrides; ``client`` is a sync TestClient suitable for most route tests;
 # ``async_client`` is an httpx.AsyncClient for tests that need async APIs.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def app(patched_server_db, monkeypatch):
@@ -243,18 +250,21 @@ async def async_client(app) -> AsyncIterator:
 
 _TOKEN_TO_CLAIMS: dict[str, dict] = {
     "tenant_a": {
+        "id": TENANT_A_USER_ID,
         "sub": TENANT_A_USER_ID,
         "org_id": TENANT_A_ORG_ID,
         "email": "owner@tenant-a.test",
         "restaurant_id": TENANT_A_ID,
     },
     "tenant_b": {
+        "id": TENANT_B_USER_ID,
         "sub": TENANT_B_USER_ID,
         "org_id": TENANT_B_ORG_ID,
         "email": "owner@tenant-b.test",
         "restaurant_id": TENANT_B_ID,
     },
     "admin": {
+        "id": ADMIN_USER_ID,
         "sub": ADMIN_USER_ID,
         "org_id": "org_admin",
         "email": "admin@duuutah.test",
@@ -286,7 +296,7 @@ def mock_clerk(app):
     async def _fake_get_current_user(authorization: str = Header(default=None)):
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="missing bearer")
-        token = authorization[len("Bearer "):].strip()
+        token = authorization[len("Bearer ") :].strip()
         if token in _TOKEN_TO_CLAIMS:
             return dict(_TOKEN_TO_CLAIMS[token])
         raise HTTPException(status_code=401, detail=f"unknown test token: {token}")
@@ -314,10 +324,330 @@ def auth_headers_admin(mock_clerk) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Membership seeding for integration tests.
+# ensure_restaurant_access requires a db.memberships row tying the calling
+# user to the restaurant — without it, every authenticated route returns 403.
+# The base two_tenant_setup fixture only seeds restaurant docs; this helper
+# adds the matching memberships so calling tenant_a's token actually
+# resolves to access on TENANT_A_ID's restaurant.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def two_tenant_with_memberships(two_tenant_setup):
+    """two_tenant_setup + owner memberships for each tenant's user.
+
+    Returns the same dict structure as two_tenant_setup.
+    """
+    import server  # patched_server_db has already rebound server.db
+
+    await server.db.memberships.insert_one(
+        {
+            "id": "membership_a",
+            "user_id": TENANT_A_USER_ID,
+            "restaurant_id": TENANT_A_ID,
+            "role": "owner",
+            "business_type": "restaurant",
+        }
+    )
+    await server.db.memberships.insert_one(
+        {
+            "id": "membership_b",
+            "user_id": TENANT_B_USER_ID,
+            "restaurant_id": TENANT_B_ID,
+            "role": "owner",
+            "business_type": "restaurant",
+        }
+    )
+    return two_tenant_setup
+
+
+# ---------------------------------------------------------------------------
+# External SDK monkeypatches that work around the autouse
+# _block_unknown_outbound_http guard documented in FINDINGS.
+# These patch the SDK surface (stripe.checkout.Session.create, telnyx_service
+# helpers) directly so tests never reach httpx at all.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stripe_sdk_mock(monkeypatch):
+    """Stub the Stripe SDK methods server.py exercises.
+
+    Returns a dict the test can inspect to verify what was called.
+    Default behavior covers the happy path; tests that need failures override.
+    """
+    import stripe
+
+    calls: dict = {
+        "customer_create": [],
+        "checkout_create": [],
+        "portal_create": [],
+        "invoice_list": [],
+        "invoiceitem_create": [],
+        "refund_create": [],
+        "oauth_token": [],
+        "oauth_deauthorize": [],
+        "webhook_construct": [],
+    }
+
+    class _Obj(dict):
+        def __getattr__(self, item):  # pragma: no cover - convenience
+            try:
+                return self[item]
+            except KeyError as exc:
+                raise AttributeError(item) from exc
+
+    def _make_customer(**kw):
+        calls["customer_create"].append(kw)
+        return _Obj(id="cus_test_123", **kw)
+
+    def _make_checkout(**kw):
+        calls["checkout_create"].append(kw)
+        return _Obj(
+            id="cs_test_123", url="https://stripe.test/checkout/cs_test_123", **kw
+        )
+
+    def _make_portal(**kw):
+        calls["portal_create"].append(kw)
+        return _Obj(
+            id="bps_test_123", url="https://stripe.test/portal/bps_test_123", **kw
+        )
+
+    def _list_invoices(**kw):
+        calls["invoice_list"].append(kw)
+        return _Obj(auto_paging_iter=lambda: iter([]))
+
+    def _make_invoice_item(**kw):
+        calls["invoiceitem_create"].append(kw)
+        return _Obj(id="ii_test_123", **kw)
+
+    def _make_refund(**kw):
+        calls["refund_create"].append(kw)
+        return _Obj(id="re_test_123", **kw)
+
+    def _oauth_token(**kw):
+        calls["oauth_token"].append(kw)
+        return _Obj(stripe_user_id="acct_test_123")
+
+    def _oauth_deauthorize(**kw):
+        calls["oauth_deauthorize"].append(kw)
+        return _Obj(stripe_user_id=kw.get("stripe_user_id"))
+
+    def _construct_event(payload, sig_header, secret):
+        calls["webhook_construct"].append({"payload": payload, "sig": sig_header})
+        import json as _json
+
+        try:
+            return (
+                _json.loads(payload) if isinstance(payload, (bytes, str)) else payload
+            )
+        except Exception:
+            return {"type": "ping", "data": {"object": {}}}
+
+    monkeypatch.setattr(stripe.Customer, "create", _make_customer, raising=False)
+    monkeypatch.setattr(
+        stripe.checkout.Session, "create", _make_checkout, raising=False
+    )
+    monkeypatch.setattr(
+        stripe.billing_portal.Session, "create", _make_portal, raising=False
+    )
+    monkeypatch.setattr(stripe.Invoice, "list", _list_invoices, raising=False)
+    monkeypatch.setattr(stripe.InvoiceItem, "create", _make_invoice_item, raising=False)
+    monkeypatch.setattr(stripe.Refund, "create", _make_refund, raising=False)
+    monkeypatch.setattr(stripe.OAuth, "token", _oauth_token, raising=False)
+    monkeypatch.setattr(stripe.OAuth, "deauthorize", _oauth_deauthorize, raising=False)
+    monkeypatch.setattr(
+        stripe.Webhook, "construct_event", _construct_event, raising=False
+    )
+
+    # Ensure stripe.api_key is non-empty so routes don't 400 with "not configured".
+    monkeypatch.setattr(stripe, "api_key", "sk_test_fake", raising=False)
+    import server as _server
+
+    monkeypatch.setattr(_server.stripe, "api_key", "sk_test_fake", raising=False)
+
+    return calls
+
+
+@pytest.fixture
+def telnyx_sdk_mock(monkeypatch):
+    """Stub telnyx_service module-level helpers used by server.py routes.
+
+    Returns a dict the test can inspect.
+    """
+    import telnyx_service
+
+    calls: dict = {
+        "search": [],
+        "create_order": [],
+        "wait_for_order": [],
+        "list_phone_numbers": [],
+        "update_phone_number": [],
+        "release_phone_number": [],
+        "get_number_order": [],
+        "hang_up_call": [],
+        "answer_call": [],
+        "gather_using_speak": [],
+        "start_streaming": [],
+        "send_sms": [],
+    }
+
+    async def _search(country_code="US", area_code=None, limit=5):
+        calls["search"].append(
+            {"country_code": country_code, "area_code": area_code, "limit": limit}
+        )
+        return [
+            {
+                "phone_number": "+15555550100",
+                "vanity_format": "(555) 555-0100",
+                "region_information": [{"region_name": "California"}],
+                "cost_information": {"monthly_cost": "1.00"},
+                "features": [{"name": "voice"}, {"name": "sms"}],
+            }
+        ]
+
+    async def _create_order(
+        phone_numbers, connection_id, messaging_profile_id=None, customer_reference=None
+    ):
+        calls["create_order"].append(
+            {
+                "phone_numbers": phone_numbers,
+                "connection_id": connection_id,
+                "customer_reference": customer_reference,
+            }
+        )
+        return {"id": "ord_test_123", "status": "pending"}
+
+    async def _wait_for_order(order_id, timeout_seconds=30):
+        calls["wait_for_order"].append({"order_id": order_id})
+        return {
+            "id": order_id,
+            "status": "success",
+            "phone_numbers": [{"id": "pn_test_123", "phone_number": "+15555550100"}],
+        }
+
+    async def _list_numbers(phone_number=None):
+        calls["list_phone_numbers"].append({"phone_number": phone_number})
+        return [{"id": "pn_existing_123", "phone_number": phone_number}]
+
+    async def _update_pn(phone_number_id, **kw):
+        calls["update_phone_number"].append({"id": phone_number_id, **kw})
+        return {"id": phone_number_id}
+
+    async def _release_pn(phone_number_id):
+        calls["release_phone_number"].append({"id": phone_number_id})
+        return True
+
+    async def _get_order(order_id):
+        calls["get_number_order"].append({"id": order_id})
+        return {"id": order_id, "status": "success"}
+
+    async def _hangup(call_id):
+        calls["hang_up_call"].append(call_id)
+
+    async def _answer(call_id, client_state=None):
+        calls["answer_call"].append({"call_id": call_id, "client_state": client_state})
+
+    async def _gather(call_control_id, **kw):
+        calls["gather_using_speak"].append({"call_id": call_control_id, **kw})
+
+    async def _stream(call_id, ws_url):
+        calls["start_streaming"].append({"call_id": call_id, "ws_url": ws_url})
+
+    class _SmsResult:
+        def __init__(self):
+            self.success = True
+            self.message_id = "msg_test_123"
+            self.error_code = None
+            self.error_message = None
+
+    async def _send_sms(**kw):
+        calls["send_sms"].append(kw)
+        return _SmsResult()
+
+    monkeypatch.setattr(
+        telnyx_service, "search_available_numbers", _search, raising=False
+    )
+    monkeypatch.setattr(
+        telnyx_service, "create_number_order", _create_order, raising=False
+    )
+    monkeypatch.setattr(
+        telnyx_service, "wait_for_order_completion", _wait_for_order, raising=False
+    )
+    monkeypatch.setattr(
+        telnyx_service, "list_phone_numbers", _list_numbers, raising=False
+    )
+    monkeypatch.setattr(
+        telnyx_service, "update_phone_number", _update_pn, raising=False
+    )
+    monkeypatch.setattr(
+        telnyx_service, "release_phone_number", _release_pn, raising=False
+    )
+    monkeypatch.setattr(telnyx_service, "get_number_order", _get_order, raising=False)
+    monkeypatch.setattr(telnyx_service, "hang_up_call", _hangup, raising=False)
+    monkeypatch.setattr(telnyx_service, "answer_call", _answer, raising=False)
+    monkeypatch.setattr(telnyx_service, "gather_using_speak", _gather, raising=False)
+    monkeypatch.setattr(telnyx_service, "start_streaming", _stream, raising=False)
+    monkeypatch.setattr(telnyx_service, "send_sms", _send_sms, raising=False)
+    monkeypatch.setattr(
+        telnyx_service, "_get_voice_app_id", lambda: "voice_app_test", raising=False
+    )
+    monkeypatch.setattr(
+        telnyx_service,
+        "_get_messaging_profile_id",
+        lambda: "msg_profile_test",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        telnyx_service, "verify_webhook_signature", lambda *a, **k: True, raising=False
+    )
+    return calls
+
+
+@pytest.fixture
+def disable_outbound_http_guard(monkeypatch):
+    """Disable the autouse _block_unknown_outbound_http guard for a test.
+
+    Use this in tests that explicitly mock httpx via monkeypatch and would
+    otherwise be blocked. Per FINDINGS, the guard is incompatible with respx.
+    """
+    import httpx
+
+    # Restore unwrapped send so test-level patches can take effect.
+    # We do this by setting send back to the underlying method object.
+    real_async = httpx.AsyncClient.__dict__.get("send")
+    real_sync = httpx.Client.__dict__.get("send")
+    if real_async is not None:
+        monkeypatch.setattr(httpx.AsyncClient, "send", real_async, raising=False)
+    if real_sync is not None:
+        monkeypatch.setattr(httpx.Client, "send", real_sync, raising=False)
+
+
+# ---------------------------------------------------------------------------
+# Plan-aware seeding — many routes gate features on the restaurant's plan
+# (auto-learning, multi-voice, upsell). PRO is the most-featureful plan.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def pro_plan_tenant_a(two_tenant_with_memberships):
+    """Bump tenant A's restaurant to PRO so plan-gated routes are exercisable."""
+    import server
+
+    await server.db.restaurants.update_one(
+        {"id": TENANT_A_ID},
+        {"$set": {"plan": "PRO", "is_active": True}},
+    )
+    return two_tenant_with_memberships
+
+
+# ---------------------------------------------------------------------------
 # External-service mock hooks. Each fixture sets up the seam that later test
 # files will populate. They are intentionally minimal here — concrete
 # response mapping lives in the tests that need it (and in fixtures/*.json).
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def respx_mock():
@@ -415,6 +745,7 @@ def mock_clover(respx_mock):
 # Time control — freezegun helper that yields the freezer for tick control.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def frozen_time():
     """Freeze wall clock at a fixed UTC instant; yield the freezer.
@@ -433,6 +764,7 @@ def frozen_time():
 # restaurants are seeded with non-overlapping data so a leak from one to the
 # other surfaces as a visible assertion failure.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def two_tenant_setup(patched_server_db, mock_clerk):
@@ -481,6 +813,7 @@ async def two_tenant_setup(patched_server_db, mock_clerk):
 # tries to reach a real third-party host, we want a loud failure, not a
 # silent timeout. Tests that want the network must opt in via ``--run-live``.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _block_unknown_outbound_http(request, monkeypatch):
@@ -531,4 +864,3 @@ def _block_unknown_outbound_http(request, monkeypatch):
 # transitive chain at session start — before pytest's warning filter
 # captures per-test warnings — and explicitly swallow it here.
 # ---------------------------------------------------------------------------
-

@@ -62,6 +62,18 @@ env = [
     "BACKEND_PUBLIC_URL=http://localhost:8000",
     "ENABLE_DEMO_MODE=false",
     "SEED_DEMO_DATA=false",
+    # Clear any host-environment leakage of CF_SECRET_TOKEN so the
+    # cloudflare_security_middleware (server.py:5399) is a no-op for tests.
+    # See tests/FINDINGS.md "CF_SECRET_TOKEN env-var leakage".
+    "CF_SECRET_TOKEN=",
+    # Deterministic admin id so admin-only routes (e.g. /api/admin/cost-analytics)
+    # accept the "admin" mock_clerk token without per-test env mutation.
+    "ADMIN_USER_ID=user_admin",
+    # Stripe price IDs — set so /api/billing/create-checkout-session has a price ref.
+    "STRIPE_PRICE_STARTER=price_starter_test",
+    "STRIPE_PRICE_PRO=price_pro_test",
+    "STRIPE_CLIENT_ID=ca_test_fake",
+    "PAYMENT_SUCCESS_URL=http://localhost:3000/payment-success",
 ]
 filterwarnings = [
     "error",
