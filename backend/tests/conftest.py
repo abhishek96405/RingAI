@@ -35,6 +35,54 @@ if str(_BACKEND_DIR) not in sys.path:
 
 
 # ---------------------------------------------------------------------------
+# Pre-warm noisy transitive imports.
+#
+# pipecat 0.0.104 imports the stdlib `audioop` module at package-load time,
+# which emits a `DeprecationWarning` under Python 3.11 (audioop is slated
+# for removal in Python 3.13). pyproject.toml has
+# `filterwarnings = ["error", ...]`, so any warning fired during a test
+# becomes an error.
+#
+# Importing the noisy chain HERE (at conftest top level, before pytest's
+# per-test warning filter is installed) lets us silence the warnings once
+# and rely on Python's __warningregistry__ to suppress repeats.
+#
+# Some transformers (5.2) modules also reference `torch` in class-body
+# type annotations and fail at class definition with NameError when torch
+# is absent. We catch BaseException so those lazy-loaded module bodies
+# don't kill conftest import.
+# ---------------------------------------------------------------------------
+import warnings as _warnings
+with _warnings.catch_warnings():
+    _warnings.simplefilter("ignore", DeprecationWarning)
+    _warnings.simplefilter("ignore", PendingDeprecationWarning)
+    _warnings.simplefilter("ignore", UserWarning)
+    for _mod in ("audioop", "pipecat", "server", "gemini_service"):
+        try:
+            __import__(_mod)
+        except BaseException:
+            pass
+
+# freezegun's freeze_time() iterates every imported module's attributes
+# to monkey-patch any datetime references. transformers (5.2) uses lazy
+# loading: touching an attribute triggers a submodule import, and
+# ``transformers.models.eomt.image_processing_eomt`` references
+# ``torch.Tensor`` in a class-body annotation that crashes with NameError
+# when torch is absent. Adding transformers to freezegun's ignore list
+# stops it from probing into the lazy-import chain.
+try:
+    import freezegun as _freezegun
+    _freezegun.configure(extend_ignore_list=[
+        "transformers",
+        "huggingface_hub",
+        "pipecat",
+        "torch",
+    ])
+except Exception:
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Constants used across the test suite. Centralised so individual tests do
 # not invent ad-hoc tenant IDs that drift apart over time.
 # ---------------------------------------------------------------------------
@@ -469,3 +517,18 @@ def _block_unknown_outbound_http(request, monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "send", _guarded_async)
     monkeypatch.setattr(httpx.Client, "send", _guarded_sync)
+
+
+# ---------------------------------------------------------------------------
+# Pre-warm pipecat / server imports.
+#
+# pipecat 0.0.104 imports the stdlib `audioop` module at package load time
+# under Python 3.11, which emits a `DeprecationWarning: 'audioop' is
+# deprecated and slated for removal in Python 3.13`. pyproject.toml has
+# `filterwarnings = ["error", ...]`, so when this warning fires during a
+# test it becomes an error. The warning fires only once per process
+# (Python suppresses repeats via __warningregistry__), so we import the
+# transitive chain at session start — before pytest's warning filter
+# captures per-test warnings — and explicitly swallow it here.
+# ---------------------------------------------------------------------------
+

@@ -68,10 +68,6 @@ filterwarnings = [
     "ignore::DeprecationWarning:google.*",
     "ignore::DeprecationWarning:passlib.*",
     "ignore::PendingDeprecationWarning",
-    # CoverageWarning fires when the suite collects zero items (e.g. when
-    # filtering by a marker that no test carries yet). Treating it as an
-    # error makes early-stage runs unusable; ignore it explicitly.
-    "ignore::coverage.exceptions.CoverageWarning",
 ]
 
 [tool.coverage.run]
