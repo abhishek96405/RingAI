@@ -97,53 +97,50 @@ async def test_repair_membership_requires_auth(client):
     assert response.status_code == 401
 
 
-async def test_repair_membership_creates_missing_memberships(client, two_tenant_setup):
-    """tenant_a calls repair → gets membership to EVERY unowned restaurant in DB.
+async def test_repair_membership_returns_410_gone(client, two_tenant_setup):
+    """The endpoint has been retired after the cross-tenant ownership grant
+    bug. It must now return 410 Gone and refuse to grant any membership.
 
-    This captures current behavior: the endpoint iterates all business
-    collections globally and grants the calling user ownership of any
-    restaurant where they aren't yet a member. See FINDINGS — this is
-    a cross-tenant exposure risk masquerading as a dev convenience.
+    See FINDINGS.md 2026-05-22 — /api/me/repair-membership granted any
+    authenticated caller owner-membership on every restaurant in the DB.
     """
     response = client.post(
         "/api/me/repair-membership",
         headers={"Authorization": "Bearer tenant_a"},
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert TENANT_A_ID in body["repaired"]
+    assert response.status_code == 410
+    assert "repaired" not in response.json()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: /api/me/repair-membership currently grants the calling user ownership "
-        "of EVERY unowned restaurant in the database, including those belonging to "
-        "other tenants. Expected: only restore memberships the user previously had "
-        "(via Clerk org membership lookup or similar)."
-    ),
-)
 async def test_repair_membership_does_not_steal_other_tenants(
     client, two_tenant_with_memberships
 ):
-    """Expected behavior: tenant_a's repair must NOT touch tenant_b's restaurant."""
+    """After the retirement, tenant_a's call cannot touch tenant_b's restaurant —
+    no membership rows are created at all because the route returns 410 before
+    any database write.
+    """
+    import server
+
+    before_b = await server.db.memberships.count_documents(
+        {"user_id": TENANT_A_USER_ID, "restaurant_id": TENANT_B_ID}
+    )
     response = client.post(
         "/api/me/repair-membership",
         headers={"Authorization": "Bearer tenant_a"},
     )
-    body = response.json()
-    assert TENANT_B_ID not in body["repaired"]
+    assert response.status_code == 410
+    after_b = await server.db.memberships.count_documents(
+        {"user_id": TENANT_A_USER_ID, "restaurant_id": TENANT_B_ID}
+    )
+    assert before_b == after_b == 0, "tenant_a gained a membership row on tenant_b"
 
 
-async def test_repair_membership_is_idempotent_for_owned_restaurants(
+async def test_repair_membership_does_not_mutate_existing_memberships(
     client, two_tenant_with_memberships
 ):
-    """For restaurants the user already owns, repair is a no-op.
-
-    Note: this doesn't say `repaired == []` because the buggy global behavior
-    above still grants the calling user access to tenant_b's restaurant.
-    What this test asserts is the narrower invariant: tenant_a's existing
-    membership for TENANT_A_ID is not duplicated.
+    """The 410 path must not insert, update, or delete any existing
+    membership row. tenant_a's pre-existing TENANT_A_ID ownership is
+    untouched.
     """
     import server
 
@@ -159,7 +156,7 @@ async def test_repair_membership_is_idempotent_for_owned_restaurants(
     )
     assert (
         before == after == 1
-    ), "duplicate membership row created for already-owned restaurant"
+    ), "existing membership row was mutated by a 410 response"
 
 
 # ---------------------------------------------------------------------------
