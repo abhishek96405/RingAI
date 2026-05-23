@@ -3,17 +3,30 @@
 Webhook endpoints (POST /api/telnyx/incoming, POST /api/telnyx/sms-inbound,
 POST /api/webhooks/stripe, POST /api/webhooks/square) are explicitly OUT OF
 SCOPE for C3 — they will be covered with full signature verification in C4.
+
+Square + Stripe Connect OAuth tests below use the opaque single-use state
+token flow introduced by the OAuth state-token hotfix.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from tests._constants import TENANT_A_ID, TENANT_B_ID
 
 pytestmark = pytest.mark.integration
+
+
+def _extract_state(connect_url: str) -> str:
+    """Pull the OAuth state query param out of a connect URL."""
+    return parse_qs(urlparse(connect_url).query)["state"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -713,17 +726,28 @@ async def test_send_menu_sms_invokes_helper(
 # ---------------------------------------------------------------------------
 
 
-async def test_square_connect(client, two_tenant_with_memberships):
+async def test_square_connect(client, two_tenant_with_memberships, monkeypatch):
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+
     response = client.get(
         f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_a"},
     )
     assert response.status_code == 200
-    assert "connect_url" in response.json()
-    assert TENANT_A_ID in response.json()["connect_url"]
+    connect_url = response.json()["connect_url"]
+    # Opaque state token must replace the old "state == restaurant_id" leak.
+    assert TENANT_A_ID not in connect_url
+    state = _extract_state(connect_url)
+    assert len(state) >= 32
 
 
-async def test_square_connect_wrong_tenant_403(client, two_tenant_with_memberships):
+async def test_square_connect_wrong_tenant_403(
+    client, two_tenant_with_memberships, monkeypatch
+):
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+
     response = client.get(
         f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_b"},
@@ -732,14 +756,23 @@ async def test_square_connect_wrong_tenant_403(client, two_tenant_with_membershi
 
 
 async def test_square_callback_persists_integration(
-    client, two_tenant_setup, patched_server_db
+    client, two_tenant_with_memberships, patched_server_db, monkeypatch
 ):
-    response = client.get(
-        f"/api/integrations/square/callback?code=AUTH&state={TENANT_A_ID}"
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+
+    connect_resp = client.get(
+        f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
     )
+    assert connect_resp.status_code == 200
+    state = _extract_state(connect_resp.json()["connect_url"])
+
+    response = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
     assert response.status_code == 200
     body = response.json()
     assert body["connected"] is True
+    assert body["restaurant_id"] == TENANT_A_ID
 
     integ = await patched_server_db.integrations.find_one(
         {"provider": "square", "restaurant_id": TENANT_A_ID}, {"_id": 0}
@@ -748,7 +781,55 @@ async def test_square_callback_persists_integration(
 
 
 def test_square_callback_missing_code_400(client):
-    response = client.get(f"/api/integrations/square/callback?state={TENANT_A_ID}")
+    # Missing code is rejected before state validation.
+    response = client.get(f"/api/integrations/square/callback?state=anything")
+    assert response.status_code == 400
+
+
+def test_square_callback_missing_state_400(client):
+    response = client.get("/api/integrations/square/callback?code=AUTH")
+    assert response.status_code == 400
+
+
+def test_square_callback_unknown_state_400(client):
+    response = client.get(
+        "/api/integrations/square/callback?code=AUTH&state=does-not-exist"
+    )
+    assert response.status_code == 400
+
+
+async def test_square_callback_state_is_single_use(
+    client, two_tenant_with_memberships, monkeypatch
+):
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+
+    connect_resp = client.get(
+        f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    state = _extract_state(connect_resp.json()["connect_url"])
+
+    first = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
+    assert first.status_code == 200
+
+    # Replaying the same state token must be rejected.
+    second = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
+    assert second.status_code == 400
+
+
+async def test_square_callback_rejects_state_from_other_provider(
+    client, two_tenant_with_memberships, monkeypatch
+):
+    """A state issued by Stripe Connect must not be redeemable on Square's callback."""
+    monkeypatch.setenv("STRIPE_CLIENT_ID", "ca_test")
+    stripe_resp = client.get(
+        f"/api/integrations/stripe/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    state = _extract_state(stripe_resp.json()["connect_url"])
+
+    response = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
     assert response.status_code == 400
 
 
@@ -758,21 +839,33 @@ def test_square_callback_missing_code_400(client):
 
 
 async def test_stripe_connect_returns_url(
-    client, two_tenant_with_memberships, stripe_sdk_mock
+    client, two_tenant_with_memberships, stripe_sdk_mock, monkeypatch
 ):
+    monkeypatch.setenv("STRIPE_CLIENT_ID", "ca_test")
     response = client.get(
         f"/api/integrations/stripe/connect?restaurant_id={TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_a"},
     )
     assert response.status_code == 200
-    assert "connect_url" in response.json()
+    connect_url = response.json()["connect_url"]
+    assert TENANT_A_ID not in connect_url
+    state = _extract_state(connect_url)
+    assert len(state) >= 32
 
 
 async def test_stripe_callback_success_redirect(
-    client, two_tenant_setup, patched_server_db, stripe_sdk_mock
+    client, two_tenant_with_memberships, patched_server_db, stripe_sdk_mock, monkeypatch
 ):
+    monkeypatch.setenv("STRIPE_CLIENT_ID", "ca_test")
+    connect_resp = client.get(
+        f"/api/integrations/stripe/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert connect_resp.status_code == 200
+    state = _extract_state(connect_resp.json()["connect_url"])
+
     response = client.get(
-        f"/api/integrations/stripe/callback?code=AUTH&state={TENANT_A_ID}",
+        f"/api/integrations/stripe/callback?code=AUTH&state={state}",
         follow_redirects=False,
     )
     assert response.status_code in (302, 307)
@@ -786,7 +879,17 @@ async def test_stripe_callback_success_redirect(
 
 async def test_stripe_callback_error_redirect(client, two_tenant_setup):
     response = client.get(
-        f"/api/integrations/stripe/callback?error=access_denied&state={TENANT_A_ID}",
+        f"/api/integrations/stripe/callback?error=access_denied&state=irrelevant",
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 307)
+    assert "stripe_error=true" in response.headers["location"]
+
+
+async def test_stripe_callback_rejects_invalid_state(client, two_tenant_setup):
+    """Callback with an unknown state must redirect to error, not silently succeed."""
+    response = client.get(
+        f"/api/integrations/stripe/callback?code=AUTH&state=does-not-exist",
         follow_redirects=False,
     )
     assert response.status_code in (302, 307)
@@ -942,3 +1045,133 @@ async def test_refund_order_not_found_404(
         headers={"Authorization": "Bearer tenant_a"},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Square webhook — signature verification + dispatch + idempotency.
+# Hotfix coverage. Full edge-case sweep lives in C4.
+# ---------------------------------------------------------------------------
+
+
+_SQUARE_TEST_KEY = "test-square-signing-key"
+
+
+def _sign_square(
+    notification_url: str, body: bytes, key: str = _SQUARE_TEST_KEY
+) -> str:
+    signed = (notification_url + body.decode("utf-8")).encode("utf-8")
+    return base64.b64encode(
+        hmac.new(key.encode("utf-8"), signed, hashlib.sha256).digest()
+    ).decode("utf-8")
+
+
+def test_square_webhook_503_when_unconfigured(client, monkeypatch):
+    monkeypatch.delenv("SQUARE_WEBHOOK_SIGNATURE_KEY", raising=False)
+    response = client.post("/api/webhooks/square", json={})
+    assert response.status_code == 503
+
+
+def test_square_webhook_401_missing_signature(client, monkeypatch):
+    monkeypatch.setenv("SQUARE_WEBHOOK_SIGNATURE_KEY", _SQUARE_TEST_KEY)
+    response = client.post("/api/webhooks/square", json={"event_id": "ev1"})
+    assert response.status_code == 401
+
+
+def test_square_webhook_401_bad_signature(client, monkeypatch):
+    monkeypatch.setenv("SQUARE_WEBHOOK_SIGNATURE_KEY", _SQUARE_TEST_KEY)
+    response = client.post(
+        "/api/webhooks/square",
+        content=json.dumps({"event_id": "ev1"}).encode("utf-8"),
+        headers={
+            "X-Square-Hmacsha256-Signature": "not-a-real-signature",
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 401
+
+
+async def test_square_webhook_valid_signature_records_event(
+    client, patched_server_db, monkeypatch
+):
+    monkeypatch.setenv("SQUARE_WEBHOOK_SIGNATURE_KEY", _SQUARE_TEST_KEY)
+    body = json.dumps({"event_id": "ev_valid_1", "type": "payment.created"}).encode(
+        "utf-8"
+    )
+    url = "http://testserver/api/webhooks/square"
+    sig = _sign_square(url, body)
+
+    response = client.post(
+        "/api/webhooks/square",
+        content=body,
+        headers={
+            "X-Square-Hmacsha256-Signature": sig,
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"received": True}
+
+    stored = await patched_server_db.webhook_events.find_one(
+        {"provider": "square", "event_id": "ev_valid_1"}, {"_id": 0}
+    )
+    assert stored is not None
+
+
+async def test_square_webhook_duplicate_is_deduped(
+    client, patched_server_db, monkeypatch
+):
+    monkeypatch.setenv("SQUARE_WEBHOOK_SIGNATURE_KEY", _SQUARE_TEST_KEY)
+    body = json.dumps({"event_id": "ev_dup_1", "type": "payment.created"}).encode(
+        "utf-8"
+    )
+    url = "http://testserver/api/webhooks/square"
+    sig = _sign_square(url, body)
+    headers = {
+        "X-Square-Hmacsha256-Signature": sig,
+        "Content-Type": "application/json",
+    }
+
+    first = client.post("/api/webhooks/square", content=body, headers=headers)
+    assert first.status_code == 200
+    second = client.post("/api/webhooks/square", content=body, headers=headers)
+    assert second.status_code == 200
+    assert second.json().get("deduped") is True
+
+
+async def test_square_webhook_oauth_revoked_marks_integration_disconnected(
+    client, patched_server_db, monkeypatch
+):
+    monkeypatch.setenv("SQUARE_WEBHOOK_SIGNATURE_KEY", _SQUARE_TEST_KEY)
+    await patched_server_db.integrations.insert_one(
+        {
+            "provider": "square",
+            "restaurant_id": TENANT_A_ID,
+            "merchant_id": "MERCH_X",
+            "status": "connected",
+        }
+    )
+
+    body = json.dumps(
+        {
+            "event_id": "ev_revoked_1",
+            "type": "oauth.authorization.revoked",
+            "data": {"object": {"merchant_id": "MERCH_X"}},
+        }
+    ).encode("utf-8")
+    url = "http://testserver/api/webhooks/square"
+    sig = _sign_square(url, body)
+
+    response = client.post(
+        "/api/webhooks/square",
+        content=body,
+        headers={
+            "X-Square-Hmacsha256-Signature": sig,
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200
+
+    integ = await patched_server_db.integrations.find_one(
+        {"provider": "square", "merchant_id": "MERCH_X"}, {"_id": 0}
+    )
+    assert integ["status"] == "disconnected"
