@@ -8,6 +8,10 @@ import math
 import logging
 import signal
 import asyncio
+import hmac
+import hashlib
+import base64
+import json
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any, Set
@@ -300,6 +304,8 @@ except ImportError:
     logging.getLogger(__name__).warning("auto_learning_service not available — AI learning disabled")
 
 from slowapi.errors import RateLimitExceeded
+
+from oauth_state_service import issue_oauth_state, consume_oauth_state
 
 try:
     from test_mode import (
@@ -4854,23 +4860,32 @@ async def square_connect(restaurant_id: str = Query(...), user: Dict[str, Any] =
     redirect_uri = os.environ.get("SQUARE_REDIRECT_URI", "")
     if not application_id or not redirect_uri:
         raise HTTPException(status_code=400, detail="Square credentials are not configured")
+    state = await issue_oauth_state(
+        restaurant_id=restaurant_id,
+        user_id=user["id"],
+        provider="square",
+    )
     connect_url = (
         "https://connect.squareup.com/oauth2/authorize"
         f"?client_id={application_id}&scope=ITEMS_READ+ORDERS_READ+PAYMENTS_READ"
-        f"&session=false&state={restaurant_id}&redirect_uri={redirect_uri}"
+        f"&session=false&state={state}&redirect_uri={redirect_uri}"
     )
     return {"connect_url": connect_url}
 
 
 @api_router.get("/integrations/square/callback")
 async def square_callback(code: Optional[str] = None, state: Optional[str] = None):
-    if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing Square authorization response")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing Square authorization code")
+
+    record = await consume_oauth_state(state=state, provider="square")
+    restaurant_id = record["restaurant_id"]
+
     await db.integrations.update_one(
-        {"provider": "square", "restaurant_id": state},
+        {"provider": "square", "restaurant_id": restaurant_id},
         {"$set": {
             "provider": "square",
-            "restaurant_id": state,
+            "restaurant_id": restaurant_id,
             "status": "connected",
             "auth_code": code,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -4878,8 +4893,8 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
         upsert=True,
     )
     for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
-        await _coll.update_one({"id": state}, {"$set": {"square_connected": True}})
-    return {"connected": True, "restaurant_id": state}
+        await _coll.update_one({"id": restaurant_id}, {"$set": {"square_connected": True}})
+    return {"connected": True, "restaurant_id": restaurant_id}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -4901,12 +4916,17 @@ async def stripe_connect(
         "STRIPE_CONNECT_REDIRECT_URI",
         f"{frontend_url}/api/integrations/stripe/callback"
     )
+    state = await issue_oauth_state(
+        restaurant_id=restaurant_id,
+        user_id=user["id"],
+        provider="stripe_connect",
+    )
     connect_url = (
         "https://connect.stripe.com/oauth/authorize"
         f"?response_type=code"
         f"&client_id={client_id}"
         f"&scope=read_write"
-        f"&state={restaurant_id}"
+        f"&state={state}"
         f"&redirect_uri={redirect_uri}"
         f"&stripe_user[business_type]=company"
     )
@@ -4922,17 +4942,30 @@ async def stripe_connect_callback(
     """
     Stripe redirects here after restaurant owner completes Connect onboarding.
     Exchanges the OAuth code for a stripe_account_id and saves to DB.
-    state = restaurant_id
+
+    The `state` is an opaque single-use token previously issued by
+    /integrations/stripe/connect and bound to the requesting user + tenant.
     """
     frontend_url = get_frontend_url()
+    from starlette.responses import RedirectResponse
 
-    if error or not code or not state:
-        logger.warning(f"[Stripe Connect] Callback error: {error} (state={state})")
-        from starlette.responses import RedirectResponse
+    if error or not code:
+        logger.warning(f"[Stripe Connect] Callback error: {error}")
         return RedirectResponse(
             url=f"{frontend_url}/dashboard/integrations?stripe_error=true",
             status_code=302,
         )
+
+    try:
+        record = await consume_oauth_state(state=state, provider="stripe_connect")
+    except HTTPException:
+        logger.warning("[Stripe Connect] Callback rejected: invalid or expired state")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?stripe_error=true",
+            status_code=302,
+        )
+    restaurant_id = record["restaurant_id"]
+
     try:
         response = stripe.OAuth.token(grant_type="authorization_code", code=code)
         stripe_account_id = response.get("stripe_user_id")
@@ -4943,22 +4976,20 @@ async def stripe_connect_callback(
         all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
         for _coll in all_collections:
             await _coll.update_one(
-                {"id": state},
+                {"id": restaurant_id},
                 {"$set": {
                     "stripe_account_id": stripe_account_id,
                     "stripe_connect_status": "active",
                     "stripe_connect_at": datetime.now(timezone.utc).isoformat(),
                 }},
             )
-        logger.info(f"[Stripe Connect] Restaurant {state} connected → {stripe_account_id}")
-        from starlette.responses import RedirectResponse
+        logger.info(f"[Stripe Connect] Restaurant {restaurant_id} connected")
         return RedirectResponse(
             url=f"{frontend_url}/dashboard/integrations?stripe_connected=true",
             status_code=302,
         )
     except Exception as e:
         logger.error(f"[Stripe Connect] Callback failed: {e}", exc_info=True)
-        from starlette.responses import RedirectResponse
         return RedirectResponse(
             url=f"{frontend_url}/dashboard/integrations?stripe_error=true",
             status_code=302,
@@ -5096,8 +5127,74 @@ async def refund_order(
 
 @api_router.post("/webhooks/square")
 async def square_webhook(request: Request):
-    payload = await request.body()
-    logger.info("Received Square webhook", extra={"payload_size": len(payload)})
+    """Square webhook handler with HMAC-SHA256 signature verification + idempotency.
+
+    Verification: Square signs each webhook with HMAC-SHA256 over
+    f"{notification_url}{body}" using the merchant's webhook signature key.
+    The signature arrives in the X-Square-Hmacsha256-Signature header.
+
+    Idempotency: Square retries failed deliveries. We dedupe on event_id,
+    storing seen ids in the webhook_events collection with a 7-day TTL.
+
+    If SQUARE_WEBHOOK_SIGNATURE_KEY is not configured, the endpoint returns
+    503 — refusing to process unsigned traffic is safer than accepting it.
+    """
+    signature_key = os.environ.get("SQUARE_WEBHOOK_SIGNATURE_KEY", "").strip()
+    if not signature_key:
+        logger.warning("square_webhook called but SQUARE_WEBHOOK_SIGNATURE_KEY is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Square webhook handler is not configured. Set SQUARE_WEBHOOK_SIGNATURE_KEY.",
+        )
+
+    body = await request.body()
+    provided_sig = request.headers.get("X-Square-Hmacsha256-Signature", "")
+    if not provided_sig:
+        raise HTTPException(status_code=401, detail="Missing X-Square-Hmacsha256-Signature header")
+
+    # Reconstruct the notification URL from the request rather than trusting an env var.
+    notification_url = str(request.url)
+    signed_payload = (notification_url + body.decode("utf-8")).encode("utf-8")
+    expected_sig = base64.b64encode(
+        hmac.new(signature_key.encode("utf-8"), signed_payload, hashlib.sha256).digest()
+    ).decode("utf-8")
+
+    if not hmac.compare_digest(expected_sig, provided_sig):
+        logger.warning("square_webhook signature mismatch")
+        raise HTTPException(status_code=401, detail="Invalid Square signature")
+
+    try:
+        event = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_id = event.get("event_id") or event.get("id")
+    event_type = event.get("type", "")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Missing event_id in payload")
+
+    existing = await db.webhook_events.find_one({"provider": "square", "event_id": event_id})
+    if existing:
+        return JSONResponse({"received": True, "deduped": True})
+
+    if event_type == "oauth.authorization.revoked":
+        merchant_id = (event.get("data") or {}).get("object", {}).get("merchant_id") or event.get("merchant_id")
+        if merchant_id:
+            await db.integrations.update_many(
+                {"provider": "square", "merchant_id": merchant_id},
+                {"$set": {"status": "disconnected", "disconnected_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            logger.info(f"square_webhook: marked merchant {merchant_id} as disconnected")
+    else:
+        logger.info(f"square_webhook: received unhandled event type {event_type}")
+
+    await db.webhook_events.insert_one({
+        "provider": "square",
+        "event_id": event_id,
+        "event_type": event_type,
+        "received_at": datetime.now(timezone.utc),
+    })
+
     return JSONResponse({"received": True})
 
 
@@ -5432,6 +5529,24 @@ async def websocket_notifications(websocket: WebSocket, restaurant_id: Optional[
         logger.warning(f"WebSocket error: {e}")
     finally:
         await manager.disconnect(websocket)
+
+
+@app.on_event("startup")
+async def _ensure_webhook_idempotency_index():
+    """Create TTL indexes for short-lived security collections.
+
+    webhook_events — Square retries failed deliveries; we dedupe on event_id.
+        Index expires entries 7 days after receipt to bound storage growth.
+    oauth_states — OAuth CSRF tokens issued by /integrations/{square,stripe}/connect.
+        Each document carries its own `expires_at`, so the index uses
+        expireAfterSeconds=0 to remove documents once that timestamp passes.
+    """
+    try:
+        await db.webhook_events.create_index("received_at", expireAfterSeconds=7 * 24 * 60 * 60)
+        await db.oauth_states.create_index("expires_at", expireAfterSeconds=0)
+        logger.info("Security TTL indexes ensured (webhook_events, oauth_states)")
+    except Exception as e:
+        logger.warning(f"Could not create security TTL indexes: {e}")
 
 
 @app.on_event("startup")
