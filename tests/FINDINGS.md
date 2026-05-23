@@ -194,3 +194,72 @@ Severity guide:
 - **Expected:** Sensible default when no config exists.
 - **Suggested fix:** Wrap the call: `delivery_minimum=(config.get("delivery_minimum", 1500) if config else 1500)`. Audit the whole `system_prompt = get_system_prompt(...)` call site for other unguarded `config.get(...)` references.
 - **Test:** captured indirectly — `backend/tests/integration/test_coverage_demo_and_scenarios.py::test_run_scenario_success_for_restaurant_with_seeded_config` succeeds only after a config is seeded.
+
+## 2026-05-23 — `POST /api/webhooks/square` is an unsigned, unhandled stub
+- **File:** `backend/server.py`
+- **Line(s):** 5097-5101 (function `square_webhook`)
+- **Severity:** critical (security — accepts spoofed events; missing event handling)
+- **Symptom:** The route returns `{"received": True}` for ANY request body, with no signature verification, no `x-square-hmacsha256-signature` header check, no event-type dispatch, and no idempotency. Three distinct security bugs in one tiny function:
+  1. **Spoofed events accepted:** A malicious caller can POST arbitrary JSON; the server logs receipt and returns 200. If any downstream code consumes square webhook events from logs/queues, those events cannot be trusted.
+  2. **OAuth revocation ignored:** When a merchant disconnects in Square's UI, Square fires `oauth.authorization.revoked`. The stub ignores it, so the `integrations` collection retains `connected: True` plus tokens that no longer work — calls into Square will fail with stale tokens and the user has no UI indication.
+  3. **Inventory updates ignored:** `inventory.count.updated` events are dropped, so Square-managed POS inventory drifts from the Duuutah AI menu cache.
+- **Expected:** Verify HMAC-SHA256 of `notification_url + payload` against `SQUARE_WEBHOOK_SIGNATURE_KEY`. Reject with 400/403 on mismatch, missing header, or malformed header. Dispatch at minimum `oauth.authorization.revoked` and `inventory.count.updated`. Deduplicate by `event_id`.
+- **Suggested fix:** Replace the stub with full HMAC-SHA256 verification using `hmac.compare_digest`, then dispatch on event type (revocation -> mark integration disconnected; inventory -> bump menu cache). Persist `event_id` in a `webhook_events` collection to dedup replays.
+- **Test:** `backend/tests/webhooks/test_square_webhooks.py::test_square_webhook_*_expected` (xfail strict) and `backend/tests/webhooks/test_square_signature_verification.py::*` (xfail strict)
+
+## 2026-05-23 — OAuth state token is the literal `restaurant_id` (Square + Stripe Connect)
+- **File:** `backend/server.py`
+- **Line(s):** 4850-4882 (`square_connect`, `square_callback`); 4889-4965 (`stripe_connect_callback`)
+- **Severity:** critical (security — RFC 6749 §10.12 violation; CSRF / replay risk)
+- **Symptom:** Both Square and Stripe Connect OAuth flows use the calling business's `restaurant_id` as the OAuth `state` parameter (e.g. `state=tenant_a_restaurant`). State is never stored server-side and never validated against a session-bound nonce. Consequences:
+  - **Predictable:** Any attacker who learns a restaurant_id (UUIDs leak via URLs, error messages, support tickets) can forge a valid state.
+  - **Replayable:** A captured OAuth state has no TTL and no single-use enforcement; the same `code + state` combo completes the OAuth flow repeatedly.
+  - **CSRF gap:** RFC 6749 mandates state must be unguessable AND bound to the user-agent session. Without that binding, an attacker can begin an OAuth flow on their own account and trick a victim into completing it under the victim's session, attaching the attacker's Stripe Connect account to the victim's restaurant_id and redirecting future Stripe payouts.
+- **Expected:** Per RFC 6749 §10.12 and OWASP OAuth guidance: generate a per-request 32-byte cryptographically-random nonce via `secrets.token_urlsafe(32)`, store it in a TTL'd `oauth_state_tokens` collection with `restaurant_id`, `user_id`, `provider`, `created_at`, `expires_at`, `consumed_at` fields. On callback: look up the state, reject if missing/expired/consumed, mark consumed, and use the stored `restaurant_id`.
+- **Suggested fix:** Add `_mint_oauth_state(restaurant_id, user_id, provider) -> str` and `_consume_oauth_state(token, provider) -> Optional[str]` helpers. Replace `state={restaurant_id}` with `state=<minted_token>` in both connect URLs; in both callbacks call `_consume_oauth_state` and reject if it returns None.
+- **Test:** `backend/tests/security/test_oauth_state_token_security.py::test_*_should_*_expected` (xfail strict) and `::test_*_captures_bug` (current)
+
+## 2026-05-23 — `/api/admin/process-reminders` has no admin-role check
+- **File:** `backend/server.py`
+- **Line(s):** 1796-1810 (function `process_reminders_admin`)
+- **Severity:** high (any tenant owner can trigger a global cron job)
+- **Symptom:** The route lives under `/api/admin/` and is intended as a cron-style trigger for the reminder-sending job, but the only dependency is `Depends(get_current_user)` — any authenticated user can call it. By contrast, `/api/admin/cost-analytics` properly checks `user.id == ADMIN_USER_ID` (server.py:4215-4217). The reminders endpoint is missing the same gate.
+- **Expected:** Same admin-id check as `/api/admin/cost-analytics`: return 403 if `user.get("id") != os.environ.get("ADMIN_USER_ID")`. Better: factor into a `require_admin` dependency reused on every admin route.
+- **Suggested fix:** Add a `require_admin` dependency comparing `user["id"]` to `ADMIN_USER_ID`; switch every `/api/admin/*` route to use it.
+- **Test:** `backend/tests/security/test_admin_role_enforcement.py::test_admin_process_reminders_accepts_any_authenticated_user_captures_bug` (current) and `::test_admin_process_reminders_rejects_non_admin_expected` (xfail strict)
+
+## 2026-05-23 — Public menu HTML page renders menu item names without HTML escaping (stored XSS)
+- **File:** `backend/server.py`
+- **Line(s):** 1264-1360 (function `public_menu_page`); f-string template interpolation of `item["name"]`, `item["description"]`, category names
+- **Severity:** high (stored XSS — exploitable against anyone visiting the public menu page)
+- **Symptom:** The public menu HTML page at `GET /menu/{restaurant_id}` builds its HTML by interpolating menu item fields directly with no HTML escaping. A menu item created with `name="<script>alert('xss')</script>"` renders as a working `<script>` tag in the page; any visitor to that public menu URL executes attacker-controlled JavaScript in the Duuutah AI origin. A malicious tenant could plant payloads in their OWN menu and use the public URL as a phishing landing page — or compromise a victim browser that has cookies for *.duuutah.ai.
+- **Expected:** Every interpolated user-controllable field passes through `html.escape()` before being rendered. Long-term: migrate to Jinja2 templates with autoescape=True.
+- **Suggested fix:** Wrap every `item["name"]`, `item["description"]`, and category name in `html.escape(...)` before f-string interpolation. Audit the whole function for other interpolation sites.
+- **Test:** `backend/tests/security/test_input_validation_html_injection.py::test_public_menu_html_renders_unescaped_item_names_captures_bug` (current) and `::test_public_menu_html_escapes_item_names_expected` (xfail strict)
+
+## 2026-05-23 — Stripe webhook crashes (KeyError → 500) on events missing `data.object`
+- **File:** `backend/server.py`
+- **Line(s):** 4703-4704 (function `stripe_webhook`)
+- **Severity:** low (resilience — webhook returns 500 instead of 400)
+- **Symptom:** After signature verification, the route does `event["data"]["object"]` unconditionally. A real Stripe `ping` event or any malformed payload that omits `data` raises `KeyError`, which becomes a 500. Stripe interprets non-2xx responses as delivery failures and retries with exponential backoff; an avalanche of malformed-event retries could pile up in the delivery queue and delay legitimate events.
+- **Expected:** Return 200 (with a `warning` field) or 400 with a clear "malformed event" body when `event["data"]["object"]` is missing. The route should be defensive about input shape.
+- **Suggested fix:** Replace `data = event["data"]["object"]` with `data = event.get("data", {}).get("object")` and short-circuit when data is None.
+- **Test:** `backend/tests/webhooks/test_webhook_payload_edge_cases.py::test_stripe_event_with_missing_data_object_raises_keyerror_captures_bug` (current) and `::test_stripe_event_with_missing_data_object_should_400_expected` (xfail strict)
+
+## 2026-05-23 — Stripe webhook lacks event-id deduplication; replayed checkout events fire side effects every time
+- **File:** `backend/server.py`
+- **Line(s):** 4689-4847 (function `stripe_webhook`)
+- **Severity:** medium (idempotency — duplicate WebSocket notifications + duplicate SMS on event replay)
+- **Symptom:** Stripe's at-least-once delivery semantics means the same event (same `evt_*` id) can arrive multiple times during a transient network blip or worker restart. The webhook never records seen `event_id`s. The DB-level `$set` updates are naturally idempotent (no counter increments), BUT the secondary side effects — WebSocket notification on `checkout.session.completed` order_payment (server.py:4727-4733) and the payment-confirmation SMS (server.py:4736-4759) — re-fire on every replay. Net: a customer can receive 2-5 "payment received" SMS messages for one actual payment, and the restaurant dashboard pings repeatedly for the same order.
+- **Expected:** Persist `event_id` in a dedup table on first receipt; on replay, return 200 immediately without re-running side effects.
+- **Suggested fix:** On every Stripe webhook, check `db.webhook_events.find_one({"event_id": ..., "provider": "stripe"})` before dispatch; insert the event_id on first sight. Add a TTL index on `received_at` (90-day expiry).
+- **Test:** `backend/tests/webhooks/test_webhook_idempotency.py::test_stripe_checkout_replay_does_not_send_second_sms_expected` (xfail strict) and `::test_stripe_invoice_paid_idempotent_on_replay` (passing — DB-level $set is naturally idempotent)
+
+## 2026-05-23 — Stripe webhook accepts future-timestamp signed payloads (replay window bypass)
+- **File:** `backend/server.py`
+- **Line(s):** 4689-4701 (function `stripe_webhook`); relies on `stripe.Webhook.construct_event`
+- **Severity:** low (defence-in-depth — exploit path requires clock skew or NTP attack)
+- **Symptom:** The Stripe SDK's `WebhookSignature.verify_header` checks only `now - ts <= tolerance`, never the symmetric `ts - now <= tolerance`. A signed payload with a far-future timestamp passes the replay-window check and is accepted. Narrow exploit path (requires the attacker to control or skew server clocks via NTP), but for defence-in-depth the route should reject any timestamp more than ±300s from now.
+- **Expected:** Explicit two-sided window check before invoking `construct_event`.
+- **Suggested fix:** Parse `t=<unix>` from the `stripe-signature` header upfront; reject if `abs(time.time() - ts) > 300`.
+- **Test:** `backend/tests/webhooks/test_stripe_signature_verification.py::test_future_timestamp_is_currently_accepted_captures_bug` (current) and `::test_future_timestamp_should_return_400_expected` (xfail strict)
