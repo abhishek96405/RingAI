@@ -1,16 +1,15 @@
-"""Square webhook tests for ``POST /api/webhooks/square`` (server.py:5097).
+"""Square webhook tests for ``POST /api/webhooks/square`` (server.py:5128).
 
-The route under test is currently a stub — it logs the payload size and
-returns ``{"received": True}`` without any signature verification, event
-dispatch, or idempotency. Test layout:
+The route verifies HMAC-SHA256 signatures against
+``SQUARE_WEBHOOK_SIGNATURE_KEY`` (returns 503 if unconfigured, 401 if
+the signature is missing or invalid), dispatches the
+``oauth.authorization.revoked`` event to mark the integration as
+disconnected, and idempotency-checks via the ``webhook_events``
+collection so retries are deduplicated.
 
-- The CURRENT behaviour is captured in passing tests (so a future change
-  that breaks the stub surfaces as a failure).
-- The EXPECTED behaviour (verify signature, handle events, idempotency)
-  is captured in ``@pytest.mark.xfail(strict=True)`` tests so the day the
-  route grows real verification, the xfail flips and we get loud feedback.
+See ``tests/FINDINGS.md`` for the original CRITICAL writeup.
 
-See ``tests/FINDINGS.md`` for the security implications.
+Part of Duuutah AI.
 """
 
 from __future__ import annotations
@@ -24,104 +23,56 @@ from tests._constants import TENANT_A_ID
 pytestmark = [pytest.mark.webhook, pytest.mark.integration]
 
 
-# ---------------------------------------------------------------------------
-# Current behaviour: the stub accepts anything.
-# ---------------------------------------------------------------------------
-
-
-def test_square_webhook_returns_200_for_any_payload(client):
-    r = client.post(
-        "/api/webhooks/square",
-        content=b'{"type": "anything", "data": {}}',
-        headers={"Content-Type": "application/json"},
-    )
-    assert r.status_code == 200
-    assert r.json() == {"received": True}
-
-
-def test_square_webhook_accepts_empty_body(client):
-    r = client.post("/api/webhooks/square", content=b"")
-    assert r.status_code == 200
-
-
-def test_square_webhook_accepts_malformed_json(client):
-    r = client.post(
-        "/api/webhooks/square",
-        content=b"not-json-at-all",
-        headers={"Content-Type": "application/json"},
-    )
-    # Stub never parses the body, so even garbage passes.
-    assert r.status_code == 200
-
-
-def test_square_webhook_accepts_request_with_no_signature(client):
-    """The stub does not enforce ``x-square-hmacsha256-signature``."""
-    r = client.post(
-        "/api/webhooks/square",
-        content=b'{"type": "oauth.authorization.revoked"}',
-        headers={"Content-Type": "application/json"},
-    )
-    assert r.status_code == 200
+_URL = "/api/webhooks/square"
+_FULL_URL = "http://testserver/api/webhooks/square"  # TestClient default
 
 
 # ---------------------------------------------------------------------------
-# Expected behaviour — captured as strict xfail until the route is fixed.
+# Signature enforcement — unsigned / wrong-key requests are rejected.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CRITICAL: /api/webhooks/square accepts unsigned requests. Must verify "
-        "x-square-hmacsha256-signature against SQUARE_WEBHOOK_SIGNATURE_KEY."
-    ),
-)
-def test_square_webhook_rejects_request_without_signature_expected(client):
+def test_square_webhook_rejects_request_without_signature(
+    client, square_webhook_secret
+):
     r = client.post(
-        "/api/webhooks/square",
+        _URL,
         content=b'{"type": "oauth.authorization.revoked", "data": {}}',
         headers={"Content-Type": "application/json"},
     )
-    assert r.status_code in (400, 401, 403)
+    assert r.status_code == 401
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="HIGH: route does not verify signatures, so wrong-signature requests are accepted.",
-)
-def test_square_webhook_rejects_wrong_signature_expected(client, square_signer):
-    body = b'{"type": "oauth.authorization.revoked", "data": {}}'
-    # Forge a signature with a different secret.
+def test_square_webhook_rejects_wrong_signature(client, square_signer):
     from tests.conftest import SquareSigner
 
-    forged = SquareSigner("wrong-key-not-in-env").sign(body)
+    body = b'{"type": "oauth.authorization.revoked", "data": {}}'
+    forged = SquareSigner("wrong-key-not-in-env").sign(body, notification_url=_FULL_URL)
     r = client.post(
-        "/api/webhooks/square",
+        _URL,
         content=body,
         headers={
             "x-square-hmacsha256-signature": forged,
             "Content-Type": "application/json",
         },
     )
-    assert r.status_code in (400, 401, 403)
+    assert r.status_code == 401
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "HIGH: oauth.authorization.revoked is not handled — disconnecting Square in "
-        "Square's UI does not propagate to our integrations record."
-    ),
-)
-async def test_square_oauth_authorization_revoked_disconnects_integration_expected(
-    client, patched_server_db
+# ---------------------------------------------------------------------------
+# Event dispatch — oauth.authorization.revoked disconnects the integration.
+# ---------------------------------------------------------------------------
+
+
+async def test_square_oauth_authorization_revoked_disconnects_integration(
+    client, patched_server_db, square_signer
 ):
     await patched_server_db.integrations.insert_one(
         {
             "id": "integ_square_a",
             "restaurant_id": TENANT_A_ID,
             "provider": "square",
-            "connected": True,
+            "status": "connected",
             "merchant_id": "merch_a",
         }
     )
@@ -135,38 +86,46 @@ async def test_square_oauth_authorization_revoked_disconnects_integration_expect
         },
     }
     body = json.dumps(event).encode()
+    sig = square_signer.sign(body, notification_url=_FULL_URL)
     r = client.post(
-        "/api/webhooks/square",
+        _URL,
         content=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "x-square-hmacsha256-signature": sig,
+            "Content-Type": "application/json",
+        },
     )
     assert r.status_code == 200
     integ = await patched_server_db.integrations.find_one(
         {"id": "integ_square_a"}, {"_id": 0}
     )
-    assert integ["connected"] is False
+    assert integ["status"] == "disconnected"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="HIGH: route has no idempotency, so replayed events would be re-processed.",
-)
-async def test_square_webhook_idempotent_on_replay_expected(client, patched_server_db):
+# ---------------------------------------------------------------------------
+# Idempotency — a replayed event_id is deduplicated.
+# ---------------------------------------------------------------------------
+
+
+async def test_square_webhook_idempotent_on_replay(
+    client, patched_server_db, square_signer
+):
     event = {
         "type": "inventory.count.updated",
         "event_id": "evt_inv_1",
         "data": {"object": {}},
     }
     body = json.dumps(event).encode()
-    headers = {"Content-Type": "application/json"}
+    sig = square_signer.sign(body, notification_url=_FULL_URL)
+    headers = {
+        "x-square-hmacsha256-signature": sig,
+        "Content-Type": "application/json",
+    }
 
-    r1 = client.post("/api/webhooks/square", content=body, headers=headers)
-    r2 = client.post("/api/webhooks/square", content=body, headers=headers)
+    r1 = client.post(_URL, content=body, headers=headers)
+    r2 = client.post(_URL, content=body, headers=headers)
     assert r1.status_code == 200
     assert r2.status_code == 200
-    # Once the route stores event_ids: a second replay should NOT cause a
-    # second side-effect. We assert the (future) event-id collection has
-    # exactly one entry — a meaningful assertion once idempotency lands.
     seen = await patched_server_db["webhook_events"].count_documents(
         {"event_id": "evt_inv_1"}
     )

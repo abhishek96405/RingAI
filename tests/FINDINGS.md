@@ -196,6 +196,7 @@ Severity guide:
 - **Test:** captured indirectly — `backend/tests/integration/test_coverage_demo_and_scenarios.py::test_run_scenario_success_for_restaurant_with_seeded_config` succeeds only after a config is seeded.
 
 ## 2026-05-23 — `POST /api/webhooks/square` is an unsigned, unhandled stub
+**Status:** RESOLVED in commit `12a15e8` (PR #5 hotfix), 2026-05-23. Endpoint now requires HMAC-SHA256 signature verification against `SQUARE_WEBHOOK_SIGNATURE_KEY` (returns 503 if unconfigured, 401 if signature missing or invalid), dispatches `oauth.authorization.revoked` events to mark integrations disconnected, and idempotency-checks via the `webhook_events` collection so retries are deduplicated.
 - **File:** `backend/server.py`
 - **Line(s):** 5097-5101 (function `square_webhook`)
 - **Severity:** critical (security — accepts spoofed events; missing event handling)
@@ -208,6 +209,7 @@ Severity guide:
 - **Test:** `backend/tests/webhooks/test_square_webhooks.py::test_square_webhook_*_expected` (xfail strict) and `backend/tests/webhooks/test_square_signature_verification.py::*` (xfail strict)
 
 ## 2026-05-23 — OAuth state token is the literal `restaurant_id` (Square + Stripe Connect)
+**Status:** RESOLVED in commit `fffc63f` (PR #5 hotfix), 2026-05-23. State tokens are now cryptographically random (`secrets.token_urlsafe(32)`), single-use (atomic `find_one_and_update` with `consumed=False` guard), and bound to issuer (restaurant_id + user_id + provider) with a 10-minute TTL via Mongo index. New module: `backend/oauth_state_service.py`. Google Calendar OAuth was untouched (already uses signed-JWT state).
 - **File:** `backend/server.py`
 - **Line(s):** 4850-4882 (`square_connect`, `square_callback`); 4889-4965 (`stripe_connect_callback`)
 - **Severity:** critical (security — RFC 6749 §10.12 violation; CSRF / replay risk)
@@ -254,6 +256,15 @@ Severity guide:
 - **Expected:** Persist `event_id` in a dedup table on first receipt; on replay, return 200 immediately without re-running side effects.
 - **Suggested fix:** On every Stripe webhook, check `db.webhook_events.find_one({"event_id": ..., "provider": "stripe"})` before dispatch; insert the event_id on first sight. Add a TTL index on `received_at` (90-day expiry).
 - **Test:** `backend/tests/webhooks/test_webhook_idempotency.py::test_stripe_checkout_replay_does_not_send_second_sms_expected` (xfail strict) and `::test_stripe_invoice_paid_idempotent_on_replay` (passing — DB-level $set is naturally idempotent)
+
+## 2026-05-23 — Square webhook 500s on signed non-dict JSON bodies (post-hotfix gap)
+- **File:** `backend/server.py`
+- **Line(s):** 5171-5174 (`square_webhook`, after `json.loads`)
+- **Severity:** medium (resilience — Square will retry on 500, amplifying load)
+- **Symptom:** After the hotfix landed signature verification (commit `12a15e8`), the handler proceeds to `event_id = event.get("event_id") or event.get("id")`. If a correctly-signed body decodes to a non-dict JSON value (`null`, `[]`, a bare string or number), the `.get` call raises `AttributeError: 'NoneType' object has no attribute 'get'` (or similar for list), and FastAPI returns 500. Square treats 5xx as a delivery failure and retries with exponential backoff.
+- **Expected:** Return 400 with a clear "malformed event" body when the decoded payload is not a JSON object.
+- **Suggested fix:** Between the `json.loads` and the `event.get(...)` line, insert `if not isinstance(event, dict): raise HTTPException(status_code=400, detail="Square payload must be a JSON object")`.
+- **Test:** `backend/tests/webhooks/test_webhook_payload_edge_cases.py::test_square_webhook_handles_signed_non_dict_bodies_expected` (xfail strict)
 
 ## 2026-05-23 — Stripe webhook accepts future-timestamp signed payloads (replay window bypass)
 - **File:** `backend/server.py`

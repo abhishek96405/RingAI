@@ -1,12 +1,14 @@
 """Signature verification scenarios for ``POST /api/webhooks/square``.
 
 Square signs ``notification_url + payload`` with the application's webhook
-signature key and sends ``x-square-hmacsha256-signature``. The production
-route is currently a stub (no verification), so every test in this file is
-``xfail(strict=True)`` — the moment verification lands, the xfails flip
-and we get a loud signal that behaviour now matches expectation.
+signature key and sends the base64 HMAC-SHA256 digest in
+``x-square-hmacsha256-signature``. The handler reconstructs the same
+string from ``request.url`` and compares digests with a constant-time
+comparison; any mismatch returns 401.
 
-See ``tests/FINDINGS.md`` for the CRITICAL writeup.
+See ``tests/FINDINGS.md`` for the original CRITICAL writeup.
+
+Part of Duuutah AI.
 """
 
 from __future__ import annotations
@@ -16,14 +18,17 @@ import pytest
 pytestmark = [pytest.mark.webhook, pytest.mark.security]
 
 
-_BODY = b'{"type": "inventory.count.updated", "data": {"object": {}}}'
+_BODY = (
+    b'{"type": "inventory.count.updated",'
+    b' "event_id": "evt_sig_test_1",'
+    b' "data": {"object": {}}}'
+)
 _URL = "/api/webhooks/square"
-_FULL_URL = "https://api.duuutah.example/api/webhooks/square"
+_FULL_URL = "http://testserver/api/webhooks/square"  # TestClient default
 
 
 def test_valid_signature_returns_200(client, square_signer):
-    """A correctly-signed request must always succeed — true today (the stub
-    accepts everything) and required to remain true once verification lands."""
+    """A correctly-signed request is accepted with 200."""
     sig = square_signer.sign(_BODY, notification_url=_FULL_URL)
     r = client.post(
         _URL,
@@ -36,8 +41,7 @@ def test_valid_signature_returns_200(client, square_signer):
     assert r.status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="Square webhook does not verify signatures yet.")
-def test_wrong_secret_rejected_expected(client):
+def test_wrong_secret_rejected(client, square_webhook_secret):
     from tests.conftest import SquareSigner
 
     bad = SquareSigner("wrong-secret").sign(_BODY, notification_url=_FULL_URL)
@@ -49,11 +53,10 @@ def test_wrong_secret_rejected_expected(client):
             "Content-Type": "application/json",
         },
     )
-    assert r.status_code in (400, 401, 403)
+    assert r.status_code == 401
 
 
-@pytest.mark.xfail(strict=True, reason="Square webhook does not verify signatures yet.")
-def test_tampered_body_rejected_expected(client, square_signer):
+def test_tampered_body_rejected(client, square_signer):
     sig = square_signer.sign(_BODY, notification_url=_FULL_URL)
     tampered = _BODY.replace(b"count.updated", b"count.HACKED")
     r = client.post(
@@ -64,17 +67,15 @@ def test_tampered_body_rejected_expected(client, square_signer):
             "Content-Type": "application/json",
         },
     )
-    assert r.status_code in (400, 401, 403)
+    assert r.status_code == 401
 
 
-@pytest.mark.xfail(strict=True, reason="Square webhook does not verify signatures yet.")
-def test_missing_signature_header_rejected_expected(client):
+def test_missing_signature_header_rejected(client, square_webhook_secret):
     r = client.post(_URL, content=_BODY, headers={"Content-Type": "application/json"})
-    assert r.status_code in (400, 401, 403)
+    assert r.status_code == 401
 
 
-@pytest.mark.xfail(strict=True, reason="Square webhook does not verify signatures yet.")
-def test_malformed_signature_header_rejected_expected(client):
+def test_malformed_signature_header_rejected(client, square_webhook_secret):
     r = client.post(
         _URL,
         content=_BODY,
@@ -83,4 +84,4 @@ def test_malformed_signature_header_rejected_expected(client):
             "Content-Type": "application/json",
         },
     )
-    assert r.status_code in (400, 401, 403)
+    assert r.status_code == 401

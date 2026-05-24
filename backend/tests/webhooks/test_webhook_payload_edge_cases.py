@@ -145,23 +145,50 @@ def test_telnyx_sms_event_no_recipients(client, patched_server_db, telnyx_sdk_mo
 
 
 # ---------------------------------------------------------------------------
-# Square — accepts anything (current stub) but must not crash on edges.
+# Square — signed edge-case bodies must be handled gracefully (no 500).
+# An object body with no event_id is rejected with 400 at the missing-
+# event_id check; that's the safe outcome.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        b"",
-        b"[]",
-        b"null",
-        b'{"deeply": {"nested": {"object": {"with": "no-event-shape"}}}}',
-    ],
-)
-def test_square_webhook_survives_edge_bodies(client, body):
+def test_square_webhook_rejects_signed_object_without_event_id(client, square_signer):
+    """A signed JSON object with no event_id is rejected with 400 — never a 500."""
+    body = b'{"deeply": {"nested": {"object": {"with": "no-event-shape"}}}}'
+    sig = square_signer.sign(
+        body, notification_url="http://testserver/api/webhooks/square"
+    )
     r = client.post(
         "/api/webhooks/square",
         content=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "x-square-hmacsha256-signature": sig,
+            "Content-Type": "application/json",
+        },
     )
-    assert r.status_code == 200
+    assert r.status_code == 400
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "MEDIUM: Square webhook 500s on signed non-dict JSON bodies (`null`, `[]`). "
+        "After hotfix 12a15e8 the handler calls event.get(...) without first "
+        "validating that event is a dict. See FINDINGS 2026-05-23."
+    ),
+)
+@pytest.mark.parametrize("body", [b"null", b"[]"])
+def test_square_webhook_handles_signed_non_dict_bodies_expected(
+    client, square_signer, body
+):
+    sig = square_signer.sign(
+        body, notification_url="http://testserver/api/webhooks/square"
+    )
+    r = client.post(
+        "/api/webhooks/square",
+        content=body,
+        headers={
+            "x-square-hmacsha256-signature": sig,
+            "Content-Type": "application/json",
+        },
+    )
+    assert 400 <= r.status_code < 500

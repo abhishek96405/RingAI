@@ -1,20 +1,23 @@
 """OAuth state-token security.
 
-server.py uses ``restaurant_id`` directly as the OAuth state for both
-Square (server.py:4860) and Stripe Connect (server.py:4909). This pattern
-fails RFC 6749 §10.12 (state must be unguessable and single-use):
+Square and Stripe Connect OAuth flows use cryptographically random,
+single-use state tokens (server.py:4863 + 4919, via
+backend/oauth_state_service.py). Tokens are bound to the issuing user +
+tenant + provider, persisted with a 10-minute TTL, and atomically
+consumed by the callback so replays are rejected.
 
-- Predictable: any attacker who knows a restaurant_id can forge a state.
-- No expiry: a captured state can be replayed indefinitely.
-- No single-use: the same state can complete the OAuth flow many times.
-- No CSRF binding: there's no nonce tying state to the caller's session.
+These tests verify the security properties required by RFC 6749 §10.12:
+- State is unguessable (cryptographically random, >=32 chars).
+- State is single-use (replay returns 400 / redirects to error).
+- State is not the bare restaurant_id.
 
-These tests capture the CURRENT behaviour explicitly and the EXPECTED
-behaviour as ``xfail(strict=True)`` so the day the security model is
-hardened the xfails flip and we get a loud signal.
+Part of Duuutah AI.
 """
 
 from __future__ import annotations
+
+import re
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -24,113 +27,72 @@ pytestmark = [pytest.mark.security, pytest.mark.integration]
 
 
 # ---------------------------------------------------------------------------
-# Current behaviour — Square connect returns a URL with state=<restaurant_id>.
+# Square connect — state must be an opaque, unguessable token.
 # ---------------------------------------------------------------------------
 
 
-def test_square_connect_state_is_restaurant_id_captures_bug(
-    client, two_tenant_with_memberships
+def test_square_connect_state_is_opaque_token(
+    client, two_tenant_with_memberships, monkeypatch
 ):
+    """The /connect URL's state param must be an opaque >=32-char token,
+    not the restaurant_id verbatim."""
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+
     r = client.get(
         f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_a"},
     )
     assert r.status_code == 200
     url = r.json()["connect_url"]
-    assert f"state={TENANT_A_ID}" in url
-
-
-def test_square_callback_accepts_predictable_state_captures_bug(
-    client, patched_server_db, two_tenant_with_memberships, mock_square
-):
-    # Pretend the OAuth exchange completed; the callback only needs `code`
-    # and `state` — no nonce check, no session binding.
-    r = client.get(
-        f"/api/integrations/square/callback?code=oauth_code_test&state={TENANT_A_ID}",
-    )
-    assert r.status_code in (
-        200,
-        302,
-    ), f"callback should accept predictable state, got {r.status_code}"
-
-
-# ---------------------------------------------------------------------------
-# Expected behaviour (xfail strict) — state must be cryptographically random.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CRITICAL: OAuth state token equals restaurant_id verbatim. An attacker who "
-        "guesses a restaurant_id can complete an OAuth flow attaching tokens to that "
-        "tenant. State must be a cryptographically-random per-request nonce stored "
-        "server-side with TTL."
-    ),
-)
-def test_square_connect_state_should_be_unguessable_expected(
-    client, two_tenant_with_memberships
-):
-    r = client.get(
-        f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
-        headers={"Authorization": "Bearer tenant_a"},
-    )
-    url = r.json()["connect_url"]
-    # A safe state is at least 32 chars of url-safe base64.
-    import re
 
     state_match = re.search(r"state=([^&]+)", url)
     assert state_match
     state = state_match.group(1)
-    # Expected: state is NOT the restaurant_id; it's an opaque token.
     assert state != TENANT_A_ID
     assert len(state) >= 32
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CRITICAL: OAuth callback does not verify state against a server-side store. "
-        "Any replay of a captured ``state=<restaurant_id>`` succeeds."
-    ),
-)
-def test_square_callback_rejects_replayed_state_expected(
-    client, patched_server_db, two_tenant_with_memberships, mock_square
-):
-    # Call the callback twice with the same state — second one should fail
-    # because state should be single-use.
-    r1 = client.get(f"/api/integrations/square/callback?code=c1&state={TENANT_A_ID}")
-    r2 = client.get(f"/api/integrations/square/callback?code=c2&state={TENANT_A_ID}")
-    assert r1.status_code in (200, 302)
-    assert r2.status_code in (400, 401, 403, 410)
-
-
 # ---------------------------------------------------------------------------
-# Stripe Connect — same state bug pattern.
+# Square callback — state must be single-use; replays are rejected.
 # ---------------------------------------------------------------------------
 
 
-def test_stripe_connect_state_is_restaurant_id_captures_bug(
-    client, two_tenant_with_memberships, mock_stripe
+async def test_square_callback_rejects_replayed_state(
+    client, patched_server_db, two_tenant_with_memberships, monkeypatch
 ):
-    # Stripe connect URL may be returned by an info endpoint or built
-    # inline; we exercise the callback parameters directly here.
-    r = client.get(
-        f"/api/integrations/stripe/connect/callback?code=c1&state={TENANT_A_ID}",
+    """A state token may be redeemed exactly once; the second redemption
+    must be rejected even with otherwise-valid params."""
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+
+    connect = client.get(
+        f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
     )
-    # The callback may 200, 302, or 400/422 depending on the validation
-    # path — what matters is the state itself is the restaurant_id.
-    assert r.status_code != 401
+    assert connect.status_code == 200
+    state = parse_qs(urlparse(connect.json()["connect_url"]).query)["state"][0]
+
+    r1 = client.get(f"/api/integrations/square/callback?code=c1&state={state}")
+    r2 = client.get(f"/api/integrations/square/callback?code=c2&state={state}")
+    assert r1.status_code == 200
+    assert r2.status_code == 400
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CRITICAL: Stripe Connect callback accepts state=restaurant_id; must be opaque nonce.",
-)
-def test_stripe_connect_callback_rejects_predictable_state_expected(
-    client, two_tenant_with_memberships, mock_stripe
+# ---------------------------------------------------------------------------
+# Stripe Connect — callback must reject the bare restaurant_id as state.
+# ---------------------------------------------------------------------------
+
+
+async def test_stripe_connect_callback_rejects_predictable_state(
+    client, two_tenant_with_memberships
 ):
+    """Submitting the bare restaurant_id as state (the old broken pattern)
+    must be rejected — the callback redirects to the error page rather than
+    completing the OAuth handshake."""
     r = client.get(
-        f"/api/integrations/stripe/connect/callback?code=c1&state={TENANT_A_ID}",
+        f"/api/integrations/stripe/callback?code=c1&state={TENANT_A_ID}",
+        follow_redirects=False,
     )
-    assert r.status_code in (400, 401, 403, 410)
+    assert r.status_code in (302, 307)
+    assert "stripe_error=true" in r.headers["location"]
