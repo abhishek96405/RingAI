@@ -1,0 +1,17 @@
+{
+  "name": "reservation_not_order",
+  "description": "Customer books a table; no food order. extract_order_from_transcript should not return any items.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "I'd like to book a table for four for Friday at 7pm."},
+    {"role": "ai", "text": "A table for 4 on Friday at 7pm — your reservation is confirmed. We'll see you then!"},
+    {"role": "customer", "text": "Thank you."}
+  ],
+  "expected": {
+    "order_confirmed": false,
+    "extraction_should_return_none": true,
+    "is_reservation": true
+  }
+}

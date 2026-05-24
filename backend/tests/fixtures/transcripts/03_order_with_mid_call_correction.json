@@ -1,0 +1,25 @@
+{
+  "name": "order_with_mid_call_correction",
+  "description": "Customer starts ordering, then cancels and restarts. Only the final order should be extracted.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "I'd like three Margherita Pizzas for delivery."},
+    {"role": "ai", "text": "Three Margherita Pizzas for delivery. Anything else?"},
+    {"role": "customer", "text": "Wait — cancel that, start over."},
+    {"role": "ai", "text": "Sure, what would you like?"},
+    {"role": "customer", "text": "Just one Chicken Biryani for pickup."},
+    {"role": "ai", "text": "One Chicken Biryani for pickup. Total is $16.99. Sound good?"},
+    {"role": "customer", "text": "Yes."},
+    {"role": "ai", "text": "Your order is confirmed."}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "pickup",
+    "item_count": 1,
+    "item_names": ["Chicken Biryani"],
+    "total_cents": 1699,
+    "must_not_contain": ["Margherita Pizza"]
+  }
+}

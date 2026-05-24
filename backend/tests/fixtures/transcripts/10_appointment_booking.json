@@ -1,0 +1,20 @@
+{
+  "name": "appointment_booking",
+  "description": "Salon appointment booking. Not a food order — extract_order_from_transcript should return None.",
+  "lang": "en",
+  "business_type": "salon",
+  "transcript": [
+    {"role": "ai", "text": "Bella Salon, how can I help?"},
+    {"role": "customer", "text": "Can I book a haircut for tomorrow at 3pm?"},
+    {"role": "ai", "text": "Yes — a Standard Haircut tomorrow at 3pm. What's your name?"},
+    {"role": "customer", "text": "Jane Smith."},
+    {"role": "ai", "text": "Thank you Jane. Your appointment is confirmed for tomorrow at 3pm."},
+    {"role": "customer", "text": "Great, bye."}
+  ],
+  "expected": {
+    "order_confirmed": false,
+    "extraction_should_return_none": true,
+    "is_appointment": true,
+    "expected_service_name": "Standard Haircut"
+  }
+}

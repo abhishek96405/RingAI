@@ -1,0 +1,19 @@
+{
+  "name": "general_questions_only",
+  "description": "Caller only asks operating-hours questions, does not order. Extraction must not invent items.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "What time do you close?"},
+    {"role": "ai", "text": "We close at 10pm tonight."},
+    {"role": "customer", "text": "And do you have vegan options?"},
+    {"role": "ai", "text": "Yes, we have several vegan items including a Garden Salad."},
+    {"role": "customer", "text": "Ok thanks I'll think about it."},
+    {"role": "ai", "text": "Have a great day!"}
+  ],
+  "expected": {
+    "order_confirmed": false,
+    "extraction_should_return_none": true
+  }
+}

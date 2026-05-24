@@ -1,0 +1,22 @@
+{
+  "name": "explicit_total_request",
+  "description": "Customer asks for the total before confirming.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "Two Samosas and one Chicken Biryani for pickup."},
+    {"role": "ai", "text": "Two Samosas and one Chicken Biryani for pickup. Anything else?"},
+    {"role": "customer", "text": "What's the total?"},
+    {"role": "ai", "text": "Two Samosas are $7.98 and one Chicken Biryani is $16.99, so your total is $24.97."},
+    {"role": "customer", "text": "Ok yes confirm that."},
+    {"role": "ai", "text": "Your order is confirmed. ORDER_CONFIRMED"}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "pickup",
+    "item_count": 2,
+    "item_names": ["Samosa", "Chicken Biryani"],
+    "total_cents": 2497
+  }
+}

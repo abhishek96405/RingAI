@@ -1,0 +1,22 @@
+{
+  "name": "simple_single_item_pickup",
+  "description": "Customer orders one Margherita Pizza for pickup. AI confirms.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Thanks for calling Voice Test Kitchen! How can I help?"},
+    {"role": "customer", "text": "Can I get a Margherita Pizza for pickup please?"},
+    {"role": "ai", "text": "One Margherita Pizza for pickup. Anything else?"},
+    {"role": "customer", "text": "No that's it, thanks."},
+    {"role": "ai", "text": "Let me read that back: one Margherita Pizza for pickup. Your total is $14.99. Does that sound right?"},
+    {"role": "customer", "text": "Yes correct."},
+    {"role": "ai", "text": "Your order is confirmed. ORDER_CONFIRMED"}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "pickup",
+    "item_count": 1,
+    "item_names": ["Margherita Pizza"],
+    "total_cents": 1499
+  }
+}

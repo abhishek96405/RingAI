@@ -1,0 +1,24 @@
+{
+  "name": "language_mid_switch",
+  "description": "Customer starts in English, mid-call switches to Telugu, completes order.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "Hi I want to order food."},
+    {"role": "ai", "text": "Sure, what would you like?"},
+    {"role": "customer", "text": "Telugu lo matladachu ah?"},
+    {"role": "ai", "text": "అవును, చెప్పండి."},
+    {"role": "customer", "text": "Rendu Samosa, pickup."},
+    {"role": "ai", "text": "Two Samosas for pickup. Your total is $7.98. Confirm?"},
+    {"role": "customer", "text": "Yes."},
+    {"role": "ai", "text": "Your order is confirmed."}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "pickup",
+    "item_count": 1,
+    "item_names": ["Samosa"],
+    "total_cents": 798
+  }
+}

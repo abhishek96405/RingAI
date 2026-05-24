@@ -1,0 +1,11 @@
+{
+  "name": "empty_transcript",
+  "description": "Pathological case — caller hung up immediately, no transcript content.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [],
+  "expected": {
+    "order_confirmed": false,
+    "extraction_should_return_none": true
+  }
+}

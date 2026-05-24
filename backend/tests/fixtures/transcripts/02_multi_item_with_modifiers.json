@@ -1,0 +1,23 @@
+{
+  "name": "multi_item_with_modifiers",
+  "description": "Customer orders two items, one with modifiers and special instructions.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "I want one Margherita Pizza and two Samosas. No onions on the pizza."},
+    {"role": "ai", "text": "Got it — one Margherita Pizza no onions, two Samosas. For pickup or delivery?"},
+    {"role": "customer", "text": "Pickup please."},
+    {"role": "ai", "text": "Let me read that back: one Margherita Pizza with no onions and two Samosas for pickup. Your total is $22.97. Sound right?"},
+    {"role": "customer", "text": "Yep."},
+    {"role": "ai", "text": "Your order is confirmed."}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "pickup",
+    "item_count": 2,
+    "item_names": ["Margherita Pizza", "Samosa"],
+    "total_cents": 2297,
+    "special_instructions_present": true
+  }
+}
