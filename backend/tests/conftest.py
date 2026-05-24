@@ -864,3 +864,196 @@ def _block_unknown_outbound_http(request, monkeypatch):
 # transitive chain at session start — before pytest's warning filter
 # captures per-test warnings — and explicitly swallow it here.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# C4 — webhook signing helpers + signer fixtures.
+#
+# Every signer is implemented locally in test code (never imported from
+# production). This lets tests round-trip the exact bytes a real provider
+# would send and exercise signature failure paths (wrong secret, tampered
+# body, stale timestamp, missing header) without ever touching the network.
+# ---------------------------------------------------------------------------
+
+
+class StripeSigner:
+    """Stripe-compatible HMAC-SHA256 signer.
+
+    Reproduces the wire format Stripe uses for the ``Stripe-Signature``
+    header: ``t=<unix_ts>,v1=<hex_hmac_sha256(secret, "<ts>.<payload>")>``.
+    """
+
+    def __init__(self, secret: str):
+        self.secret = secret
+
+    def sign(self, payload: bytes, timestamp: int | None = None) -> str:
+        import hmac
+        import hashlib
+        import time
+
+        ts = int(timestamp) if timestamp is not None else int(time.time())
+        signed = f"{ts}.".encode() + payload
+        sig = hmac.new(self.secret.encode(), signed, hashlib.sha256).hexdigest()
+        return f"t={ts},v1={sig}"
+
+
+class TelnyxSigner:
+    """Telnyx-compatible Ed25519 signer.
+
+    Telnyx signs ``f"{timestamp}|".encode() + payload``; the signature is
+    base64-encoded and sent in ``telnyx-signature-ed25519`` with the unix
+    timestamp in ``telnyx-timestamp``. The matching public key is stored in
+    ``TELNYX_PUBLIC_KEY`` (base64). The signer fixture wires both so
+    ``verify_webhook_signature`` accepts what we sign.
+    """
+
+    def __init__(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+
+        self._private_key = Ed25519PrivateKey.generate()
+
+    def public_key_b64(self) -> str:
+        import base64
+        from cryptography.hazmat.primitives import serialization
+
+        raw = self._private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        return base64.b64encode(raw).decode()
+
+    def sign(self, payload: bytes, timestamp: int | None = None) -> tuple[str, str]:
+        import base64
+        import time
+
+        ts = str(int(timestamp) if timestamp is not None else int(time.time()))
+        message = f"{ts}|".encode() + payload
+        signature = base64.b64encode(self._private_key.sign(message)).decode()
+        return signature, ts
+
+
+class SquareSigner:
+    """Square-compatible HMAC-SHA256 signer.
+
+    Square signs ``notification_url + payload`` with the webhook signature
+    key; the base64 digest goes in ``x-square-hmacsha256-signature``. The
+    production code under test does NOT currently verify Square signatures
+    (see FINDINGS), so this signer exists to assert *what should happen*.
+    """
+
+    def __init__(self, secret: str):
+        self.secret = secret
+
+    def sign(self, payload: bytes, notification_url: str = "") -> str:
+        import base64
+        import hmac
+        import hashlib
+
+        msg = notification_url.encode() + payload
+        sig = hmac.new(self.secret.encode(), msg, hashlib.sha256).digest()
+        return base64.b64encode(sig).decode()
+
+
+@pytest.fixture
+def stripe_webhook_secret() -> str:
+    """The webhook secret tests sign with. Matches pyproject-env STRIPE_WEBHOOK_SECRET."""
+    return os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_test_fake")
+
+
+@pytest.fixture
+def stripe_signer(stripe_webhook_secret) -> "StripeSigner":
+    """Sign payloads exactly as Stripe would for ``stripe.Webhook.construct_event``.
+
+    Stripe's SDK is mocked via ``stripe_sdk_mock`` in conftest — the mocked
+    ``construct_event`` ignores signatures and just JSON-decodes the body.
+    Tests that want to verify rejection of *bad* signatures must NOT request
+    ``stripe_sdk_mock`` and must instead let the real Stripe SDK perform
+    verification (which works locally because no network is involved).
+    """
+    return StripeSigner(stripe_webhook_secret)
+
+
+@pytest.fixture
+def telnyx_signer(monkeypatch) -> "TelnyxSigner":
+    """Generate an Ed25519 keypair and wire the public half into the env.
+
+    With this fixture active, ``telnyx_service.verify_webhook_signature``
+    accepts whatever this signer signs, and rejects everything else.
+    """
+    signer = TelnyxSigner()
+    monkeypatch.setenv("TELNYX_PUBLIC_KEY", signer.public_key_b64())
+    return signer
+
+
+@pytest.fixture
+def square_webhook_secret(monkeypatch) -> str:
+    secret = "test_square_signature_key"
+    monkeypatch.setenv("SQUARE_WEBHOOK_SIGNATURE_KEY", secret)
+    return secret
+
+
+@pytest.fixture
+def square_signer(square_webhook_secret) -> "SquareSigner":
+    return SquareSigner(square_webhook_secret)
+
+
+@pytest.fixture
+def force_nonlocal_backend_url(monkeypatch):
+    """Force telnyx webhook handlers to actually run signature verification.
+
+    Both ``/api/telnyx/incoming`` and ``/api/telnyx/sms-inbound`` skip
+    signature verification when ``get_backend_public_url()`` looks local
+    (contains ``localhost`` or ``127.0.0.1``). Tests that want to exercise
+    verification need a non-local URL.
+    """
+    monkeypatch.setenv("BACKEND_PUBLIC_URL", "https://api.duuutah.example")
+
+
+@pytest.fixture
+def real_telnyx_verifier(monkeypatch):
+    """Restore the production ``telnyx_service.verify_webhook_signature``.
+
+    The ``telnyx_sdk_mock`` fixture patches verification to always return
+    True; tests that want to confirm *real* Ed25519 verification rejects
+    forgery must use this fixture instead.
+    """
+    import telnyx_service as _telnyx
+
+    # No-op if no prior monkeypatch is active — but explicit restoration is
+    # cheap and documents intent at the call site.
+    monkeypatch.setattr(
+        _telnyx,
+        "verify_webhook_signature",
+        _telnyx.verify_webhook_signature,
+        raising=False,
+    )
+    return _telnyx.verify_webhook_signature
+
+
+# ---------------------------------------------------------------------------
+# C4 — generic per-collection factory helpers used by tenant-isolation tests.
+# Returns a callable taking ``restaurant_id`` and any field overrides.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def insert_tenant_doc(patched_server_db):
+    """Insert one document into a given collection scoped to a tenant.
+
+    Returns an async callable: ``await insert_tenant_doc(coll_name, restaurant_id, **fields)``.
+    Returns the dict that was inserted (with ``_id`` stripped).
+    """
+    import uuid
+
+    async def _insert(coll_name: str, restaurant_id: str, **fields):
+        doc = {
+            "id": fields.pop("id", f"{coll_name[:6]}_{uuid.uuid4().hex[:12]}"),
+            "restaurant_id": restaurant_id,
+        }
+        doc.update(fields)
+        await patched_server_db[coll_name].insert_one(dict(doc))
+        return doc
+
+    return _insert
