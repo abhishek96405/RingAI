@@ -274,3 +274,40 @@ Severity guide:
 - **Expected:** Explicit two-sided window check before invoking `construct_event`.
 - **Suggested fix:** Parse `t=<unix>` from the `stripe-signature` header upfront; reject if `abs(time.time() - ts) > 300`.
 - **Test:** `backend/tests/webhooks/test_stripe_signature_verification.py::test_future_timestamp_is_currently_accepted_captures_bug` (current) and `::test_future_timestamp_should_return_400_expected` (xfail strict)
+
+## 2026-05-23 — `_transfer_call` references undefined `settings` module → every escalation transfer silently fails
+- **File:** `backend/call_pipeline.py`
+- **Line(s):** 519 (inside `CallSession._transfer_call`)
+- **Severity:** high (escalations to human are silently dropped instead of transferred)
+- **Symptom:** `_transfer_call` builds the Telnyx Call Control API request with `"Authorization": f"Bearer {settings.TELNYX_API_KEY}"`. `settings` is never imported anywhere in `call_pipeline.py` (grep `^(from|import) .*settings` returns no matches; grep `\bsettings\.` returns only line 519). At runtime, `NameError: name 'settings' is not defined` is raised inside the `try` block, caught by the broad `except Exception as e` at line 526, logged as `Transfer to {to_number} failed: name 'settings' is not defined`, and the function returns False. The caller in `_schedule_hangup` (line 495) then treats the transfer as failed and falls through to plain pipeline cancellation — the caller is hung up on instead of being connected to a human. Every escalation flow in production currently behaves this way.
+- **Expected:** Successful Telnyx transfer with the call moved to the escalation phone number.
+- **Suggested fix:** Replace `settings.TELNYX_API_KEY` with `os.environ.get("TELNYX_API_KEY", "")` (consistent with the rest of `call_pipeline.py`, which reads env vars directly). Alternatively, add `from server import settings` if a settings module actually exists — but the codebase pattern is direct env access, so the simpler fix is preferred. Also worth wrapping the `except Exception` to re-raise NameError / AttributeError during local dev so this class of bug surfaces immediately.
+- **Test:** `backend/tests/voice/test_call_pipeline_hangup_paths.py::test_transfer_call_currently_nameerrors_on_undefined_settings_captures_bug` (current, passing) and `::test_transfer_call_handles_telnyx_success_expected` (xfail strict)
+
+## 2026-05-23 — `classify_booking_intent` matches `"tomorrow"` before `"day after tomorrow"`, shadowing the latter
+- **File:** `backend/call_pipeline.py`
+- **Line(s):** 925-938 (relative-word branch inside `classify_booking_intent`)
+- **Severity:** medium (appointment customers asking for "day after tomorrow" get tomorrow's slots instead)
+- **Symptom:** The relative-word branch checks `"today" in customer_text`, `"tomorrow" in customer_text`, then `"day after tomorrow" in customer_text` in that order using substring matching. Because `"tomorrow" in "day after tomorrow"` is True, the tomorrow branch wins before the day-after-tomorrow branch is ever evaluated. Net effect: a salon customer saying "day after tomorrow" gets quoted tomorrow's availability instead. The classifier returns `trigger="relative_tomorrow"` and the wrong date.
+- **Expected:** "day after tomorrow" should resolve to `today + 2 days` with `trigger="relative_day_after"`.
+- **Suggested fix:** Re-order the elif chain so `"day after tomorrow"` is checked BEFORE `"tomorrow"`, or use a regex like `\bday after tomorrow\b` checked first. Simplest patch:
+  ```python
+  if "day after tomorrow" in customer_text:
+      date_str = (today + _td(days=2)).strftime("%Y-%m-%d")
+      date_confidence = 0.85
+      date_trigger = "relative_day_after"
+  elif "today" in customer_text:
+      ...
+  elif "tomorrow" in customer_text:
+      ...
+  ```
+- **Test:** `backend/tests/voice/test_classify_booking_intent.py::test_day_after_tomorrow_phrase_currently_matches_tomorrow_first_captures_bug` (current, passing) and `::test_day_after_tomorrow_should_resolve_two_days_out_expected` (xfail strict)
+
+## 2026-05-23 — `dispatch_order_if_ready` does not reset `_order_dispatched` after extraction failure → blocks future retries
+- **File:** `backend/call_pipeline.py`
+- **Line(s):** 533-573 (function `dispatch_order_if_ready`; failing branch at the `for/else` clause around line 569-573)
+- **Severity:** medium (legitimate orders that just-failed-to-extract-on-first-attempt cannot be retried within the same call)
+- **Symptom:** The function sets `self._order_dispatched = True` at line 537 (entry guard intent), then if the in-memory order has no items it runs an extraction retry loop. When all `max_retries` attempts fail (the `else` branch of `for…else` at line 569-573), it returns False *without* resetting `_order_dispatched` to False. A subsequent call to `dispatch_order_if_ready` from the disconnect handler or a later signal will hit the entry guard at line 534 (`if self._order_dispatched: ... return False`) and skip extraction entirely. The call ends with no order dispatched even though the transcript may now contain enough context to extract successfully.
+- **Expected:** When extraction fails after max_retries, `_order_dispatched` should be reset to False so future dispatch attempts within the same call can succeed.
+- **Suggested fix:** Add `self._order_dispatched = False` immediately before the `return False` in the for/else branch (around line 572). Same fix should be applied to the order_type-mismatch branch (line 540) which already does this correctly — confirming this is a copy-paste-missed-the-reset, not a deliberate design.
+- **Test:** `backend/tests/voice/test_call_pipeline_error_paths.py::test_dispatch_with_no_items_and_extraction_returns_none_captures_bug` (current, passing) and `::test_dispatch_failure_should_allow_future_retry_expected` (xfail strict)

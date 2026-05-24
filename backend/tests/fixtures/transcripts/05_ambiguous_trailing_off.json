@@ -1,0 +1,16 @@
+{
+  "name": "ambiguous_trailing_off",
+  "description": "Customer trails off without confirming. AI never says ORDER_CONFIRMED. Extraction should return None (no confirmed order).",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "Yeah hi I was thinking maybe a pizza or maybe a..."},
+    {"role": "ai", "text": "We have Margherita Pizza, Chicken Biryani, and Samosa. Which one?"},
+    {"role": "customer", "text": "Hmm let me think actually I gotta go bye"}
+  ],
+  "expected": {
+    "order_confirmed": false,
+    "extraction_should_return_none": true
+  }
+}

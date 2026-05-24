@@ -1,0 +1,22 @@
+{
+  "name": "telugu_order",
+  "description": "Entire order conducted in Telugu. Customer orders Chicken Biryani for pickup.",
+  "lang": "te",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "నమస్తే, Voice Test Kitchen నుండి మాట్లాడుతున్నాను. మీరు ఏం ఆర్డర్ చేయాలనుకుంటున్నారు?"},
+    {"role": "customer", "text": "ఒక Chicken Biryani కావాలి. Pickup చేస్తాను."},
+    {"role": "ai", "text": "Ok — ఒక Chicken Biryani for pickup. మరేమైనా కావాలా?"},
+    {"role": "customer", "text": "వద్దు, అదే."},
+    {"role": "ai", "text": "మీ total $16.99. confirm చేస్తారా?"},
+    {"role": "customer", "text": "Yes confirm."},
+    {"role": "ai", "text": "Your order is confirmed."}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "pickup",
+    "item_count": 1,
+    "item_names": ["Chicken Biryani"],
+    "total_cents": 1699
+  }
+}

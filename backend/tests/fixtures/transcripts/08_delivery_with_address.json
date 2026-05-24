@@ -1,0 +1,22 @@
+{
+  "name": "delivery_with_address",
+  "description": "Customer orders delivery, provides address.",
+  "lang": "en",
+  "business_type": "restaurant",
+  "transcript": [
+    {"role": "ai", "text": "Voice Test Kitchen, how can I help?"},
+    {"role": "customer", "text": "I want delivery please. One Margherita Pizza."},
+    {"role": "ai", "text": "Sure — what's the delivery address?"},
+    {"role": "customer", "text": "1234 Elm Street, Apartment 5B, Austin Texas 78704."},
+    {"role": "ai", "text": "Got it. One Margherita Pizza delivered to 1234 Elm Street Apt 5B Austin TX 78704. Total with delivery is $18.99. Confirm?"},
+    {"role": "customer", "text": "Yes confirm."},
+    {"role": "ai", "text": "Your order is confirmed."}
+  ],
+  "expected": {
+    "order_confirmed": true,
+    "order_type": "delivery",
+    "item_count": 1,
+    "item_names": ["Margherita Pizza"],
+    "delivery_address_present": true
+  }
+}
