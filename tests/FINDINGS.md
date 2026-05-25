@@ -311,3 +311,91 @@ Severity guide:
 - **Expected:** When extraction fails after max_retries, `_order_dispatched` should be reset to False so future dispatch attempts within the same call can succeed.
 - **Suggested fix:** Add `self._order_dispatched = False` immediately before the `return False` in the for/else branch (around line 572). Same fix should be applied to the order_type-mismatch branch (line 540) which already does this correctly — confirming this is a copy-paste-missed-the-reset, not a deliberate design.
 - **Test:** `backend/tests/voice/test_call_pipeline_error_paths.py::test_dispatch_with_no_items_and_extraction_returns_none_captures_bug` (current, passing) and `::test_dispatch_failure_should_allow_future_retry_expected` (xfail strict)
+
+## 2026-05-24 — `useWebSocketNotifications` logs caller's restaurant_id and full URL to `console.log` on every connect/reconnect (info-leak / log noise)
+- **File:** `frontend/src/hooks/useWebSocketNotifications.ts`
+- **Line(s):** 66 (connect), 73 (open), 128 (disconnect), 134 (reconnect scheduling)
+- **Severity:** low (info-leak via browser devtools / external log shippers; constant noise in production console)
+- **Symptom:** Each connect/open/close/reconnect emits `console.log("[WS] ...", url, restaurant_id, code, reason)`. The URL contains the active tenant's `restaurant_id` query param, and the codepath fires on every reconnect attempt (every 5s by default after a drop). On a noisy mobile network this produces thousands of console lines per session, all containing tenant identifiers.
+- **Expected:** Either remove the logs entirely or gate behind `import.meta.env.DEV`. Tenant identifiers should not be unconditionally written to `console.log` in production.
+- **Suggested fix:**
+  ```ts
+  const log = (...args: unknown[]) => { if (import.meta.env.DEV) console.log("[WS]", ...args); };
+  // replace each console.log with log(...)
+  ```
+- **Test:** `frontend/src/test/hooks/useWebSocketNotifications.test.tsx` (covered indirectly by the test that verifies URL composition).
+
+## 2026-05-24 — `DashboardLayout` logs admin-detection state to `console.log` on every render (info-leak)
+- **File:** `frontend/src/components/layout/DashboardLayout.tsx`
+- **Line(s):** 83
+- **Severity:** low (info-leak; also produces console noise on every dashboard render)
+- **Symptom:** `console.log("Admin debug:", { ADMIN_CLERK_ID, userId: user?.id, match: user?.id === ADMIN_CLERK_ID });` runs on every render of the layout. This exposes the configured `VITE_ADMIN_CLERK_ID` (an admin Clerk user ID) and the current user's Clerk user ID to the browser console — easily scraped by any browser extension or external log shipper.
+- **Expected:** Debug log should be removed (or gated behind `import.meta.env.DEV`). Admin status should not be unconditionally written to `console.log` in production.
+- **Suggested fix:** Delete line 83 outright. The flag `isAdmin` is already in component state for use; there is no need to log the comparison.
+- **Test:** `frontend/src/test/components/layout/DashboardLayout.test.tsx` (rendering the dashboard triggers the log).
+
+## 2026-05-24 — `AppSessionContext.refreshSession` has no in-flight guard; concurrent calls double-fire and may clobber the active restaurant id
+- **File:** `frontend/src/context/AppSessionContext.tsx`
+- **Line(s):** 124-160 (`refreshSession`)
+- **Severity:** medium (race condition; surfaced via flaky test setup before the mock-clerk memoization fix)
+- **Symptom:** `refreshSession` has no in-flight guard. If `setActiveRestaurant` (which updates state and triggers a re-render) and the auth/effect-driven bootstrap fire near-simultaneously, two `bootstrapSession()` calls go in parallel. The one that resolves last wins, even if it has stale params, which can flip `localStorage.ringai.activeRestaurantId` back to a previously-active tenant or null. Reproducible in tests when `useAuth().getToken` changes identity per render (we saw 400+ bootstrap calls in a single render cycle before we memoized the mock).
+- **Expected:** Either (a) maintain a `refreshing` ref and ignore re-entrant calls, or (b) cancel an in-flight bootstrap when a new one starts (e.g. AbortController).
+- **Suggested fix:**
+  ```ts
+  const inFlight = useRef<Promise<BootstrapPayload | null> | null>(null);
+  const refreshSession = useCallback(async (prefId = null) => {
+    if (inFlight.current) return inFlight.current;
+    const p = (async () => { /* existing body */ })();
+    inFlight.current = p;
+    try { return await p; } finally { inFlight.current = null; }
+  }, [/*...*/]);
+  ```
+- **Test:** `frontend/src/test/context/AppSessionContext.test.tsx::refreshSession re-fetches /api/me/bootstrap` (currently passing; was the reproducer for the original 400-fire bug — fixed in the mock but the prod race is still possible).
+
+## 2026-05-24 — `OrdersPage` fetches three pages with magic-number guards; never paginates past 300 rows
+- **File:** `frontend/src/pages/dashboard/OrdersPage.tsx`
+- **Line(s):** 41-54 (`fetchOrders`)
+- **Severity:** medium (data integrity; orders past page 3 are silently dropped from the view)
+- **Symptom:** `fetchOrders` runs at most 3 sequential `getCalls` requests (page=1 COMPLETED + page=1 ESCALATED, then page=2 and page=3 COMPLETED, each conditional on the previous response's `pages` field). A restaurant with >300 completed orders that have `order_json.items` will see only the most recent ~300 in the Orders page; older orders are invisible until the operator changes the filter. No UX hint that data is truncated.
+- **Expected:** Paginate properly: either server-side (request page N until `pages` is reached, with a hard upper cap and a "Showing N of M" footer) or client-side with a "Load more" button.
+- **Suggested fix:** Convert to a real paginated list with a `[page, setPage]` state and a "Next / Previous" footer, matching `CallsPage`'s pattern. Limit `getCalls` to `limit=20` per page.
+- **Test:** `frontend/src/test/pages/dashboard/OrdersPage.test.tsx::renders rows when calls with order data are returned` (currently asserts a single row; the 300-row truncation is not directly tested because the test fixtures are small).
+
+## 2026-05-24 — `DashboardHome` polls analytics every 30s without backing off on failure; toast.error fires on every retry
+- **File:** `frontend/src/pages/dashboard/DashboardHome.tsx`
+- **Line(s):** 111-122 (the `useEffect` setting up the interval and visibility listener)
+- **Severity:** low (resource waste; UX noise — error toast fires on every retry)
+- **Symptom:** The dashboard polls `/analytics/summary` every 30s plus every `visibilitychange -> visible`. On a 5xx (auth blip, restart, etc.) the toast `Failed to load dashboard data` fires every 30s without backoff. A tab left open during a server restart will spam the user with error toasts.
+- **Expected:** Either (a) exponential backoff after the first failure, or (b) collapse repeated identical error toasts (sonner has `id`/`description` dedup options), or (c) suppress toast on failed polls and only surface errors on user-initiated refresh.
+- **Suggested fix:** Convert to a `useQuery({ queryKey, queryFn, refetchInterval: 30_000, retry: 2 })` via the existing `@tanstack/react-query` QueryClient, and suppress toasts on background refetch failures (only fire on the first manual fetch).
+- **Test:** `frontend/src/test/pages/dashboard/DashboardHome.test.tsx::recovers (renders the layout) when the analytics request fails` (verifies the failure path renders cleanly; backoff is not currently tested).
+
+## 2026-05-24 — `sanitizeRestaurantId` accepts the literal strings `"null"` / `"undefined"` from corrupted localStorage; defensive code masks an upstream bug
+- **File:** `frontend/src/lib/api.ts`
+- **Line(s):** 34-49 (`sanitizeRestaurantId`, `getRestaurantId`, `setRestaurantId`)
+- **Severity:** low (defensive code that suggests an underlying past bug; the sanitization for sentinel strings would be unnecessary if the corruption couldn't happen in the first place)
+- **Symptom:** Both `getRestaurantId` and `setRestaurantId` route their inputs through `sanitizeRestaurantId`, which explicitly checks for the strings `"null"` and `"undefined"`. This implies that somewhere upstream a `String(restaurantId)` or template literal was producing those strings instead of clearing the key. The defensive coding masks the original source.
+- **Expected:** The producer (callsite that wrote `"null"` to localStorage) should be identified and fixed. Once fixed, the sanitization can be simplified to just `trim()`-and-check-empty.
+- **Suggested fix:** Add a `console.warn(...)` inside `sanitizeRestaurantId` when it sees `"null"`/`"undefined"`, gated on `import.meta.env.DEV`, to surface the producing callsite during dev. Once no warnings fire in dev for a week, the sentinel checks can be removed.
+- **Test:** `frontend/src/test/lib/api.test.ts::setRestaurantId removes the key when given the string 'null'` and `...'undefined'` (currently captures the defensive behavior; the suggested warning is not yet present).
+
+## 2026-05-24 — Test infra: jsdom v20 missing `hasPointerCapture` / `setPointerCapture` shims required by Radix UI Select
+- **File:** `frontend/src/test/setup.ts` (now fixed)
+- **Severity:** test-infra only (not a production bug; recorded for future test-author awareness)
+- **Symptom:** When a test calls `userEvent.click()` on a `<SelectTrigger>` rendered by `@radix-ui/react-select` under jsdom v20, Radix dispatches pointer events that call `target.hasPointerCapture(pointerId)`. jsdom v20 doesn't implement Pointer Events at all, so the call throws `TypeError: target.hasPointerCapture is not a function`.
+- **Expected:** Tests should be able to drive Radix Select dropdowns. The shim should live in shared setup so individual tests don't reinvent it.
+- **Suggested fix (already applied in C6):** Add the three Pointer-Events methods (`hasPointerCapture` -> `() => false`, `setPointerCapture`/`releasePointerCapture` -> no-op `vi.fn()`) to `HTMLElement.prototype` if not present, in `src/test/setup.ts`.
+- **Test:** `frontend/src/test/pages/dashboard/CallsPage.test.tsx::filters by status through the dropdown` (would crash without the shim).
+
+## 2026-05-24 — Mock `@clerk/clerk-react` must memoize hook results to avoid infinite re-renders in `AppSessionContext`
+- **File:** `frontend/src/test/utils/mock-clerk.tsx` (now fixed); related production-side risk in `frontend/src/context/AppSessionContext.tsx:116`
+- **Severity:** test-infra (immediate) / low-prod (latent brittleness)
+- **Symptom:** A naive mock of `useAuth()` that returns `{ getToken: vi.fn(...) }` produces a fresh `getToken` reference on every render. `AppSessionContext.tsx` lists `getToken` as a `useEffect` dep (line 116, depending on `[authLoaded, isSignedIn, getToken]`), so the effect re-runs every render, which calls `setTokenResolved(false)` -> re-render -> repeat. We observed 400+ bootstrap calls in a single test render before adding `React.useMemo` to the mock. The same pattern would bite a real Clerk integration if Clerk ever changed its hook to return a non-stable `getToken`.
+- **Expected:** Either (a) `AppSessionContext` should not list `getToken` as an effect dep (replace with a ref), or (b) the mock should always return stable references. We chose (b) for the test mock; (a) is the more robust prod fix.
+- **Suggested fix in prod:**
+  ```ts
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
+  // then call getTokenRef.current() inside the effect, and drop getToken from the dep array
+  ```
+- **Test:** `frontend/src/test/context/AppSessionContext.test.tsx::refreshSession re-fetches /api/me/bootstrap` (was the reproducer; mock memoization fixed the test, but the underlying brittleness in prod code remains worth flagging — see also the related race-condition finding above).
