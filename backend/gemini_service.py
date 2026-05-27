@@ -318,6 +318,7 @@ class LiveOrder:
     confirmed_at: Optional[str] = None
     kitchen_order_id: str = ""
     state_history: List[Dict] = field(default_factory=list)
+    dropped_items: List[str] = field(default_factory=list)
 
     def transition(self, new_state: OrderState, reason: str = ""):
         self.state_history.append({
@@ -457,6 +458,7 @@ JSON:"""
         menu_item = menu_index.find(name)
         if not menu_item:
             logger.warning(f"Item '{name}' not on menu — skipped")
+            order.dropped_items.append(name)
             continue
         order.items.append(OrderItem(
             name=menu_item["name"],
@@ -1964,7 +1966,17 @@ async def send_order_sms(
     except Exception:
         eta_line = f"\nReady in ~{eta_minutes} min ({order_type})"
 
+    # Prepend a notice if any items were dropped due to not being on the menu
+    dropped_notice = ""
+    if order.dropped_items:
+        dropped_list = ", ".join(order.dropped_items)
+        dropped_notice = (
+            f"Note: We don't have {dropped_list} on our menu, so it wasn't included. "
+            f"Please call back if you'd like to add something else.\n\n"
+        )
+
     body = (
+        f"{dropped_notice}"
         f"{name_line}Your {restaurant_name} order:\n\n"
         + "\n".join(lines)
         + f"\n\nTotal: {total}"
