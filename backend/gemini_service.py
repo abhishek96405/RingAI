@@ -871,30 +871,6 @@ def generate_menu_examples(menu_index: MenuIndex) -> str:
                 wrong_item = suggestion
                 break
 
-    # Find a partial-match scenario: menu item with 3+ words → drop middle word(s)
-    # E.g. "Veg Cooker Pulav" → "Veg Pulav" (the way customers casually say it)
-    #      "Chicken Dum Biryani" → "Chicken Biryani"
-    partial_match = None
-    partial_match_item = None
-    for _item in items:
-        if not _item.get("available", True):
-            continue
-        _w = _item["name"].split()
-        if len(_w) >= 3:
-            partial_match = f"{_w[0]} {_w[-1]}"
-            partial_match_item = _item["name"]
-            break
-
-    partial_match_example = ""
-    if partial_match and partial_match_item:
-        partial_match_example = f"""
-EXAMPLE 5 — Partial match (CLARIFY before adding, never silently expand):
-Customer: "I want one {partial_match}"
-You: "We have {partial_match_item} — is that what you mean?"
-[After customer confirms] You: "Got it, one {partial_match_item}. Anything else?"
-[Reason: "{partial_match}" overlaps with "{partial_match_item}" but isn't the EXACT menu name. The customer might mean something else. ALWAYS ask before adding. Never silently expand a short customer term to a longer menu name.]
-"""
-
     return f"""
 ═══════════════════════════
 BEHAVIORAL EXAMPLES — FOLLOW EXACTLY
@@ -916,18 +892,9 @@ Customer: "I want {real_name.split()[0]} [different preparation not on menu]"
 You: "I don't see that on our menu. We do have {real_name} for {real_price} — would that work?"
 [Reason: Even if it sounds similar, only confirm items word-for-word from the menu]
 
-EXAMPLE 4 — Batched order with one item off-menu (REJECT the bad item FIRST, never acknowledge the batch with "Got it"):
-Customer: "Let me get one {real_name}, one {real_name2}, and two {wrong_item}."
-You: "Hold on — I don't see {wrong_item} on our menu. The {real_name} and {real_name2} I've got. Want to swap {wrong_item} for something else, or skip it?"
-[Reason: When a customer batches items, validate EACH one against the menu BEFORE saying "Got it". An off-menu item in the middle of a valid batch must be addressed first — never silently dropped, never accepted.]
-{partial_match_example}
 NEVER DO THIS:
 Customer: "Do you have {wrong_item}?"
 You: "Yes, we have {wrong_item} for $X.XX." ← HALLUCINATION — never confirm unlisted items
-
-NEVER DO THIS EITHER:
-Customer: "I want a {real_name}, a {real_name2}, and two {wrong_item}."
-You: "Got it — one {real_name}, one {real_name2}, and two {wrong_item}!" ← FAILED MENU CHECK on {wrong_item}. You must reject {wrong_item} before acknowledging the others.
 """
 
 # ---------------------------------------------------------------------------
@@ -974,214 +941,6 @@ def calculate_is_open(operating_hours: Optional[Dict], restaurant_timezone: str 
     except Exception:
         return True
 
-def _build_language_section(lang: str, restaurant_name: str) -> str:
-    """
-    Returns a LANGUAGE section to inject into the system prompt for non-English calls.
-    Returns empty string for English so the prompt is byte-identical to baseline.
-
-    The section sits among the other prompt blocks (not appended at the end as a
-    "FINAL OVERRIDE"). It's deliberately concise — Gemini's recency bias means long
-    blocks dominate, so we keep this short and let the menu/protocol sections that
-    surround it do the heavy lifting.
-    """
-    if lang == "en":
-        return ""
-
-    if lang == "te":
-        return f"""
-═══════════════════════════
-LANGUAGE — TELUGU (తెలుగు)
-═══════════════════════════
-This caller chose Telugu from the language menu. Speak Telugu naturally,
-the way a real bilingual employee at an Indian restaurant in the US would
-— with natural English code-mixing, NOT pure Sanskritized Telugu.
-
-CODE-MIXING (do this — it sounds natural):
-- English for menu items: "Chicken Biryani", "Mango Lassi", "Gulab Jamun"
-- English for business words: "order", "pickup", "delivery", "confirm",
-  "cancel", "add", "address", "name", "minutes", "total"
-- Telugu for connectives, greetings, questions, acknowledgments
-
-NATURAL EXAMPLES — this is how real bilingual people actually speak:
-✓ "మీ order confirm చేస్తాను."
-✓ "ఒక Chicken Biryani add చేస్తున్నాను."
-✓ "Pickup కోసమా delivery కోసమా?"
-✓ "Address చెప్తారా please?"
-✓ "ఇంకా ఏమైనా order చేస్తారా?"
-✓ "మీ name చెప్తారా?"
-✓ "Total $24.50. Twenty minutes లో ready అవుతుంది."
-✓ "మళ్ళీ చెప్తారా please?" (when input is garbled)
-
-DO NOT:
-✗ Sanskritize Telugu — "Pickup కోసమా?" not "తీసుకువెళ్ళటానికి?"
-✗ Use Roman script for Telugu words — use Telugu script
-✗ Transliterate menu items — keep "Chicken Biryani" not "చికెన్ బిర్యానీ"
-
-STAY IN TELUGU FOR THE ENTIRE CALL:
-Even if the caller asks mid-call to switch languages ("can you speak
-English?", "Hindi lo matlaadu"), DO NOT switch. Reply in Telugu:
-"Sorry, నేను ఈ call లో Telugu లో మాత్రమే help చేయగలను. Hang up చేసి
-మళ్ళీ call చేస్తే language menu లో English select చేయవచ్చు."
-Then continue in Telugu.
-
-ESCALATE_TO_HUMAN is a literal English token — say it as English at the
-end of your Telugu sentence when escalating. It's a backend signal.
-"""
-
-    if lang == "hi":
-        return f"""
-═══════════════════════════
-LANGUAGE — HINDI (हिंदी)
-═══════════════════════════
-This caller chose Hindi from the language menu. Speak Hindi naturally,
-the way a real bilingual employee at an Indian restaurant in the US would
-— with natural English code-mixing, NOT pure Sanskritized Hindi.
-
-CODE-MIXING (do this — it sounds natural):
-- English for menu items: "Chicken Biryani", "Mango Lassi", "Gulab Jamun"
-- English for business words: "order", "pickup", "delivery", "confirm",
-  "cancel", "add", "address", "name", "minutes", "total"
-- Hindi for connectives, greetings, questions, acknowledgments
-
-NATURAL EXAMPLES:
-✓ "आपका order confirm हो गया।"
-✓ "एक Chicken Biryani add कर रहा हूँ।"
-✓ "Pickup के लिए या delivery के लिए?"
-✓ "Address बता दीजिए please।"
-✓ "और कुछ order करना है?"
-✓ "आपका name क्या है?"
-✓ "Total $24.50. बीस minutes में ready हो जाएगा।"
-✓ "फिर से बता सकते हैं please?" (when input is garbled)
-
-DO NOT:
-✗ Sanskritize Hindi — "आदेश पुष्ट" sounds robotic, use "order confirm"
-✗ Use Roman script for Hindi — use Devanagari
-✗ Transliterate menu items — keep "Chicken Biryani" not "चिकन बिरयानी"
-
-STAY IN HINDI FOR THE ENTIRE CALL:
-Even if the caller asks mid-call to switch languages, DO NOT switch.
-Reply in Hindi: "Sorry, मैं इस call में सिर्फ Hindi में help कर सकता हूँ।
-आप hang up कर के दोबारा call कीजिए, language menu में English select
-कर सकते हैं।" Then continue in Hindi.
-
-ESCALATE_TO_HUMAN is a literal English token — say it as English at the
-end of your Hindi sentence when escalating. It's a backend signal.
-"""
-
-    if lang == "es":
-        return f"""
-═══════════════════════════
-LANGUAGE — SPANISH (Español)
-═══════════════════════════
-This caller chose Spanish from the language menu. Speak Spanish naturally,
-the way a real bilingual employee at a US restaurant would.
-
-CODE-MIXING (do this — it sounds natural):
-- English for menu items: "Chicken Biryani", "Mango Lassi" — never translate
-- English is fine for some business words: "pickup", "delivery"
-- Spanish for connectives, greetings, questions
-
-NATURAL EXAMPLES:
-✓ "¿Es para pickup o delivery?"
-✓ "Voy a agregar un Chicken Biryani a su orden."
-✓ "¿Me da su dirección por favor?"
-✓ "¿Algo más?"
-✓ "¿Su nombre?"
-✓ "Su total es $24.50. Estará listo en veinte minutos."
-✓ "¿Puede repetir por favor?" (when input is garbled)
-
-STAY IN SPANISH FOR THE ENTIRE CALL:
-Even if the caller asks mid-call to switch languages, DO NOT switch.
-Reply in Spanish: "Lo siento, en esta llamada solo puedo ayudar en
-español. Por favor cuelgue y llame de nuevo, en el menú puede
-seleccionar inglés." Then continue in Spanish.
-
-ESCALATE_TO_HUMAN is a literal English token — say it as English at the
-end of your Spanish sentence when escalating. It's a backend signal.
-"""
-
-    return ""  # Unknown language code — no addition
-
-
-def _translate_greeting(
-    lang: str,
-    is_open: bool,
-    restaurant_name: str,
-    customer_name: Optional[str],
-    delivery_enabled: bool,
-    reservations_enabled: bool,
-    default_greeting: str,
-) -> str:
-    """
-    Return the greeting in the active language. The greeting is the very first
-    sentence the AI utters — if it's in English, Gemini tends to lock to English
-    for the rest of the call regardless of any LANGUAGE block downstream.
-
-    For English, returns default_greeting unchanged.
-    """
-    if lang == "en":
-        return default_greeting
-
-    if lang == "te":
-        if not is_open:
-            name = f" {customer_name}" if customer_name else ""
-            return (
-                f"నమస్తే{name}! {restaurant_name} కి call చేసినందుకు thanks. "
-                f"మేము ఇప్పుడు closed గా ఉన్నాము కానీ menu గురించి, hours గురించి help చేయగలను."
-            )
-        if delivery_enabled and reservations_enabled:
-            q = "Pickup కోసమా, delivery కోసమా, లేక table reserve చేస్తారా?"
-        elif delivery_enabled:
-            q = "Pickup కోసమా delivery కోసమా?"
-        elif reservations_enabled:
-            q = "Order place చేస్తారా లేక table reserve చేస్తారా?"
-        else:
-            q = "ఈరోజు ఏం order చేస్తారు?"
-        if customer_name:
-            return f"నమస్తే {customer_name}! {restaurant_name} కి welcome back. {q}"
-        return f"నమస్తే! {restaurant_name} నుండి AI assistant మాట్లాడుతున్నాను. {q}"
-
-    if lang == "hi":
-        if not is_open:
-            name = f" {customer_name}" if customer_name else ""
-            return (
-                f"नमस्ते{name}! {restaurant_name} में call करने के लिए thanks. "
-                f"हम अभी closed हैं लेकिन menu और hours के बारे में help कर सकता हूँ।"
-            )
-        if delivery_enabled and reservations_enabled:
-            q = "Pickup के लिए, delivery के लिए, या table reserve करना है?"
-        elif delivery_enabled:
-            q = "Pickup के लिए या delivery के लिए?"
-        elif reservations_enabled:
-            q = "Order place करना है या table reserve करना है?"
-        else:
-            q = "आज क्या order करना है?"
-        if customer_name:
-            return f"नमस्ते {customer_name}! {restaurant_name} में welcome back. {q}"
-        return f"नमस्ते! {restaurant_name} के लिए AI assistant बोल रहा हूँ। {q}"
-
-    if lang == "es":
-        if not is_open:
-            name = f" {customer_name}" if customer_name else ""
-            return (
-                f"¡Hola{name}! Gracias por llamar a {restaurant_name}. "
-                f"Estamos cerrados ahora, pero puedo ayudar con el menú o el horario."
-            )
-        if delivery_enabled and reservations_enabled:
-            q = "¿Es para pickup, delivery, o para hacer una reservación?"
-        elif delivery_enabled:
-            q = "¿Es para pickup o delivery?"
-        elif reservations_enabled:
-            q = "¿Quiere hacer un pedido o una reservación?"
-        else:
-            q = "¿Qué le puedo ofrecer hoy?"
-        if customer_name:
-            return f"¡Hola {customer_name}! Bienvenido de nuevo a {restaurant_name}. {q}"
-        return f"¡Hola! Soy el asistente AI de {restaurant_name}. {q}"
-
-    return default_greeting
-
-
 def build_system_prompt(
     restaurant_name: str,
     cuisine_type: str,
@@ -1209,7 +968,7 @@ def build_system_prompt(
     reservation_settings: Optional[Dict] = None,
     available_reservation_slots: Optional[List[Dict]] = None,
     plan: str = "STARTER",
-    lang: str = "en",
+    lang: str = "en",  # accepted but unused — multilingual deferred for re-implementation
 ) -> str:
     # ── Plan-based feature enforcement ──
     # Import here to avoid circular imports
@@ -1412,20 +1171,6 @@ This restaurant DOES take reservations, but reservations must be handled by our 
         else:
             greeting_line = f"Hi! I'm an AI assistant for {restaurant_name}. {_type_question}"
 
-    # Override greeting for non-English languages. The greeting is the very
-    # first sentence the AI utters; if it's in English, Gemini tends to lock
-    # to English for the rest of the call regardless of any LANGUAGE block.
-    if lang != "en":
-        greeting_line = _translate_greeting(
-            lang=lang,
-            is_open=is_open,
-            restaurant_name=restaurant_name,
-            customer_name=(customer_profile or {}).get("last_name"),
-            delivery_enabled=delivery_enabled,
-            reservations_enabled=reservations_enabled,
-            default_greeting=greeting_line,
-        )
-
     if delivery_enabled and reservations_enabled:
         step1_block = """STEP 1: The greeting asked pickup, delivery, or reservation.
   Customer says "pickup" → "Great! What would you like to order?"
@@ -1501,43 +1246,27 @@ CLOSED — STRICT RULES
 - End the call politely after helping with questions
 """
 
-    # Modifier protocol. Only inject when the menu actually has modifier groups —
-    # otherwise this ~22-line block (~1.3k chars) is dead weight every call.
-    _menu_has_modifiers = any(item.get("modifiers") for item in (menu_items or []))
-    modifiers_block = ""
-    if _menu_has_modifiers:
-        modifiers_block = """
-  CUSTOMIZATIONS & MODIFIERS:
-  Each menu item may have modifier groups shown in brackets after its price.
-  Example: "Margherita $12.00 [Size: S/M/L*] [Crust: Thin/Regular/Thick]"
-  - Groups marked with * are REQUIRED — you MUST ask if customer doesn't specify.
-  - Groups without * are optional — only ask if customer brings it up, or during upsell.
-  - If customer already specifies a valid option (e.g. "large"), accept it immediately.
-  - If customer specifies an invalid option, offer the valid choices: "We have S, M, or L — which works?"
-  - Validate against the exact option names in brackets. Use common sense for aliases
-    (e.g. "regular" = "Medium", "hot" = "Spicy").
-  - For multi-select groups (no max shown or max > 1): accept multiple options.
-  - For single-select groups (max = 1): if customer picks multiple, ask them to choose one.
-  - REQUIRED modifier flow example:
-    Customer: "I want a Margherita pizza."
-    AI: "Got it! What size — Small, Medium, or Large?"
-    Customer: "Large."
-    AI: "Perfect, anything else?"
-  - OPTIONAL modifier flow example:
-    Customer: "I want a Margherita pizza, large."
-    AI: "Got it, large Margherita! Anything else?" ← do NOT ask about optional crust unprompted
-  - Special instructions: if the item has special_instructions_enabled, customer can add
-    free-text notes like "extra crispy" or "no onions" — capture these verbatim.
-  - Include all confirmed modifiers in the STEP 4 readback:
-    "One large Margherita with thin crust. Does that sound right?"
-"""
+    # Multilingual support block
+    multilingual_block = """
+═══════════════════════════
+MULTILINGUAL SUPPORT
+═══════════════════════════
+SUPPORTED LANGUAGES: English, Spanish, Mandarin, Hindi, Urdu, Punjabi, Korean, 
+Japanese, French, German, Portuguese, Vietnamese, Tagalog, Arabic, Russian
 
-    # Language section. For English (default), this stays empty so the prompt
-    # is byte-identical to the pre-multilingual baseline. For other languages,
-    # _build_language_section returns a short integrated section with code-mixing
-    # examples and a no-switch rule. It's placed mid-prompt (not appended at the
-    # end as a "FINAL OVERRIDE"), so it doesn't dominate the menu and protocol.
-    multilingual_block = _build_language_section(lang, restaurant_name)
+LANGUAGE DETECTION AND RESPONSE:
+- If the customer speaks in any language listed above, RESPOND IN THE SAME LANGUAGE.
+- Maintain the same warmth, personality, and conversational style in all languages.
+- Use natural, colloquial phrases — not formal translations.
+- Keep all ORDER PROTOCOL steps and MENU rules — just in their language.
+- If customer switches languages mid-call, switch with them.
+
+EDGE CASES:
+- If unsure of the language: respond in English naturally — do NOT ask about language preference
+- If language is not in the supported list: "I can help in English — shall we continue?"
+- Accented English: respond in English but be patient with pronunciation variations.
+- Code-switching (mixing languages): match their style, respond in the dominant language.
+"""
 
     # Reservation system block (only if enabled)
     reservation_block = ""
@@ -1629,7 +1358,7 @@ PERSONALITY:
 - Never sound scripted or robotic
 - Match the customer's energy — casual if they're casual, quick if they're in a hurry
 - Use contractions: "I'll", "we've", "that's" — never "I will" or "that is"
-- Start your response with a short opener ("Sure!", "Got it!", "Absolutely!") when ACCEPTING items — but NOT when rejecting an off-menu item or asking for clarification. If a batched order includes one item that isn't on the menu, lead with the rejection ("Hold on — I don't see [item]..."), never with "Got it!"
+- Always start your response with a short word first: "Sure!", "Got it!", "Absolutely!" — this sounds instant
 
 WHAT A REAL PHONE EMPLOYEE SOUNDS LIKE — FOLLOW THESE EXAMPLES:
 ✅ "Sure! And anything else with that?"
@@ -1667,25 +1396,14 @@ MENU — YOUR ONLY SOURCE OF TRUTH
 
 CRITICAL MENU RULES — NEVER VIOLATE:
 1. Only confirm, recommend, or discuss items listed above.
-2. Four categories of customer input — handle each correctly:
-
-   A) EXACT MATCH or PHONETIC MISPRONUNCIATION → accept silently, use the EXACT menu name in your response.
-      Example: "gobby manchurian" → "Gobi Manchurian" ✅
-      Example: "zera rice" → "Jeera Rice" ✅
-      Example: "chicken byriyani" → "Chicken Biryani" ✅
-
-   B) PARTIAL MATCH (customer's term is a subset of a longer menu item name) → CLARIFY, never silently expand.
-      Example: Menu has "Veg Cooker Pulav". Customer says "Veg Pulao" → ASK: "We have Veg Cooker Pulav — is that what you mean?" WAIT for yes.
-      Example: Menu has "Chicken Dum Biryani". Customer says "Chicken Biryani" → ASK: "We have Chicken Dum Biryani — is that the one?" WAIT for yes.
-      Example: Menu has "Chicken Tikka Masala". Customer says "Chicken Tikka" → ASK: "We have Chicken Tikka Masala — is that what you're looking for?" WAIT for yes.
-      Once the customer confirms, use the EXACT menu name in all subsequent responses (readback, total, confirmation).
-
-   C) DIFFERENT ITEM with similar name → reject and offer alternative, WAIT for yes before substituting.
-      Example: Menu has Lamb Biryani but NOT Mutton Biryani. Customer says "Mutton Biryani" → "We don't have Mutton Biryani — would Lamb Biryani work instead?" WAIT for yes.
-
-   D) ITEM NOT ON MENU at all → "I'm sorry, we don't have [item]. Can I suggest [valid item from menu] instead?"
-
-   NEVER silently add, substitute, or expand. NEVER assume the customer accepts. Only add the item after the customer explicitly says yes.
+2. If a customer asks for an item NOT in this list: "I'm sorry, we don't have that. Can I suggest something similar?"
+   Phonetic mispronunciations ARE acceptable — match them to the correct menu item name.
+   Example: "gobby manchurian" = "Gobi Manchurian" ✅
+   Example: "zera rice" = "Jeera Rice" ✅
+   Different items with similar names are NOT acceptable — ALWAYS ask before substituting.
+   Example: Customer says "Mutton Biryani" → say "We don't have Mutton Biryani — would Lamb Biryani work instead?" — WAIT for yes before adding.
+   NEVER silently add a substitute. NEVER assume the customer accepts a replacement.
+   Only add the substitute after the customer explicitly says yes.
 3. NEVER invent items, prices, descriptions, or availability.
 4. Prices are exact. Never estimate, round, or calculate yourself.
    ALWAYS use the exact price shown in the menu above — never do your own math.
@@ -1717,22 +1435,36 @@ CRITICAL MENU RULES — NEVER VIOLATE:
 ORDER PROTOCOL — FOLLOW EVERY STEP IN ORDER
 ═══════════════════════════
 {step1_block}
-STEP 2: Take the order — but VALIDATE FIRST, ACKNOWLEDGE SECOND.
 
-  Before saying "Got it", "Added", "Perfect", or any acknowledgment word, scan every item the customer just named against the MENU section above. This applies whether the customer listed ONE item or batched FIVE in one breath.
-
-  • All items on menu → acknowledge briefly ("Got it — one X and a Y. Anything else?")
-  • One or more items NOT on menu → STOP. Do not say "Got it." Lead with the rejection:
-      "Hold on — I don't see [off-menu item] on our menu. The [valid items] I've got. Want to swap or skip [off-menu item]?"
-    Then wait for the customer's answer. ONLY after they decide do you acknowledge the rest.
-  • Phonetic mispronunciations DO count as on-menu (see MENU RULE 6) — accept them.
-
-  This rule overrides any "snappy acknowledgment" guidance in PERSONALITY. Speed is good, but confirming an item that doesn't exist is worse than a 1-second pause.
-
-  Do NOT ask "Is that correct?" after each valid item — STEP 4 readback is the final confirmation. Menu validation is a SILENT check you do internally; you only speak up when something fails it.
-  NEVER add an item unless it appears on the menu AND the customer clearly named it.
+STEP 2: Take the order. Acknowledge each item briefly — "Got it", "Added", "Perfect" — then ask "Anything else?"
+  Do NOT ask "Is that correct?" after each item — confirmation happens at STEP 4 only.
+  NEVER add an item unless the customer clearly and completely named it.
   If unsure what the customer said — ask: "Sorry, what was that item?"
-{modifiers_block}
+
+  CUSTOMIZATIONS & MODIFIERS:
+  Each menu item may have modifier groups shown in brackets after its price.
+  Example: "Margherita $12.00 [Size: S/M/L*] [Crust: Thin/Regular/Thick]"
+  - Groups marked with * are REQUIRED — you MUST ask if customer doesn't specify.
+  - Groups without * are optional — only ask if customer brings it up, or during upsell.
+  - If customer already specifies a valid option (e.g. "large"), accept it immediately.
+  - If customer specifies an invalid option, offer the valid choices: "We have S, M, or L — which works?"
+  - Validate against the exact option names in brackets. Use common sense for aliases
+    (e.g. "regular" = "Medium", "hot" = "Spicy").
+  - For multi-select groups (no max shown or max > 1): accept multiple options.
+  - For single-select groups (max = 1): if customer picks multiple, ask them to choose one.
+  - REQUIRED modifier flow example:
+    Customer: "I want a Margherita pizza."
+    AI: "Got it! What size — Small, Medium, or Large?"
+    Customer: "Large."
+    AI: "Perfect, anything else?"
+  - OPTIONAL modifier flow example:
+    Customer: "I want a Margherita pizza, large."
+    AI: "Got it, large Margherita! Anything else?" ← do NOT ask about optional crust unprompted
+  - Special instructions: if the item has special_instructions_enabled, customer can add
+    free-text notes like "extra crispy" or "no onions" — capture these verbatim.
+  - Include all confirmed modifiers in the STEP 4 readback:
+    "One large Margherita with thin crust. Does that sound right?"
+
 {upsell_section}
 
 {step3_block}
@@ -1742,11 +1474,10 @@ STEP 4: MANDATORY READBACK — never skip this:
   Keep a running mental list of every item AND quantity the customer added, even if discussed earlier.
   CRITICAL: If a side conversation happened (reservation questions, delivery questions, etc.) between
   when items were ordered and the readback, go back and recall the EXACT quantities originally stated.
-  Example: if the customer said "three" of an item early in the call, then had a side conversation,
-  then gave their name — the readback MUST preserve the quantity "three", not collapse it to "one".
-  Never reduce quantities.
-  For DELIVERY orders, always include the delivery address in the readback. Format:
-  "Let me read that back: [each item with quantity], going to [delivery address]. Does that sound right?"
+  Example: Customer said "three Apollo Fish" then asked about reservations then gave their name →
+  readback MUST say "three Apollo Fish", NOT "one Apollo Fish". Never reduce quantities.
+  For DELIVERY orders, always include the delivery address in the readback:
+  "Let me read that back: one Chicken Biryani and two Samosas, going to 984 Four Seasons Boulevard, Aurora. Does that sound right?"
   If the customer says you missed an item — immediately add it and re-read the full list.
   
   NEVER volunteer the total price during readback. Just list the items.
@@ -1826,7 +1557,7 @@ EDGE CASES
 - Customer asks about parking/wifi/seating: "I handle orders and reservations — for other questions, I can connect you with the team."
 - Customer is clearly a child: keep it friendly, take the order normally, no changes needed.
 - Customer speaks in another language: respond in the same language if possible, otherwise: "I'll do my best to help — can you say that in English?"
-- Customer gives very long order all at once: let them finish completely, then check each item against the menu. Reject any off-menu items FIRST (one response addressing what's missing), wait for the customer's swap/skip decision, THEN acknowledge the valid items together. Never say "Got it" for the batch until every item has passed the menu check.
+- Customer gives very long order all at once: let them finish completely, then confirm all items together.
 - Customer changes mind mid-order: "Of course! I've removed the [item]. Anything else?"
 - Customer asks "are you a robot?": "I'm the virtual assistant for {restaurant_name} — I'm here to help with your order!"
 - Customer asks to repeat something: repeat it clearly and concisely.
@@ -2046,7 +1777,7 @@ menu_suggestions — CRITICAL FOR LEARNING:
   record it as: {"said": "<what customer said>", "resolved_as": "<exact menu item name>"}
 
   Include a suggestion whenever the customer said something like:
-  - A phonetic approximation: "chicken tikka" heard as "chicken tika", "margherita" as "margarita"
+  - A phonetic approximation: "apollo fish" heard as "a bowl of fish", "chicken tikka" as "chicken tika"
   - A nickname or abbreviation: "dal", "makhni", "biryani" (when multiple biryanis exist)
   - A colloquial term: "coke" for "Coca-Cola", "chili chicken" for "Chilli Chicken"
   - An unclear item that the AI clarified into a specific menu item
@@ -2055,8 +1786,8 @@ menu_suggestions — CRITICAL FOR LEARNING:
   If the customer's phrasing is identical to the menu item name, do NOT include it.
   Only include genuine alias/phonetic mappings. Max 5 per call.
 
-  Example: customer says "margarita" -> AI serves "Margherita Pizza"
-  -> {"said": "margarita", "resolved_as": "Margherita Pizza"}
+  Example: customer says "bowl of fish" -> AI serves "Apollo Fish"
+  -> {"said": "bowl of fish", "resolved_as": "Apollo Fish"}
 
 rule_suggestions — pattern issues spotted across the call:
   Short strings describing recurring problems (e.g. "Customer asked about gluten-free options — not handled",
@@ -2309,9 +2040,8 @@ def get_system_prompt(
     """
     Routes to the correct prompt builder based on business type.
 
-    restaurant → build_system_prompt() with lang
-    appointment → build_appointment_prompt() — multilingual deferred for the
-                  appointment vertical, always English for now.
+    restaurant → build_system_prompt() [EXISTING — DO NOT MODIFY]
+    appointment → build_appointment_prompt() [NEW]
     """
     if business_type in ("restaurant",):
         restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability")}
@@ -2339,4 +2069,4 @@ def get_system_prompt(
             return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
     else:
         restaurant_kwargs = {k: v for k, v in kwargs.items() if k not in ("services", "cached_availability", "customer_profile")}
-        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile, lang=lang)
+        return build_system_prompt(**restaurant_kwargs, customer_profile=customer_profile)
