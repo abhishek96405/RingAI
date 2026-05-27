@@ -1148,7 +1148,7 @@ async def create_call_pipeline(
             http_options={"api_version": "v1alpha"},
             tools=_tools_list,
             params=InputParams(
-                thinking=ThinkingConfig(thinking_level="MEDIUM"),
+                thinking=ThinkingConfig(thinking_level="LOW"),
                 output_sample_rate=8000,   # match Telnyx PCMU — no resampling needed
                 vad=GeminiVADParams(
                     start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
