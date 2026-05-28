@@ -319,6 +319,7 @@ class LiveOrder:
     kitchen_order_id: str = ""
     state_history: List[Dict] = field(default_factory=list)
     dropped_items: List[str] = field(default_factory=list)
+    extraction_anomaly: bool = False
 
     def transition(self, new_state: OrderState, reason: str = ""):
         self.state_history.append({
@@ -377,10 +378,11 @@ Menu (use EXACT names from this list only):
 )}
 
 Required JSON format:
-{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":["Large","Thin Crust"],"special_instructions":"no onions"}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
+{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":["Large","Thin Crust"],"special_instructions":"no onions"}}],"items_in_readback_count":1,"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
 
 - modifiers: list of confirmed modifier option names the customer chose (e.g. ["Large", "Thin Crust", "Extra Cheese"])
 - special_instructions: any free-text customization the customer added (e.g. "no onions", "extra crispy")
+- items_in_readback_count: integer — count of distinct items in the AI's FINAL readback (each item = 1 regardless of quantity). This MUST match the length of the items array. If it doesn't, your items array is incomplete — re-extract.
 
 RULES:
 - order_confirmed must be true or false — never omit this field
@@ -408,7 +410,7 @@ JSON:"""
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=2000,
+                max_tokens=5000,
             )
             raw = resp.choices[0].message.content.strip()
             # Capture token usage for cost tracking
@@ -434,6 +436,19 @@ JSON:"""
     items = data.get("items", [])
     logger.info(f"Order extraction parsed: confirmed={confirmed}, items={items}")
 
+    # Sanity check — detect when extraction silently drops items between
+    # hearing the readback and returning JSON (e.g. truncation, middle-item skip).
+    readback_count = data.get("items_in_readback_count")
+    extracted_count = len(items)
+    extraction_anomaly = False
+    if isinstance(readback_count, int) and readback_count != extracted_count:
+        extraction_anomaly = True
+        logger.error(
+            f"[EXTRACTION_ANOMALY] Item count mismatch: "
+            f"readback_count={readback_count}, extracted_count={extracted_count}, "
+            f"raw_response_length={len(raw)}. Possible silent drop or truncation."
+        )
+
     # Only reject if explicitly False.
     # None means the field was missing (truncated JSON) — ORDER_CONFIRMED signal
     # already fired upstream, so we trust the signal and proceed.
@@ -450,6 +465,7 @@ JSON:"""
         special_instructions=data.get("special_instructions", ""),
         confirmed_at=datetime.now(timezone.utc).isoformat(),
     )
+    order.extraction_anomaly = extraction_anomaly
 
     for raw_item in data.get("items", []):
         name = raw_item.get("name", "").strip()
@@ -457,7 +473,7 @@ JSON:"""
             continue
         menu_item = menu_index.find(name)
         if not menu_item:
-            logger.warning(f"Item '{name}' not on menu — skipped")
+            logger.warning(f"[MENU_DROP] Item '{name}' not on menu — dropped from order")
             order.dropped_items.append(name)
             continue
         order.items.append(OrderItem(
