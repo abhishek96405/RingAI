@@ -99,41 +99,6 @@ async def test_escalation_without_phone_skips_transfer(make_call_session):
     sess._pipeline_task.cancel.assert_awaited_once()
 
 
-async def test_transfer_call_currently_nameerrors_on_undefined_settings_captures_bug(
-    make_call_session,
-):
-    """Captures HIGH-severity bug: ``_transfer_call`` references ``settings.TELNYX_API_KEY``
-    at call_pipeline.py:519 but ``settings`` is never imported anywhere in
-    call_pipeline.py. Every escalation transfer fails silently with
-    ``NameError: name 'settings' is not defined`` (caught and logged inside the
-    except Exception block, returns False). Customers escalated to a human are
-    instead dropped. See FINDINGS.md 2026-05-23.
-    """
-    sess = make_call_session()
-
-    async def fake_post(self, url, **kwargs):
-        class R:
-            status_code = 200
-
-            def raise_for_status(self):
-                pass
-
-        return R()
-
-    with patch("httpx.AsyncClient.post", new=fake_post):
-        # Current behavior: NameError gets swallowed, function returns False.
-        ok = await sess._transfer_call("+15555550199")
-    assert ok is False
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "_transfer_call references undefined 'settings' module — see "
-        "FINDINGS.md 2026-05-23. When the import is added or settings is "
-        "replaced with os.environ.get('TELNYX_API_KEY'), this test will pass."
-    ),
-)
 async def test_transfer_call_handles_telnyx_success_expected(make_call_session):
     sess = make_call_session()
 

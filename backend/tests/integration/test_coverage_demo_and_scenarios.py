@@ -19,48 +19,6 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 
-async def test_simulate_call_raises_unbound_timedelta_when_reservations_disabled(
-    app, two_tenant_with_memberships, patched_server_db, monkeypatch
-):
-    """Captures current behavior. See FINDINGS:
-
-    simulate_call (server.py:2974) imports ``from datetime import date,
-    timedelta`` inside the ``if reservations_enabled:`` branch (line 3037).
-    Python treats ``timedelta`` as a local for the entire function body.
-    When the reservations branch is NOT taken, later use of ``timedelta``
-    at line 3133 raises UnboundLocalError → 500.
-
-    Same pattern as the HTMLResponse bug in public_menu_page.
-    """
-    from fastapi.testclient import TestClient
-    import server
-
-    monkeypatch.setattr(server, "demo_mode_enabled", lambda: True)
-    monkeypatch.setattr(server, "is_gemini_available", lambda: False)
-
-    async def _fake_analyse(transcript, order_json, menu_items):
-        return {"quality_score": 88, "summary": "demo"}
-
-    monkeypatch.setattr(server, "analyse_call_transcript", _fake_analyse)
-
-    with TestClient(app, raise_server_exceptions=False) as c:
-        response = c.post(
-            f"/api/demo/simulate-call?restaurant_id={TENANT_A_ID}",
-            headers={"Authorization": "Bearer tenant_a"},
-        )
-    assert response.status_code == 500
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: simulate_call at server.py:2974 does `from datetime import date, "
-        "timedelta` inside the reservations branch (line 3037). That makes "
-        "`timedelta` a local for the whole function; the non-reservations path "
-        "then raises UnboundLocalError at line 3133. Fix: remove the local "
-        "import (timedelta is already imported at module scope)."
-    ),
-)
 async def test_simulate_call_succeeds_with_reservations_disabled(
     client, two_tenant_with_memberships, monkeypatch
 ):

@@ -516,7 +516,7 @@ class CallSession:
                     f"https://api.telnyx.com/v2/calls/{self.call_sid}/actions/transfer",
                     json={"to": to_number},
                     headers={
-                        "Authorization": f"Bearer {settings.TELNYX_API_KEY}",
+                        "Authorization": f"Bearer {os.environ.get('TELNYX_API_KEY', '')}",
                         "Content-Type": "application/json",
                     },
                 )
@@ -570,6 +570,7 @@ class CallSession:
                 logger.warning(
                     f"[{self.call_sid}] Confirmed but no items extracted after {max_retries} attempts"
                 )
+                self._order_dispatched = False
                 return False
 
         # Post-call delivery address validation (distance check)

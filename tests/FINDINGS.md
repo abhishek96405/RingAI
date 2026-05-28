@@ -81,6 +81,7 @@ Severity guide:
 - **Resolution (C3):** Fixed in `pyproject.toml` pytest-env block by adding `"CF_SECRET_TOKEN="`. The middleware-bypass is verified by `backend/tests/integration/test_middleware_and_lifespan.py::test_cloudflare_middleware_is_noop_when_token_unset`.
 
 ## 2026-05-22 — `public_menu_page` raises UnboundLocalError on the not-found branch
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). Removed the redundant `from fastapi.responses import HTMLResponse` near the end of `public_menu_page`; the module-level import at server.py:2 is sufficient and the not-found branch now returns 404 cleanly.
 - **File:** `backend/server.py`
 - **Line(s):** 1264-1360 (function `public_menu_page`); failing reference at line 1276; shadowing import at line 1359
 - **Severity:** high
@@ -119,6 +120,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_api_restaurants.py::test_get_restaurant_wrong_tenant_returns_403` (captures current) and `::test_get_restaurant_wrong_tenant_should_return_404` (xfail strict)
 
 ## 2026-05-22 — `/api/restaurants/{id}/plan-features` references undefined `payload.restaurant_id`
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). `payload.restaurant_id` was replaced with the path parameter `restaurant_id`.
 - **File:** `backend/server.py`
 - **Line(s):** 4695-4700 (function `get_plan_features_endpoint`)
 - **Severity:** high (route entirely broken)
@@ -135,6 +137,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_api_billing_voice_demo.py::test_plan_features_raises_nameerror_due_to_payload_typo` (current) and `::test_plan_features_should_return_plan_block` (xfail strict)
 
 ## 2026-05-22 — `httpx` not imported at module scope yet referenced in `except` clauses
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). `import httpx` added at server.py module scope; the three Telnyx error handlers now catch `httpx.HTTPStatusError` correctly and convert it to a 502 instead of falling through to a 500.
 - **File:** `backend/server.py`
 - **Line(s):** 3478-3483 (telnyx_numbers_search), 3552-3554 (telnyx_provision_number), 3649-3651 (telnyx_assign_existing_number); references `httpx.HTTPStatusError` without a module-level `import httpx`
 - **Severity:** high (every Telnyx error path returns the wrong status code)
@@ -144,6 +147,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_api_oauth_integrations.py::test_telnyx_search_propagates_telnyx_error_as_500_due_to_missing_httpx_import` (current) and `::test_telnyx_search_should_return_502_on_error` (xfail strict)
 
 ## 2026-05-22 — `simulate_call` raises UnboundLocalError on `timedelta` when reservations disabled
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). The redundant local `from datetime import date, timedelta` inside the reservations-enabled branch was removed; `timedelta` resolves to the module-level import (server.py:22) for both branches.
 - **File:** `backend/server.py`
 - **Line(s):** 2974-3156 (function `simulate_call`); shadowing import at line 3037 inside the `if reservations_enabled:` branch; failing reference at line 3133
 - **Severity:** high (demo route unusable when reservations not enabled — also any other path that loses the local import)
@@ -153,6 +157,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_coverage_demo_and_scenarios.py::test_simulate_call_raises_unbound_timedelta_when_reservations_disabled` (current) and `::test_simulate_call_succeeds_with_reservations_disabled` (xfail strict)
 
 ## 2026-05-22 — `/api/test-mode/run-scenario` references undefined `call_sid` in clinic/salon branch
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). `call_sid` is now initialised at the top of `run_test_scenario` with a `test_<hex>` placeholder, matching the auto-learning-service pattern further down the function.
 - **File:** `backend/server.py`
 - **Line(s):** 5215-5390 (function `run_test_scenario`); failing references at 5258 and 5269 inside the `if business_type in ("clinic", "salon", "home_services", "legal"):` branch
 - **Severity:** medium (test-mode entirely unusable for appointment-business tenants)
@@ -166,6 +171,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_coverage_demo_and_scenarios.py::test_run_scenario_raises_due_to_undefined_call_sid`
 
 ## 2026-05-22 — `POST /api/restaurants/{id}/reservations` returns the inserted doc with raw ObjectId, crashing JSON encoder
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). The `_id` ObjectId field is now stripped from the inserted doc before returning, so `jsonable_encoder` can serialise the response cleanly.
 - **File:** `backend/server.py`
 - **Line(s):** 1882-1933 (function `create_reservation`)
 - **Severity:** high (route unusable — 500 on every successful create)
@@ -189,6 +195,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_coverage_misc.py::test_update_restaurant_zero_int_field_persists` (uses `delivery_fee` which IS on RestaurantUpdate)
 
 ## 2026-05-22 — `run_test_scenario` accesses `config.get(...)` without a None guard
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). The unguarded `delivery_minimum=config.get(...)` call now matches the surrounding inline-guard pattern (`config.get(...) if config else <default>`).
 - **File:** `backend/server.py`
 - **Line(s):** 5291 (and adjacent lines in the prompt-kwargs block)
 - **Severity:** medium (route 500s when a restaurant has no `restaurant_configs` row)
@@ -280,6 +287,7 @@ Severity guide:
 - **Test:** `backend/tests/webhooks/test_stripe_signature_verification.py::test_future_timestamp_is_currently_accepted_captures_bug` (current) and `::test_future_timestamp_should_return_400_expected` (xfail strict)
 
 ## 2026-05-23 — `_transfer_call` references undefined `settings` module → every escalation transfer silently fails
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). `settings.TELNYX_API_KEY` was replaced with `os.environ.get("TELNYX_API_KEY", "")` to match the direct-env-access pattern used elsewhere in `call_pipeline.py` (lines 246, 1027).
 - **File:** `backend/call_pipeline.py`
 - **Line(s):** 519 (inside `CallSession._transfer_call`)
 - **Severity:** high (escalations to human are silently dropped instead of transferred)
@@ -308,6 +316,7 @@ Severity guide:
 - **Test:** `backend/tests/voice/test_classify_booking_intent.py::test_day_after_tomorrow_phrase_currently_matches_tomorrow_first_captures_bug` (current, passing) and `::test_day_after_tomorrow_should_resolve_two_days_out_expected` (xfail strict)
 
 ## 2026-05-23 — `dispatch_order_if_ready` does not reset `_order_dispatched` after extraction failure → blocks future retries
+**Status:** RESOLVED in the broken-routes batch (fix branch `fix/broken-routes-batch`). The for/else branch in `dispatch_order_if_ready` now resets `self._order_dispatched = False` before returning False, matching the delivery-radius-rejection branch at call_pipeline.py:609.
 - **File:** `backend/call_pipeline.py`
 - **Line(s):** 533-573 (function `dispatch_order_if_ready`; failing branch at the `for/else` clause around line 569-573)
 - **Severity:** medium (legitimate orders that just-failed-to-extract-on-first-attempt cannot be retried within the same call)

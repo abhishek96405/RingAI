@@ -20,6 +20,7 @@ from bson import ObjectId
 import uuid
 import random
 from datetime import datetime, timezone, timedelta
+import httpx
 import stripe
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -1349,7 +1350,6 @@ async def public_menu_page(restaurant_id: str):
 </body>
 </html>"""
 
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(content=page_html)
 
 
@@ -1925,7 +1925,7 @@ async def create_reservation(
     )
     
     await db.reservations.insert_one(doc)
-    
+    doc.pop("_id", None)
     return {"reservation": doc, "message": "Reservation created successfully"}
 
 
@@ -3030,7 +3030,6 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
             # Get next 7 days of available slots
             try:
                 from reservation_service import get_reservation_slots
-                from datetime import date, timedelta
                 import pytz
                 tz = pytz.timezone(restaurant.get("timezone", "America/Chicago"))
                 local_today = datetime.now(tz).date()
@@ -4691,7 +4690,7 @@ async def list_invoices(restaurant_id: str = Query(...), user: Dict[str, Any] = 
 @api_router.get("/restaurants/{restaurant_id}/plan-features")
 async def get_plan_features_endpoint(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Return the plan config for the authenticated restaurant."""
-    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
     plan = restaurant.get("plan", "STARTER")
     return {"plan": plan, "features": get_plan_features(plan)}
 
@@ -5305,6 +5304,7 @@ async def run_test_scenario(
     scenario_id: int = Query(0),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    call_sid = f"test_{uuid.uuid4().hex[:8]}"
     await ensure_restaurant_access(restaurant_id, user)
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
@@ -5375,7 +5375,7 @@ async def run_test_scenario(
         offers_delivery=restaurant.get("offers_delivery", True),
         offers_reservations=restaurant.get("offers_reservations", True),
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
-        delivery_minimum=config.get("delivery_minimum", 1500),
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,
         delivery_fee=restaurant.get("delivery_fee", 0),
         delivery_zip_codes=restaurant.get("delivery_zip_codes", []),
         delivery_radius_miles=restaurant.get("delivery_radius_miles", 5.0),
