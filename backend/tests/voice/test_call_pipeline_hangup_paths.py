@@ -99,19 +99,29 @@ async def test_escalation_without_phone_skips_transfer(make_call_session):
     sess._pipeline_task.cancel.assert_awaited_once()
 
 
-async def test_transfer_call_currently_nameerrors_on_undefined_settings_captures_bug(
-    make_call_session,
+async def test_transfer_call_reads_telnyx_api_key_from_environment(
+    make_call_session, monkeypatch
 ):
-    """Captures HIGH-severity bug: ``_transfer_call`` references ``settings.TELNYX_API_KEY``
-    at call_pipeline.py:519 but ``settings`` is never imported anywhere in
-    call_pipeline.py. Every escalation transfer fails silently with
-    ``NameError: name 'settings' is not defined`` (caught and logged inside the
-    except Exception block, returns False). Customers escalated to a human are
-    instead dropped. See FINDINGS.md 2026-05-23.
+    """Verifies that ``_transfer_call`` reads ``TELNYX_API_KEY`` from
+    ``os.environ``. Regression guard against the previous bug where this was
+    incorrectly read from an undefined ``settings`` module.
+
+    Covers two cases:
+    1. When the env var is set, its value is used in the Authorization header
+       and the transfer succeeds.
+    2. When the env var is unset, the function returns ``False`` without
+       making the httpx call (early-exit guard).
     """
     sess = make_call_session()
 
+    # --- Case 1: env var set — value is sent in Authorization header. ---
+    monkeypatch.setenv("TELNYX_API_KEY", "KEY_env_specific_value")
+
+    captured_headers: dict = {}
+
     async def fake_post(self, url, **kwargs):
+        captured_headers.update(kwargs.get("headers", {}))
+
         class R:
             status_code = 200
 
@@ -121,20 +131,36 @@ async def test_transfer_call_currently_nameerrors_on_undefined_settings_captures
         return R()
 
     with patch("httpx.AsyncClient.post", new=fake_post):
-        # Current behavior: NameError gets swallowed, function returns False.
+        ok = await sess._transfer_call("+15555550199")
+    assert ok is True
+    assert captured_headers.get("Authorization") == "Bearer KEY_env_specific_value"
+
+    # --- Case 2: env var unset — early exit, no httpx call. ---
+    monkeypatch.delenv("TELNYX_API_KEY", raising=False)
+
+    post_called = False
+
+    async def fake_post_should_not_run(self, url, **kwargs):
+        nonlocal post_called
+        post_called = True
+
+        class R:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+        return R()
+
+    with patch("httpx.AsyncClient.post", new=fake_post_should_not_run):
         ok = await sess._transfer_call("+15555550199")
     assert ok is False
+    assert post_called is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "_transfer_call references undefined 'settings' module — see "
-        "FINDINGS.md 2026-05-23. When the import is added or settings is "
-        "replaced with os.environ.get('TELNYX_API_KEY'), this test will pass."
-    ),
-)
 async def test_transfer_call_handles_telnyx_success_expected(make_call_session):
+    """A successful Telnyx transfer response yields ``True`` from
+    ``_transfer_call``."""
     sess = make_call_session()
 
     async def fake_post(self, url, **kwargs):
