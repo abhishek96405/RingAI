@@ -18,3 +18,4 @@ test_reports/
 .pytest_cache/
 .hypothesis/
 frontend/coverage/
+.venv-test/
