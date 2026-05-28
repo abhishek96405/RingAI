@@ -510,13 +510,20 @@ class CallSession:
 
     async def _transfer_call(self, to_number: str) -> bool:
         """Transfer the call to a human agent via Telnyx Call Control API."""
+        api_key = os.environ.get("TELNYX_API_KEY")
+        if not api_key:
+            logger.error(
+                f"[{self.call_sid}] Cannot transfer call to {to_number} — "
+                f"TELNYX_API_KEY environment variable is not set"
+            )
+            return False
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
                     f"https://api.telnyx.com/v2/calls/{self.call_sid}/actions/transfer",
                     json={"to": to_number},
                     headers={
-                        "Authorization": f"Bearer {settings.TELNYX_API_KEY}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                 )
