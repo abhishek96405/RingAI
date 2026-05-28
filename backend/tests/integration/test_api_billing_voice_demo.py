@@ -398,11 +398,11 @@ async def test_onboarding_activate_persists_active_state(
     assert saved["onboarding_step"] == 7
 
 
-def test_onboarding_activate_unknown_restaurant_403(client, mock_clerk):
-    """No membership → ensure_restaurant_access raises 403 before the 404 path."""
+def test_onboarding_activate_unknown_restaurant_404(client, mock_clerk):
+    """No membership → ensure_restaurant_access raises 404 (existence hidden)."""
     response = client.post(
         "/api/onboarding/activate",
         headers={"Authorization": "Bearer tenant_a"},
         json={"restaurant_id": "nonexistent"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404

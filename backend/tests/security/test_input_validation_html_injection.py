@@ -45,14 +45,11 @@ def test_menu_item_name_with_html_is_stored_and_returned_as_text(
     assert "application/json" in r_list.headers.get("Content-Type", "")
 
 
-async def test_public_menu_html_renders_unescaped_item_names_captures_bug(
+async def test_public_menu_html_escapes_item_names(
     client, patched_server_db, two_tenant_with_memberships
 ):
-    """Captures the current XSS bug: the public menu page at
-    ``/menu/{restaurant_id}`` interpolates item names directly into the
-    rendered HTML, so a stored ``<script>`` tag in a menu item's name
-    becomes a working XSS for anyone visiting the public page. See
-    FINDINGS."""
+    """Public menu page HTML-escapes user-controllable item fields
+    (FINDINGS resolved — was a stored XSS via <script> in item name)."""
     await patched_server_db.menu_items.insert_one(
         {
             "id": "menu_xss",
@@ -64,20 +61,11 @@ async def test_public_menu_html_renders_unescaped_item_names_captures_bug(
         }
     )
     r = client.get(f"/menu/{TENANT_A_ID}")
-    # Today: the script tag IS in the rendered body (bug). Future: the tag
-    # must be HTML-entity escaped to "&lt;script&gt;...".
     assert r.status_code == 200
-    assert "<script>alert('xss')</script>" in r.text
+    assert "<script>alert('xss')</script>" not in r.text
+    assert "&lt;script&gt;" in r.text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "HIGH: public /menu/{restaurant_id} HTML page renders menu_item.name "
-        "unescaped — stored XSS in item name is exploitable against anyone "
-        "viewing the public menu. Must HTML-escape all interpolated fields."
-    ),
-)
 async def test_public_menu_html_escapes_item_names_expected(
     client, patched_server_db, two_tenant_with_memberships
 ):

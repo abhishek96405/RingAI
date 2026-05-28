@@ -93,12 +93,12 @@ def test_list_appointments_requires_auth(client):
     assert client.get(f"/api/restaurants/{TENANT_A_ID}/appointments").status_code == 401
 
 
-async def test_list_appointments_wrong_tenant_403(client, two_tenant_with_memberships):
+async def test_list_appointments_wrong_tenant_404(client, two_tenant_with_memberships):
     response = client.get(
         f"/api/restaurants/{TENANT_A_ID}/appointments",
         headers={"Authorization": "Bearer tenant_b"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_list_appointments_invalid_page_422(client, mock_clerk):
@@ -305,8 +305,8 @@ def test_get_available_slots_invalid_date_returns_something(client, mock_clerk):
         f"/api/restaurants/{TENANT_A_ID}/available-slots?date=not-a-date",
         headers={"Authorization": "Bearer tenant_a"},
     )
-    # access check happens first → 403 because no membership in mock_clerk path
-    assert response.status_code == 403
+    # access check happens first → 404 because no membership in mock_clerk path
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

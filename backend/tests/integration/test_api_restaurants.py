@@ -101,30 +101,21 @@ async def test_get_restaurant_happy_path(client, two_tenant_with_memberships):
     assert response.json()["id"] == TENANT_A_ID
 
 
-async def test_get_restaurant_wrong_tenant_returns_403(
+async def test_get_restaurant_wrong_tenant_returns_404(
     client, two_tenant_with_memberships
 ):
     """tenant_b authenticated, asks for tenant_a's restaurant.
 
-    NOTE: ensure_restaurant_access returns 403 here, NOT 404, which leaks
-    existence (a 404 would hide whether the resource exists). The current
-    implementation prioritizes a 'you have no access' message over hiding
-    existence. See FINDINGS — 403 vs 404 leakage.
+    ensure_restaurant_access returns 404 (not 403) to avoid leaking
+    existence — OWASP A01. See FINDINGS (resolved).
     """
     response = client.get(
         f"/api/restaurants/{TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_b"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: GET /api/restaurants/{id} returns 403 for cross-tenant access, "
-        "leaking existence of the resource. Expected: 404 to hide existence."
-    ),
-)
 async def test_get_restaurant_wrong_tenant_should_return_404(
     client, two_tenant_with_memberships
 ):
@@ -135,18 +126,14 @@ async def test_get_restaurant_wrong_tenant_should_return_404(
     assert response.status_code == 404
 
 
-def test_get_restaurant_unknown_id_returns_403(client, mock_clerk):
-    """Without a membership row, ensure_restaurant_access raises 403 first.
-
-    Yet another existence-leakage path: even when the restaurant does not
-    exist at all, the response is 403 (no membership) rather than 404
-    (not found). See FINDINGS.
-    """
+def test_get_restaurant_unknown_id_returns_404(client, mock_clerk):
+    """Without a membership row, ensure_restaurant_access raises 404 — same
+    response as for an unknown id, so existence cannot be enumerated."""
     response = client.get(
         "/api/restaurants/nonexistent-id",
         headers={"Authorization": "Bearer tenant_a"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +169,13 @@ async def test_update_restaurant_empty_body_returns_400(
     assert response.status_code == 400
 
 
-async def test_update_restaurant_wrong_tenant_403(client, two_tenant_with_memberships):
+async def test_update_restaurant_wrong_tenant_404(client, two_tenant_with_memberships):
     response = client.put(
         f"/api/restaurants/{TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_b"},
         json={"name": "Hijack"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 async def test_update_restaurant_starter_plan_strips_delivery_toggle(
@@ -238,12 +225,12 @@ async def test_get_config_returns_default_when_missing(
     assert "operating_hours" in body
 
 
-async def test_get_config_wrong_tenant_403(client, two_tenant_with_memberships):
+async def test_get_config_wrong_tenant_404(client, two_tenant_with_memberships):
     response = client.get(
         f"/api/restaurants/{TENANT_A_ID}/config",
         headers={"Authorization": "Bearer tenant_b"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

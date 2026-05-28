@@ -10,6 +10,7 @@ import signal
 import asyncio
 import hmac
 import hashlib
+import html
 import base64
 import json
 from pathlib import Path
@@ -1028,7 +1029,7 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
 async def ensure_restaurant_access(restaurant_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     if not membership:
-        raise HTTPException(status_code=403, detail="You do not have access to this restaurant")
+        raise HTTPException(status_code=404, detail="Restaurant not found")
     business_type = membership.get("business_type", "restaurant")
     restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
@@ -1292,27 +1293,27 @@ async def public_menu_page(restaurant_id: str):
     for cat_name, cat_items in categories.items():
         items_html = ""
         for i in cat_items:
-            desc_html = f'<p class="desc">{i["description"]}</p>' if i["description"] else ""
+            desc_html = f'<p class="desc">{html.escape(i["description"])}</p>' if i["description"] else ""
             items_html += f"""
             <div class="item">
                 <div class="item-header">
-                    <span class="item-name">{i["name"]}</span>
-                    <span class="item-price">{i["price"]}</span>
+                    <span class="item-name">{html.escape(i["name"])}</span>
+                    <span class="item-price">{html.escape(str(i["price"]))}</span>
                 </div>
                 {desc_html}
             </div>"""
         category_html += f"""
         <div class="category">
-            <h2>{cat_name}</h2>
+            <h2>{html.escape(cat_name)}</h2>
             {items_html}
         </div>"""
 
-    html = f"""<!DOCTYPE html>
+    page_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{restaurant_name} Menu</title>
+    <title>{html.escape(restaurant_name)} Menu</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
@@ -1338,8 +1339,8 @@ async def public_menu_page(restaurant_id: str):
 </head>
 <body>
     <div class="header">
-        <h1>{restaurant_name}</h1>
-        <p>{cuisine} cuisine</p>
+        <h1>{html.escape(restaurant_name)}</h1>
+        <p>{html.escape(cuisine)} cuisine</p>
     </div>
     <div class="container">
         {category_html}
@@ -1349,7 +1350,7 @@ async def public_menu_page(restaurant_id: str):
 </html>"""
 
     from fastapi.responses import HTMLResponse
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=page_html)
 
 
 # ============================================================
@@ -1802,6 +1803,9 @@ async def send_appointment_reminder(
 @api_router.post("/admin/process-reminders")
 async def process_reminders(user: Dict[str, Any] = Depends(get_current_user)):
     """Process all due appointment reminders (admin/cron endpoint)."""
+    admin_user_id = os.environ.get("ADMIN_USER_ID")
+    if not admin_user_id or user.get("id") != admin_user_id:
+        raise HTTPException(status_code=403, detail="Admin access required")
     try:
         from reminder_service import process_appointment_reminders
         result = await process_appointment_reminders(db)
