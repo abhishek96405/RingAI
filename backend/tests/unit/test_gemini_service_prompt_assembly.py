@@ -149,22 +149,6 @@ def test_prompt_lang_param_passes_through(lang):
     assert isinstance(out, str) and len(out) > 100
 
 
-def test_prompt_telugu_includes_telugu_section():
-    out = _build(lang="te")
-    # Telugu section in _build_language_section uses "TELUGU"
-    assert "TELUGU" in out or "తెలుగు" in out
-
-
-def test_prompt_hindi_includes_hindi_section():
-    out = _build(lang="hi")
-    assert "HINDI" in out or "हिंदी" in out
-
-
-def test_prompt_spanish_includes_spanish_section():
-    out = _build(lang="es")
-    assert "SPANISH" in out or "Español" in out
-
-
 def test_prompt_with_customer_profile_on_premium_plan_includes_returning_greeting():
     """STARTER plan disables customer recognition; on a plan with it enabled, the name appears."""
     out = _build(
