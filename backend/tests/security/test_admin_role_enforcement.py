@@ -43,29 +43,15 @@ def test_admin_cost_analytics_rejects_unauth(client):
 # ---------------------------------------------------------------------------
 
 
-def test_admin_process_reminders_accepts_any_authenticated_user_captures_bug(
-    client, mock_clerk
-):
-    """Captures current bug: /api/admin/process-reminders has no admin gate.
-
-    Even though it lives under ``/api/admin/``, any tenant owner can
-    trigger the cron-style job. See FINDINGS.
-    """
+def test_admin_process_reminders_rejects_non_admin(client, mock_clerk):
+    """/api/admin/process-reminders now enforces admin-id check (FINDINGS resolved)."""
     r = client.post(
         "/api/admin/process-reminders",
         headers={"Authorization": "Bearer tenant_a"},
     )
-    # Today the route returns 200 (job executes); we capture that.
-    assert r.status_code == 200
+    assert r.status_code == 403
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "HIGH: /api/admin/process-reminders does not enforce admin role — any "
-        "authenticated tenant owner can run the reminder job."
-    ),
-)
 def test_admin_process_reminders_rejects_non_admin_expected(client, mock_clerk):
     r = client.post(
         "/api/admin/process-reminders",

@@ -327,10 +327,6 @@ async def test_menu_with_modifiers_cross_tenant_does_not_leak(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Menu item cross-tenant returns 403; expected 404 per OWASP A01.",
-)
 async def test_update_menu_item_cross_tenant_returns_404_expected(
     client, patched_server_db, two_tenant_with_memberships
 ):

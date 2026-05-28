@@ -127,13 +127,6 @@ async def test_get_restaurant_config_cross_tenant_is_denied(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ensure_restaurant_access returns 403, leaking existence. The matrix "
-        "expects 404 to avoid OWASP A01 enumeration. See FINDINGS."
-    ),
-)
 async def test_get_restaurant_cross_tenant_returns_404_expected(
     client, two_tenant_with_memberships
 ):

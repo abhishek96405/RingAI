@@ -51,13 +51,13 @@ async def test_create_menu_item_rejects_bad_payload(
     assert response.status_code == 422
 
 
-async def test_create_menu_item_wrong_tenant_403(client, two_tenant_with_memberships):
+async def test_create_menu_item_wrong_tenant_404(client, two_tenant_with_memberships):
     response = client.post(
         f"/api/restaurants/{TENANT_A_ID}/menu",
         headers={"Authorization": "Bearer tenant_b"},
         json={"name": "X", "category": "Y", "price": 100},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ def test_update_menu_item_missing_returns_404(client, mock_clerk):
     assert response.status_code == 404
 
 
-async def test_update_menu_item_wrong_tenant_403(
+async def test_update_menu_item_wrong_tenant_404(
     client, two_tenant_with_memberships, patched_server_db
 ):
     await patched_server_db.menu_items.insert_one(
@@ -186,7 +186,7 @@ async def test_update_menu_item_wrong_tenant_403(
         headers={"Authorization": "Bearer tenant_b"},
         json={"name": "Hijack"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 async def test_delete_menu_item(client, two_tenant_with_memberships, patched_server_db):

@@ -79,7 +79,7 @@ async def test_calendar_connect_returns_400_when_not_configured(
     assert response.status_code == 400
 
 
-async def test_calendar_connect_wrong_tenant_403(
+async def test_calendar_connect_wrong_tenant_404(
     client, two_tenant_with_memberships, monkeypatch
 ):
     import calendar_service
@@ -89,7 +89,7 @@ async def test_calendar_connect_wrong_tenant_403(
         f"/api/calendar/google/connect?restaurant_id={TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_b"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -742,7 +742,7 @@ async def test_square_connect(client, two_tenant_with_memberships, monkeypatch):
     assert len(state) >= 32
 
 
-async def test_square_connect_wrong_tenant_403(
+async def test_square_connect_wrong_tenant_404(
     client, two_tenant_with_memberships, monkeypatch
 ):
     monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
@@ -752,7 +752,7 @@ async def test_square_connect_wrong_tenant_403(
         f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
         headers={"Authorization": "Bearer tenant_b"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 async def test_square_callback_persists_integration(

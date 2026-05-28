@@ -90,6 +90,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_api_root_and_bootstrap.py::test_public_menu_unknown_restaurant_raises_unboundlocalerror` (captures the bug) and `::test_public_menu_returns_404_for_unknown_restaurant_expected` (xfail strict — what should happen)
 
 ## 2026-05-22 — `/api/me/repair-membership` grants the calling user ownership of every unowned restaurant
+**Status:** RESOLVED in commit `c160d54` (hotfix PR #4). The unsafe iterate-and-grant route was retired — `/api/me/repair-membership` no longer creates memberships across foreign tenants.
 - **File:** `backend/server.py`
 - **Line(s):** 1087-1112 (function `repair_membership`)
 - **Severity:** critical (security — cross-tenant data exposure)
@@ -108,6 +109,7 @@ Severity guide:
 - **Test:** `backend/tests/integration/test_api_root_and_bootstrap.py::test_repair_membership_creates_missing_memberships` (captures current behavior) and `::test_repair_membership_does_not_steal_other_tenants` (xfail strict)
 
 ## 2026-05-22 — `ensure_restaurant_access` returns 403 leaking existence
+**Status:** RESOLVED in the auth/access-control batch (fix branch `fix/auth-access-control-batch`). Both the no-membership branch and the not-found branch now return `HTTPException(404, "Restaurant not found")` — callers cannot distinguish "doesn't exist" from "exists but not yours".
 - **File:** `backend/server.py`
 - **Line(s):** 1022-1030 (function `ensure_restaurant_access`)
 - **Severity:** medium (existence-leakage / OWASP A01)
@@ -222,6 +224,7 @@ Severity guide:
 - **Test:** `backend/tests/security/test_oauth_state_token_security.py::test_*_should_*_expected` (xfail strict) and `::test_*_captures_bug` (current)
 
 ## 2026-05-23 — `/api/admin/process-reminders` has no admin-role check
+**Status:** RESOLVED in the auth/access-control batch (fix branch `fix/auth-access-control-batch`). The route now performs the same `ADMIN_USER_ID` comparison as `/api/admin/cost-analytics`: callers whose `user.id` does not match the env var are rejected with 403 "Admin access required".
 - **File:** `backend/server.py`
 - **Line(s):** 1796-1810 (function `process_reminders_admin`)
 - **Severity:** high (any tenant owner can trigger a global cron job)
@@ -231,6 +234,7 @@ Severity guide:
 - **Test:** `backend/tests/security/test_admin_role_enforcement.py::test_admin_process_reminders_accepts_any_authenticated_user_captures_bug` (current) and `::test_admin_process_reminders_rejects_non_admin_expected` (xfail strict)
 
 ## 2026-05-23 — Public menu HTML page renders menu item names without HTML escaping (stored XSS)
+**Status:** RESOLVED in the auth/access-control batch (fix branch `fix/auth-access-control-batch`). Every user-controlled field rendered into the public menu HTML (item name, item description, category name, restaurant name, cuisine type, page title) now passes through `html.escape()`. The local `html = ...` variable that shadowed the stdlib module was renamed to `page_html`.
 - **File:** `backend/server.py`
 - **Line(s):** 1264-1360 (function `public_menu_page`); f-string template interpolation of `item["name"]`, `item["description"]`, category names
 - **Severity:** high (stored XSS — exploitable against anyone visiting the public menu page)

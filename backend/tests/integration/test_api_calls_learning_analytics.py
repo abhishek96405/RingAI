@@ -117,12 +117,12 @@ def test_list_calls_requires_auth(client):
     assert client.get(f"/api/restaurants/{TENANT_A_ID}/calls").status_code == 401
 
 
-async def test_list_calls_wrong_tenant_403(client, two_tenant_with_memberships):
+async def test_list_calls_wrong_tenant_404(client, two_tenant_with_memberships):
     response = client.get(
         f"/api/restaurants/{TENANT_A_ID}/calls",
         headers={"Authorization": "Bearer tenant_b"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_list_calls_invalid_limit_422(client, mock_clerk):
