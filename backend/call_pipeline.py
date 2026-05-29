@@ -255,6 +255,16 @@ VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 # Seconds to wait after farewell TTS before hanging up
 HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "1.5"))
 
+# Telnyx-side ring timeout on /actions/transfer — destination has this long to
+# answer before Telnyx aborts the outbound dial and fires call.hangup on the
+# B-leg. Durable across our backend restarts.
+TRANSFER_RING_TIMEOUT_SECS = int(os.environ.get("TRANSFER_RING_TIMEOUT_SECS", "30"))
+
+# In-process safety net — fires slightly later than the Telnyx-side timeout so
+# the webhook gets first crack at cleanup. Catches missed/delayed call.hangup
+# or call.bridged webhooks.
+TRANSFER_FALLBACK_TIMEOUT_SECS = float(os.environ.get("TRANSFER_FALLBACK_TIMEOUT_SECS", "35"))
+
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +306,10 @@ class CallSession:
         self._escalation_deferred = False  # escalation deferred until order completes
         self._hangup_scheduled  = False  # "we've committed to ending this call"
         self._on_call_complete_fired = False  # "call_records insert + dashboard notify has run"
+        # Transfer race-fix state — see _schedule_hangup escalation branch
+        self._transfer_in_progress = False  # transfer dispatched, awaiting call.bridged or fallback
+        self._bridge_succeeded = False       # set by call.bridged webhook handler
+        self._transfer_fallback_task: Optional[Any] = None  # 35s safety timeout
         self._booking_dispatched = False  # For appointment businesses
         self._reservation_dispatched = False  # For restaurant reservations
         self._appointment_total  = 0      # price_cents sum for booked services
@@ -488,28 +502,39 @@ class CallSession:
         # entirely for those reasons.
         await self._fire_on_call_complete()
 
+        import telnyx_service
+
         # For escalation — transfer to human if phone number is configured
         if reason == "escalation":
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
             if escalation_phone:
                 transferred = await self._transfer_call(escalation_phone)
                 if transferred:
-                    if self._pipeline_task is not None:
-                        try:
-                            await self._pipeline_task.cancel()
-                        except Exception:
-                            pass
-                    return  # Transfer took over — Telnyx controls the call
+                    # Transfer accepted by Telnyx (200 OK). Telnyx is now
+                    # dialing the destination. DO NOT cancel the pipeline or
+                    # hang up the A-leg — both would abort the in-progress
+                    # outbound dial. Instead:
+                    #   1. Stop the media stream so Gemini Live goes idle
+                    #      (no input audio = no token billing).
+                    #   2. Mark transfer-in-progress so the disconnect path
+                    #      and any stray cleanup know to leave the call alone.
+                    #   3. Start the fallback safety timer.
+                    # The pipeline is cancelled later in _handle_transfer_bridged
+                    # (fired by the call.bridged webhook) or _handle_transfer_timeout.
+                    self._transfer_in_progress = True
+                    await telnyx_service.stop_streaming(self.call_sid)
+                    self._transfer_fallback_task = asyncio.create_task(
+                        self._transfer_fallback_watchdog()
+                    )
+                    return
             # Escalation requested but failed to dispatch (no number, or
             # transfer endpoint errored) — fall through to terminate. We
             # explicitly hang up the Telnyx leg since auto_hang_up=False.
-            import telnyx_service
             await telnyx_service.hang_up_call(self.call_sid)
         else:
             # Normal hangup paths (order_confirmed, appointment_confirmed,
             # reservation_confirmed, customer_idle, farewell_timeout).
             # Explicit hangup required since the serializer no longer does it.
-            import telnyx_service
             await telnyx_service.hang_up_call(self.call_sid)
 
         if self._pipeline_task is not None:
@@ -519,31 +544,78 @@ class CallSession:
             except Exception as e:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
 
+    async def _transfer_fallback_watchdog(self) -> None:
+        """Backstop in case the call.bridged or B-leg call.hangup webhook
+        never arrives — sleeps TRANSFER_FALLBACK_TIMEOUT_SECS, then forces
+        teardown. If the webhook fires first, the handler cancels this task."""
+        try:
+            await asyncio.sleep(TRANSFER_FALLBACK_TIMEOUT_SECS)
+        except asyncio.CancelledError:
+            return
+        logger.warning(
+            f"[{self.call_sid}] Transfer fallback fired — no call.bridged or "
+            f"B-leg hangup webhook in {TRANSFER_FALLBACK_TIMEOUT_SECS}s. "
+            f"Forcing teardown."
+        )
+        await self._handle_transfer_timeout()
+
+    async def _handle_transfer_bridged(self) -> None:
+        """Called by the call.bridged webhook handler in server.py when
+        Telnyx confirms the customer-human audio bridge is live. Safe to
+        tear down our side now — auto_hang_up=False means cancelling the
+        pipeline won't kill the A-leg, which is the bridge anchor."""
+        if self._bridge_succeeded:
+            return
+        self._bridge_succeeded = True
+        logger.info(f"[{self.call_sid}] Bridge succeeded — releasing pipeline")
+        if self._transfer_fallback_task is not None:
+            self._transfer_fallback_task.cancel()
+            self._transfer_fallback_task = None
+        if self._pipeline_task is not None:
+            try:
+                await self._pipeline_task.cancel()
+            except Exception as e:
+                logger.warning(f"[{self.call_sid}] Pipeline cancel after bridge: {e}")
+
+    async def _handle_transfer_timeout(self) -> None:
+        """Called when the destination didn't answer (B-leg call.hangup from
+        Telnyx's timeout_secs, OR our fallback watchdog fires). Per product
+        decision (May 2026): no TTS goodbye, no AMD, no fallback chain — just
+        terminate the A-leg. Customer's experience is ringing then dead line;
+        the call appears as ESCALATED in the dashboard for restaurant
+        follow-up."""
+        if self._bridge_succeeded:
+            return  # Bridge succeeded after all — nothing to do.
+        import telnyx_service
+        if self._transfer_fallback_task is not None:
+            self._transfer_fallback_task.cancel()
+            self._transfer_fallback_task = None
+        await telnyx_service.hang_up_call(self.call_sid)
+        if self._pipeline_task is not None:
+            try:
+                await self._pipeline_task.cancel()
+            except Exception as e:
+                logger.warning(f"[{self.call_sid}] Pipeline cancel after transfer timeout: {e}")
+
     async def _transfer_call(self, to_number: str) -> bool:
-        """Transfer the call to a human agent via Telnyx Call Control API."""
-        api_key = os.environ.get("TELNYX_API_KEY")
-        if not api_key:
+        """Transfer the call to a human agent via Telnyx Call Control API.
+
+        Delegates to telnyx_service.transfer_call so the Telnyx-side ring
+        timeout (timeout_secs) is wired through consistently. The service
+        layer handles the env-var guard and HTTP error mapping.
+        """
+        if not os.environ.get("TELNYX_API_KEY"):
             logger.error(
                 f"[{self.call_sid}] Cannot transfer call to {to_number} — "
                 f"TELNYX_API_KEY environment variable is not set"
             )
             return False
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f"https://api.telnyx.com/v2/calls/{self.call_sid}/actions/transfer",
-                    json={"to": to_number},
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                resp.raise_for_status()
-            logger.info(f"[{self.call_sid}] Call transferred to {to_number}")
-            return True
-        except Exception as e:
-            logger.error(f"[{self.call_sid}] Transfer to {to_number} failed: {e}")
-            return False
+        import telnyx_service
+        return await telnyx_service.transfer_call(
+            self.call_sid,
+            to_number,
+            timeout_secs=TRANSFER_RING_TIMEOUT_SECS,
+        )
     # ------------------------------------------------------------------
     # Order dispatch with retry
     # ------------------------------------------------------------------
