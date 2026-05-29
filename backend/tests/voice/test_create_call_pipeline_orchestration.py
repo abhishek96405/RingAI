@@ -582,6 +582,67 @@ async def test_disconnect_handler_skips_on_call_complete_when_already_fired(
     on_complete.assert_not_awaited()
 
 
+async def test_disconnect_skips_hangup_when_transfer_in_progress(
+    pipecat_mocks, fake_gemini_live, make_call_session, monkeypatch
+):
+    """Regression for 2026-05-29 production bug. After call.bridged fires,
+    _handle_transfer_bridged cancels the pipeline. The Pipecat WS teardown
+    then triggers on_client_disconnected. If that handler calls hang_up_call
+    on the A-leg, Telnyx tears down the bridge ~334ms after it was
+    established and the customer is dropped mid-conversation. Guard:
+    skip the hangup when session._transfer_in_progress is True; Telnyx
+    owns the bridge lifecycle in that case."""
+    import call_pipeline
+
+    sess = make_call_session()
+    sess._transfer_in_progress = True  # simulate post-bridge state
+    await call_pipeline.create_call_pipeline(
+        websocket=MagicMock(),
+        system_prompt="hi",
+        restaurant_id="r",
+        call_sid="c",
+        session=sess,
+    )
+    hang_up = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.hang_up_call", hang_up)
+    pipecat_mocks["task"].cancel = AsyncMock()
+    handler = pipecat_mocks["event_handlers"]["on_client_disconnected"]
+
+    await handler(transport=None, client=None)
+
+    # CRITICAL: A-leg must NOT be hung up. It's the bridge anchor.
+    hang_up.assert_not_awaited()
+
+
+async def test_disconnect_still_hangs_up_when_no_transfer(
+    pipecat_mocks, fake_gemini_live, make_call_session, monkeypatch
+):
+    """Regression-prevention complement to the test above. For normal
+    disconnects (customer hung up, network dropped, etc.) the disconnect
+    handler must still explicitly call hang_up_call — the
+    auto_hang_up=False serializer means nothing else will. The guard
+    introduced for the transfer case must not over-correct."""
+    import call_pipeline
+
+    sess = make_call_session()
+    assert sess._transfer_in_progress is False  # normal call, no transfer
+    await call_pipeline.create_call_pipeline(
+        websocket=MagicMock(),
+        system_prompt="hi",
+        restaurant_id="r",
+        call_sid="c",
+        session=sess,
+    )
+    hang_up = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.hang_up_call", hang_up)
+    pipecat_mocks["task"].cancel = AsyncMock()
+    handler = pipecat_mocks["event_handlers"]["on_client_disconnected"]
+
+    await handler(transport=None, client=None)
+
+    hang_up.assert_awaited_once_with("c")
+
+
 async def test_disconnect_handler_cancels_call_timer(
     pipecat_mocks, fake_gemini_live, make_call_session
 ):

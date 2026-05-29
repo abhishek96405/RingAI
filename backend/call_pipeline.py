@@ -493,19 +493,19 @@ class CallSession:
         )
         await asyncio.sleep(HANGUP_DELAY_SECS)
 
-        # Fire on_call_complete BEFORE branch-specific logic. The helper is
-        # idempotent — for paths that already fired (order_confirmed,
-        # appointment_confirmed, reservation_confirmed via _handle_*), this
-        # is a no-op. For paths that arrive here without a prior fire
-        # (escalation, customer_idle, farewell_timeout), this is the
-        # firing point. Previously the call_records insert was missed
-        # entirely for those reasons.
-        await self._fire_on_call_complete()
-
         import telnyx_service
 
         # For escalation — transfer to human if phone number is configured
         if reason == "escalation":
+            # Fire on_call_complete in the background. on_call_complete calls
+            # analyse_call_transcript, which makes a Gemini API call that can
+            # take 12-16s when Gemini 503s and retries. Awaiting it
+            # synchronously here delays the actual /actions/transfer by the
+            # same amount — the customer hears "Please hold" then dead air
+            # while the analytics path retries. The escalation record will
+            # be saved asynchronously; the helper is idempotent so any
+            # downstream cleanup that also calls it is a no-op.
+            asyncio.create_task(self._fire_on_call_complete())
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
             if escalation_phone:
                 transferred = await self._transfer_call(escalation_phone)
@@ -534,6 +534,13 @@ class CallSession:
         else:
             # Normal hangup paths (order_confirmed, appointment_confirmed,
             # reservation_confirmed, customer_idle, farewell_timeout).
+            # Fire on_call_complete synchronously here — for the confirm
+            # flows the helper is idempotent (already fired by _handle_*).
+            # For customer_idle and farewell_timeout this is the firing
+            # point that fixes the latent bug (commit 902411df). Blocking
+            # is fine here: customer already heard the goodbye phrase, no
+            # transfer is in flight.
+            await self._fire_on_call_complete()
             # Explicit hangup required since the serializer no longer does it.
             await telnyx_service.hang_up_call(self.call_sid)
 
@@ -1717,16 +1724,29 @@ async def create_call_pipeline(
                 logger.error(f"[{call_sid}] Post-call error: {e}", exc_info=True)
 
             finally:
-                # Explicit Telnyx hangup before pipeline teardown. Customer
-                # already disconnected (WS dropped), so this is idempotent —
-                # Telnyx returns 90018 if the leg is already gone, which
-                # hang_up_call treats as success. Necessary now that
-                # auto_hang_up=False on the serializer.
-                try:
-                    import telnyx_service
-                    await telnyx_service.hang_up_call(call_sid)
-                except Exception as e:
-                    logger.warning(f"[{call_sid}] Telnyx hangup in disconnect failed (non-fatal): {e}")
+                # Skip explicit Telnyx hangup when a transfer is or was in
+                # progress for this session. After call.bridged, the WS
+                # closes (our side of the pipeline is gone, by design) and
+                # this disconnect handler runs — but the A-leg is the
+                # bridge anchor and hanging it up tears down the
+                # customer↔human audio path. Telnyx manages the bridge
+                # lifecycle; we get call.hangup webhooks when it ends
+                # naturally.
+                #
+                # For non-transfer disconnects (customer hangs up normally,
+                # network drop, etc.) we still explicitly hang up — the
+                # serializer's auto_hang_up=False means nothing else will.
+                if session is None or not getattr(session, "_transfer_in_progress", False):
+                    try:
+                        import telnyx_service
+                        await telnyx_service.hang_up_call(call_sid)
+                    except Exception as e:
+                        logger.warning(f"[{call_sid}] Telnyx hangup in disconnect failed (non-fatal): {e}")
+                else:
+                    logger.info(
+                        f"[{call_sid}] Skipping A-leg hangup in disconnect — "
+                        f"transfer in progress (bridge owned by Telnyx)"
+                    )
                 # Always cancel pipeline on disconnect — safe even if already cancelled
                 try:
                     await task.cancel()
