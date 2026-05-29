@@ -479,6 +479,15 @@ class CallSession:
         )
         await asyncio.sleep(HANGUP_DELAY_SECS)
 
+        # Fire on_call_complete BEFORE branch-specific logic. The helper is
+        # idempotent — for paths that already fired (order_confirmed,
+        # appointment_confirmed, reservation_confirmed via _handle_*), this
+        # is a no-op. For paths that arrive here without a prior fire
+        # (escalation, customer_idle, farewell_timeout), this is the
+        # firing point. Previously the call_records insert was missed
+        # entirely for those reasons.
+        await self._fire_on_call_complete()
+
         # For escalation — transfer to human if phone number is configured
         if reason == "escalation":
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
