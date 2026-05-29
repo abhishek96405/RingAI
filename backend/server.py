@@ -86,6 +86,22 @@ def get_price_id_to_plan_map() -> dict:
 _active_websockets: Set[WebSocket] = set()
 _shutdown_requested = False
 
+# In-process registry for live CallSession objects, keyed on A-leg
+# call_control_id (== CallSession.call_sid == db.active_calls.call_sid ==
+# payload.call_control_id in every Telnyx webhook). Lets webhook handlers
+# reach the live session for events like call.bridged. Process-local;
+# horizontal scaling would need a Redis pub/sub layer in front of this.
+_ACTIVE_SESSIONS: Dict[str, Any] = {}
+
+def register_call_session(call_sid: str, session: Any) -> None:
+    _ACTIVE_SESSIONS[call_sid] = session
+
+def unregister_call_session(call_sid: str) -> None:
+    _ACTIVE_SESSIONS.pop(call_sid, None)
+
+def get_call_session(call_sid: str) -> Optional[Any]:
+    return _ACTIVE_SESSIONS.get(call_sid)
+
 def register_active_websocket(ws: WebSocket):
     _active_websockets.add(ws)
 
@@ -4140,8 +4156,40 @@ async def telnyx_incoming_call(request: Request):
         ws_url = f"{scheme}://{host}/api/telnyx/media-stream"
         await telnyx_service.start_streaming(call_control_id, ws_url)
 
+    elif event_type == "call.bridged":
+        # Fires when Telnyx has connected the customer-human audio bridge
+        # after a /actions/transfer. We can now safely release our side —
+        # auto_hang_up=False on the serializer means cancelling the pipeline
+        # won't kill the A-leg (which is the bridge anchor).
+        session = get_call_session(call_control_id)
+        if session is not None and getattr(session, "_transfer_in_progress", False):
+            logger.info(f"[Telnyx] call.bridged for {call_control_id} — releasing pipeline")
+            await session._handle_transfer_bridged()
+        else:
+            # Bridge for a call we don't have a session for — likely a
+            # process restart between transfer init and bridge complete.
+            # The bridge itself is fine; we just can't do post-bridge cleanup.
+            logger.info(f"[Telnyx] call.bridged for {call_control_id} (no session in registry)")
+
     elif event_type == "call.hangup":
-        logger.info(f"[Telnyx] Call ended: {call_control_id}")
+        # If the A-leg of a transfer-in-progress call hangs up before the
+        # bridge succeeds, the transfer is effectively cancelled (customer
+        # gave up, or B-leg timed out and Telnyx cleaned up the A-leg too).
+        # Trigger the timeout path so the fallback watchdog is cancelled
+        # and the pipeline is released.
+        session = get_call_session(call_control_id)
+        if (
+            session is not None
+            and getattr(session, "_transfer_in_progress", False)
+            and not getattr(session, "_bridge_succeeded", False)
+        ):
+            logger.info(
+                f"[Telnyx] call.hangup for {call_control_id} during transfer — "
+                f"treating as transfer timeout"
+            )
+            await session._handle_transfer_timeout()
+        else:
+            logger.info(f"[Telnyx] Call ended: {call_control_id}")
 
     elif event_type in ("streaming.started", "streaming.stopped", "streaming.failed"):
         logger.info(f"[Telnyx] {event_type}: {event_payload}")
@@ -4386,6 +4434,9 @@ async def telnyx_media_stream(websocket: WebSocket):
         if not session.is_open:
             logger.info(f"[{call_sid}] Restaurant is CLOSED — order dispatch blocked")
 
+        # Register session so webhook handlers (call.bridged etc.) can reach it
+        register_call_session(call_sid, session)
+
         async def on_call_complete(call_sid, restaurant_id, transcript, session=None):
             """Save full call record including extracted order and quality eval."""
             try:
@@ -4577,6 +4628,8 @@ async def telnyx_media_stream(websocket: WebSocket):
             pass
     finally:
         unregister_active_websocket(websocket)
+        if call_control_id:
+            unregister_call_session(call_control_id)
 
 # ============================================================
 # BILLING / INTEGRATIONS
@@ -5576,6 +5629,70 @@ async def startup_scheduler():
         logger.warning(f"Could not start scheduler: {e}")
 
 
+# Zombie-call sweeper config
+ZOMBIE_SWEEPER_INTERVAL_SECS = int(os.environ.get("ZOMBIE_SWEEPER_INTERVAL_SECS", "60"))
+ZOMBIE_CALL_MAX_AGE_SECS = int(os.environ.get("ZOMBIE_CALL_MAX_AGE_SECS", "600"))  # 10 min
+_zombie_sweeper_task: Optional[asyncio.Task] = None
+
+
+async def _zombie_call_sweeper() -> None:
+    """Backstop for hangup paths that we missed in code.
+
+    With auto_hang_up=False on TelnyxFrameSerializer, every legitimate
+    hangup path must explicitly call telnyx_service.hang_up_call. If we
+    ever miss one (bug, exception, process crash mid-call), the Telnyx
+    leg stays alive and we keep billing for empty audio time. This task
+    periodically scans active_calls for entries older than 10 minutes
+    and force-hangs-up via Telnyx as a final safety net.
+
+    If this ever fires in production, treat it as a bug to investigate —
+    the sweeper is not the primary mechanism for anything.
+    """
+    import telnyx_service
+    from datetime import datetime, timezone, timedelta
+    logger.info(
+        f"Zombie-call sweeper started (interval={ZOMBIE_SWEEPER_INTERVAL_SECS}s, "
+        f"max_age={ZOMBIE_CALL_MAX_AGE_SECS}s)"
+    )
+    while not _shutdown_requested:
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=ZOMBIE_CALL_MAX_AGE_SECS)).isoformat()
+            zombies = await db.active_calls.find(
+                {"started_at": {"$lt": cutoff}}, {"call_sid": 1}
+            ).to_list(50)
+            for doc in zombies:
+                call_sid = doc.get("call_sid")
+                if not call_sid:
+                    continue
+                logger.warning(
+                    f"[zombie sweeper] Active call {call_sid} older than "
+                    f"{ZOMBIE_CALL_MAX_AGE_SECS}s — force hangup. "
+                    f"(Indicates a missed hangup path; investigate.)"
+                )
+                try:
+                    await telnyx_service.hang_up_call(call_sid)
+                except Exception as e:
+                    logger.error(f"[zombie sweeper] Telnyx hangup for {call_sid} failed: {e}")
+                try:
+                    await db.active_calls.delete_one({"call_sid": call_sid})
+                except Exception as e:
+                    logger.error(f"[zombie sweeper] active_calls cleanup for {call_sid} failed: {e}")
+        except Exception as e:
+            logger.error(f"[zombie sweeper] iteration failed (continuing): {e}", exc_info=True)
+        try:
+            await asyncio.sleep(ZOMBIE_SWEEPER_INTERVAL_SECS)
+        except asyncio.CancelledError:
+            break
+    logger.info("Zombie-call sweeper stopped")
+
+
+@app.on_event("startup")
+async def _start_zombie_sweeper():
+    """Spawn the zombie-call sweeper background task on app startup."""
+    global _zombie_sweeper_task
+    _zombie_sweeper_task = asyncio.create_task(_zombie_call_sweeper())
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
     """Clean up on shutdown."""
@@ -5584,4 +5701,6 @@ async def shutdown_db_client():
         stop_scheduler()
     except Exception:
         pass
+    if _zombie_sweeper_task is not None and not _zombie_sweeper_task.done():
+        _zombie_sweeper_task.cancel()
     client.close()

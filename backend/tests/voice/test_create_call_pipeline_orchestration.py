@@ -58,6 +58,10 @@ def pipecat_mocks(monkeypatch):
             return deco
 
     class FakeSerializer:
+        class InputParams:
+            def __init__(self, **kw):
+                self.kwargs = kw
+
         def __init__(self, **kw):
             self.kwargs = kw
 
@@ -552,9 +556,13 @@ async def test_disconnect_handler_invokes_on_call_complete_when_not_scheduled(
     on_complete.assert_awaited_once()
 
 
-async def test_disconnect_handler_skips_on_call_complete_when_hangup_scheduled(
+async def test_disconnect_handler_skips_on_call_complete_when_already_fired(
     pipecat_mocks, fake_gemini_live, make_call_session
 ):
+    """When a prior path (order_confirmed, _schedule_hangup, etc.) has
+    already fired on_call_complete, the disconnect handler must not fire
+    it again. Guarded by session._on_call_complete_fired via the
+    _fire_on_call_complete helper."""
     import call_pipeline
 
     sess = make_call_session()
@@ -567,7 +575,7 @@ async def test_disconnect_handler_skips_on_call_complete_when_hangup_scheduled(
         session=sess,
         on_call_complete=on_complete,
     )
-    sess._hangup_scheduled = True
+    sess._on_call_complete_fired = True  # simulate prior fire site
     handler = pipecat_mocks["event_handlers"]["on_client_disconnected"]
     pipecat_mocks["task"].cancel = AsyncMock()
     await handler(transport=None, client=None)

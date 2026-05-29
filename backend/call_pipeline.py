@@ -7,10 +7,9 @@ Handles real-time phone calls via Telnyx:
   → TelnyxFrameSerializer → Telnyx
 
 Behavior:
-  - on_call_complete fires reliably from _schedule_hangup BEFORE pipeline cancel
-  - _hangup_scheduled flag prevents double-call to on_call_complete
-  - on_client_disconnected only fires on_call_complete if _schedule_hangup didn't
-  - session._on_call_complete stored so _schedule_hangup can invoke it directly
+  - on_call_complete fires exactly once per call via _fire_on_call_complete helper
+  - _on_call_complete_fired flag guards against double-fire across all call sites
+  - session._on_call_complete stored so any path can invoke it via the helper
   - Hangup via pipeline task cancel (TelnyxFrameSerializer handles WS close)
   - Pipeline teardown stops Gemini Live billing
   - Order dispatch with 3 retries + backoff
@@ -256,6 +255,16 @@ VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 # Seconds to wait after farewell TTS before hanging up
 HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "1.5"))
 
+# Telnyx-side ring timeout on /actions/transfer — destination has this long to
+# answer before Telnyx aborts the outbound dial and fires call.hangup on the
+# B-leg. Durable across our backend restarts.
+TRANSFER_RING_TIMEOUT_SECS = int(os.environ.get("TRANSFER_RING_TIMEOUT_SECS", "30"))
+
+# In-process safety net — fires slightly later than the Telnyx-side timeout so
+# the webhook gets first crack at cleanup. Catches missed/delayed call.hangup
+# or call.bridged webhooks.
+TRANSFER_FALLBACK_TIMEOUT_SECS = float(os.environ.get("TRANSFER_FALLBACK_TIMEOUT_SECS", "35"))
+
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +304,12 @@ class CallSession:
         self._order_confirmed_handled = False  # guards _handle_order_confirmed re-entry
         self._escalated         = False
         self._escalation_deferred = False  # escalation deferred until order completes
-        self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
+        self._hangup_scheduled  = False  # "we've committed to ending this call"
+        self._on_call_complete_fired = False  # "call_records insert + dashboard notify has run"
+        # Transfer race-fix state — see _schedule_hangup escalation branch
+        self._transfer_in_progress = False  # transfer dispatched, awaiting call.bridged or fallback
+        self._bridge_succeeded = False       # set by call.bridged webhook handler
+        self._transfer_fallback_task: Optional[Any] = None  # 35s safety timeout
         self._booking_dispatched = False  # For appointment businesses
         self._reservation_dispatched = False  # For restaurant reservations
         self._appointment_total  = 0      # price_cents sum for booked services
@@ -373,6 +387,29 @@ class CallSession:
     # Order confirmed — dispatch then hang up
     # ------------------------------------------------------------------
 
+    async def _fire_on_call_complete(self) -> None:
+        """Fire on_call_complete exactly once per call. All call sites route through here.
+
+        Flag flip is BEFORE the await so a re-entrant invocation during the
+        callback is short-circuited. Exceptions in the callback are logged and
+        swallowed; the flag stays True (we don't retry analytics/billing).
+        """
+        if self._on_call_complete_fired:
+            return
+        self._on_call_complete_fired = True
+        if not self._on_call_complete:
+            return
+        try:
+            logger.info(f"[{self.call_sid}] Firing on_call_complete")
+            await self._on_call_complete(
+                call_sid=self.call_sid,
+                restaurant_id=self.restaurant_id,
+                transcript=self.transcript,
+                session=self,
+            )
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+
     async def _handle_order_confirmed(self):
         """Handle restaurant orders — dispatch order then hang up."""
         # Re-entry guard: only handle once even if called from multiple detection paths
@@ -387,19 +424,7 @@ class CallSession:
         self._hangup_scheduled = True
         if not self._order_dispatched:
             await self.dispatch_order_if_ready()
-        if self._on_call_complete:
-            try:
-                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_order_confirmed")
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        # Keep _hangup_scheduled = True — prevents on_client_disconnected from
-        # calling on_call_complete again. _schedule_hangup uses _skip_guard to proceed.
+        await self._fire_on_call_complete()
         if self._call_timer_task:
             self._call_timer_task.cancel()
             self._call_timer_task = None
@@ -413,17 +438,7 @@ class CallSession:
         """Handle appointment businesses — dispatch booking then hang up."""
         self._hangup_scheduled = True
         await self.dispatch_booking(db=self.db)
-        if self._on_call_complete:
-            try:
-                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_appointment_confirmed")
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+        await self._fire_on_call_complete()
         await self._schedule_hangup(reason="appointment_confirmed", _skip_guard=True)
 
     async def _handle_reservation_confirmed(self):
@@ -459,18 +474,8 @@ class CallSession:
         except Exception as e:
             logger.error(f"[{self.call_sid}] Reservation handling error: {e}", exc_info=True)
         
-        # Call on_call_complete if configured
-        if self._on_call_complete:
-            try:
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        
+        await self._fire_on_call_complete()
+
         # Schedule hangup after reservation confirmed — delay so AI finishes speaking
         await asyncio.sleep(2.0)
         await self._schedule_hangup(reason="reservation_confirmed")
@@ -488,18 +493,49 @@ class CallSession:
         )
         await asyncio.sleep(HANGUP_DELAY_SECS)
 
+        # Fire on_call_complete BEFORE branch-specific logic. The helper is
+        # idempotent — for paths that already fired (order_confirmed,
+        # appointment_confirmed, reservation_confirmed via _handle_*), this
+        # is a no-op. For paths that arrive here without a prior fire
+        # (escalation, customer_idle, farewell_timeout), this is the
+        # firing point. Previously the call_records insert was missed
+        # entirely for those reasons.
+        await self._fire_on_call_complete()
+
+        import telnyx_service
+
         # For escalation — transfer to human if phone number is configured
         if reason == "escalation":
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
             if escalation_phone:
                 transferred = await self._transfer_call(escalation_phone)
                 if transferred:
-                    if self._pipeline_task is not None:
-                        try:
-                            await self._pipeline_task.cancel()
-                        except Exception:
-                            pass
-                    return  # Transfer took over — Telnyx controls the call
+                    # Transfer accepted by Telnyx (200 OK). Telnyx is now
+                    # dialing the destination. DO NOT cancel the pipeline or
+                    # hang up the A-leg — both would abort the in-progress
+                    # outbound dial. Instead:
+                    #   1. Stop the media stream so Gemini Live goes idle
+                    #      (no input audio = no token billing).
+                    #   2. Mark transfer-in-progress so the disconnect path
+                    #      and any stray cleanup know to leave the call alone.
+                    #   3. Start the fallback safety timer.
+                    # The pipeline is cancelled later in _handle_transfer_bridged
+                    # (fired by the call.bridged webhook) or _handle_transfer_timeout.
+                    self._transfer_in_progress = True
+                    await telnyx_service.stop_streaming(self.call_sid)
+                    self._transfer_fallback_task = asyncio.create_task(
+                        self._transfer_fallback_watchdog()
+                    )
+                    return
+            # Escalation requested but failed to dispatch (no number, or
+            # transfer endpoint errored) — fall through to terminate. We
+            # explicitly hang up the Telnyx leg since auto_hang_up=False.
+            await telnyx_service.hang_up_call(self.call_sid)
+        else:
+            # Normal hangup paths (order_confirmed, appointment_confirmed,
+            # reservation_confirmed, customer_idle, farewell_timeout).
+            # Explicit hangup required since the serializer no longer does it.
+            await telnyx_service.hang_up_call(self.call_sid)
 
         if self._pipeline_task is not None:
             try:
@@ -508,31 +544,78 @@ class CallSession:
             except Exception as e:
                 logger.warning(f"[{self.call_sid}] Pipeline cancel error (non-fatal): {e}")
 
+    async def _transfer_fallback_watchdog(self) -> None:
+        """Backstop in case the call.bridged or B-leg call.hangup webhook
+        never arrives — sleeps TRANSFER_FALLBACK_TIMEOUT_SECS, then forces
+        teardown. If the webhook fires first, the handler cancels this task."""
+        try:
+            await asyncio.sleep(TRANSFER_FALLBACK_TIMEOUT_SECS)
+        except asyncio.CancelledError:
+            return
+        logger.warning(
+            f"[{self.call_sid}] Transfer fallback fired — no call.bridged or "
+            f"B-leg hangup webhook in {TRANSFER_FALLBACK_TIMEOUT_SECS}s. "
+            f"Forcing teardown."
+        )
+        await self._handle_transfer_timeout()
+
+    async def _handle_transfer_bridged(self) -> None:
+        """Called by the call.bridged webhook handler in server.py when
+        Telnyx confirms the customer-human audio bridge is live. Safe to
+        tear down our side now — auto_hang_up=False means cancelling the
+        pipeline won't kill the A-leg, which is the bridge anchor."""
+        if self._bridge_succeeded:
+            return
+        self._bridge_succeeded = True
+        logger.info(f"[{self.call_sid}] Bridge succeeded — releasing pipeline")
+        if self._transfer_fallback_task is not None:
+            self._transfer_fallback_task.cancel()
+            self._transfer_fallback_task = None
+        if self._pipeline_task is not None:
+            try:
+                await self._pipeline_task.cancel()
+            except Exception as e:
+                logger.warning(f"[{self.call_sid}] Pipeline cancel after bridge: {e}")
+
+    async def _handle_transfer_timeout(self) -> None:
+        """Called when the destination didn't answer (B-leg call.hangup from
+        Telnyx's timeout_secs, OR our fallback watchdog fires). Per product
+        decision (May 2026): no TTS goodbye, no AMD, no fallback chain — just
+        terminate the A-leg. Customer's experience is ringing then dead line;
+        the call appears as ESCALATED in the dashboard for restaurant
+        follow-up."""
+        if self._bridge_succeeded:
+            return  # Bridge succeeded after all — nothing to do.
+        import telnyx_service
+        if self._transfer_fallback_task is not None:
+            self._transfer_fallback_task.cancel()
+            self._transfer_fallback_task = None
+        await telnyx_service.hang_up_call(self.call_sid)
+        if self._pipeline_task is not None:
+            try:
+                await self._pipeline_task.cancel()
+            except Exception as e:
+                logger.warning(f"[{self.call_sid}] Pipeline cancel after transfer timeout: {e}")
+
     async def _transfer_call(self, to_number: str) -> bool:
-        """Transfer the call to a human agent via Telnyx Call Control API."""
-        api_key = os.environ.get("TELNYX_API_KEY")
-        if not api_key:
+        """Transfer the call to a human agent via Telnyx Call Control API.
+
+        Delegates to telnyx_service.transfer_call so the Telnyx-side ring
+        timeout (timeout_secs) is wired through consistently. The service
+        layer handles the env-var guard and HTTP error mapping.
+        """
+        if not os.environ.get("TELNYX_API_KEY"):
             logger.error(
                 f"[{self.call_sid}] Cannot transfer call to {to_number} — "
                 f"TELNYX_API_KEY environment variable is not set"
             )
             return False
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f"https://api.telnyx.com/v2/calls/{self.call_sid}/actions/transfer",
-                    json={"to": to_number},
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                resp.raise_for_status()
-            logger.info(f"[{self.call_sid}] Call transferred to {to_number}")
-            return True
-        except Exception as e:
-            logger.error(f"[{self.call_sid}] Transfer to {to_number} failed: {e}")
-            return False
+        import telnyx_service
+        return await telnyx_service.transfer_call(
+            self.call_sid,
+            to_number,
+            timeout_secs=TRANSFER_RING_TIMEOUT_SECS,
+        )
     # ------------------------------------------------------------------
     # Order dispatch with retry
     # ------------------------------------------------------------------
@@ -1026,12 +1109,19 @@ async def create_call_pipeline(
         if not _TELNYX_SERIALIZER_AVAILABLE:
             logger.error(f"[{call_sid}] TelnyxFrameSerializer not installed (pipecat-ai[telnyx] missing)")
             return None
+        # auto_hang_up=False: every hangup path in this module now invokes
+        # telnyx_service.hang_up_call(call_sid) explicitly before cancelling
+        # the pipeline. The serializer's implicit hangup-on-EndFrame killed
+        # in-progress transfers (race window between transfer-accepted and
+        # bridge-established); explicit ownership lets the escalation path
+        # cancel the pipeline AFTER call.bridged without ending the A-leg.
         _serializer = TelnyxFrameSerializer(
             stream_id=stream_sid or call_sid,
             outbound_encoding="PCMU",
             inbound_encoding="PCMU",
             call_control_id=call_sid,
             api_key=os.environ.get("TELNYX_API_KEY", ""),
+            params=TelnyxFrameSerializer.InputParams(auto_hang_up=False),
         )
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
@@ -1605,26 +1695,38 @@ async def create_call_pipeline(
                             if result["success"]:
                                 session.order.kitchen_order_id = result["order_id"]
 
-                # ✅ Only call on_call_complete if _schedule_hangup hasn't already called it
-                if on_call_complete and (not session or not session._hangup_scheduled):
-                    logger.info(f"[{call_sid}] Calling on_call_complete from on_client_disconnected")
-                    t = session.transcript if session else []
+                # Route through the session's idempotent helper — fires
+                # exactly once per call across every potential caller. If a
+                # prior path already fired (order_confirmed, _schedule_hangup,
+                # etc.), this is a no-op.
+                if session is not None:
+                    await session._fire_on_call_complete()
+                elif on_call_complete:
+                    # Defensive fallback: no session attached (pipeline failed
+                    # to build past WS handshake) — invoke the callback
+                    # directly with whatever we have.
+                    logger.info(f"[{call_sid}] Firing on_call_complete from disconnect (no session)")
                     await on_call_complete(
                         call_sid=call_sid,
                         restaurant_id=restaurant_id,
-                        transcript=t,
-                        session=session,
-                    )
-                else:
-                    logger.info(
-                        f"[{call_sid}] Skipping on_call_complete in disconnect "
-                        f"(already called via _schedule_hangup)"
+                        transcript=[],
+                        session=None,
                     )
 
             except Exception as e:
                 logger.error(f"[{call_sid}] Post-call error: {e}", exc_info=True)
 
             finally:
+                # Explicit Telnyx hangup before pipeline teardown. Customer
+                # already disconnected (WS dropped), so this is idempotent —
+                # Telnyx returns 90018 if the leg is already gone, which
+                # hang_up_call treats as success. Necessary now that
+                # auto_hang_up=False on the serializer.
+                try:
+                    import telnyx_service
+                    await telnyx_service.hang_up_call(call_sid)
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] Telnyx hangup in disconnect failed (non-fatal): {e}")
                 # Always cancel pipeline on disconnect — safe even if already cancelled
                 try:
                     await task.cancel()

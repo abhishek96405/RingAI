@@ -221,30 +221,58 @@ async def test_schedule_hangup_with_skip_guard_runs_even_when_already_scheduled(
 async def test_schedule_hangup_escalation_attempts_transfer(
     make_call_session, monkeypatch
 ):
-    """When escalating and an escalation_phone_number is configured, transfer is attempted."""
+    """On successful escalation transfer, the pipeline MUST NOT be cancelled
+    and the Telnyx leg MUST NOT be hung up — both would abort the in-progress
+    outbound dial before Telnyx can ring the destination. Instead the session
+    enters _transfer_in_progress state, calls Telnyx streaming_stop, and
+    starts a fallback watchdog task. Pipeline release happens later via the
+    call.bridged webhook handler (see _handle_transfer_bridged)."""
     sess = make_call_session()
     monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
     sess._pipeline_task = AsyncMock()
     sess._pipeline_task.cancel = AsyncMock()
     transfer_mock = AsyncMock(return_value=True)
     sess._transfer_call = transfer_mock
+    stop_streaming = AsyncMock(return_value=True)
+    hang_up = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.stop_streaming", stop_streaming)
+    monkeypatch.setattr("telnyx_service.hang_up_call", hang_up)
 
     await sess._schedule_hangup(reason="escalation")
+
     transfer_mock.assert_awaited_once_with("+15555550199")
-    # When transfer succeeds, cancel is still invoked (return path).
-    assert sess._pipeline_task.cancel.await_count == 1
+    # Pipeline stays alive — bridge needs the A-leg as its anchor.
+    assert sess._pipeline_task.cancel.await_count == 0
+    # Telnyx leg stays alive too.
+    hang_up.assert_not_awaited()
+    # Streaming is stopped so Gemini Live goes idle (no input audio = no billing).
+    stop_streaming.assert_awaited_once_with(sess.call_sid)
+    # Transfer-in-progress flag and fallback watchdog are set.
+    assert sess._transfer_in_progress is True
+    assert sess._transfer_fallback_task is not None
+    # Cleanup: cancel the fallback task to avoid lingering background work.
+    sess._transfer_fallback_task.cancel()
 
 
 async def test_schedule_hangup_escalation_falls_through_when_transfer_fails(
     make_call_session, monkeypatch
 ):
+    """When _transfer_call returns False (no phone or Telnyx errored), the
+    escalation branch falls through to terminate the call — explicit
+    hang_up_call BEFORE pipeline cancel, since auto_hang_up=False on the
+    serializer no longer hangs up implicitly."""
     sess = make_call_session()
     monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
     sess._pipeline_task = AsyncMock()
     sess._pipeline_task.cancel = AsyncMock()
     sess._transfer_call = AsyncMock(return_value=False)
+    hang_up = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.hang_up_call", hang_up)
 
     await sess._schedule_hangup(reason="escalation")
+
+    # Explicit Telnyx hangup BEFORE pipeline cancel.
+    hang_up.assert_awaited_once_with(sess.call_sid)
     assert sess._pipeline_task.cancel.await_count == 1
 
 
