@@ -7,10 +7,9 @@ Handles real-time phone calls via Telnyx:
   → TelnyxFrameSerializer → Telnyx
 
 Behavior:
-  - on_call_complete fires reliably from _schedule_hangup BEFORE pipeline cancel
-  - _hangup_scheduled flag prevents double-call to on_call_complete
-  - on_client_disconnected only fires on_call_complete if _schedule_hangup didn't
-  - session._on_call_complete stored so _schedule_hangup can invoke it directly
+  - on_call_complete fires exactly once per call via _fire_on_call_complete helper
+  - _on_call_complete_fired flag guards against double-fire across all call sites
+  - session._on_call_complete stored so any path can invoke it via the helper
   - Hangup via pipeline task cancel (TelnyxFrameSerializer handles WS close)
   - Pipeline teardown stops Gemini Live billing
   - Order dispatch with 3 retries + backoff
@@ -295,7 +294,8 @@ class CallSession:
         self._order_confirmed_handled = False  # guards _handle_order_confirmed re-entry
         self._escalated         = False
         self._escalation_deferred = False  # escalation deferred until order completes
-        self._hangup_scheduled  = False  # prevents double hangup + double on_call_complete
+        self._hangup_scheduled  = False  # "we've committed to ending this call"
+        self._on_call_complete_fired = False  # "call_records insert + dashboard notify has run"
         self._booking_dispatched = False  # For appointment businesses
         self._reservation_dispatched = False  # For restaurant reservations
         self._appointment_total  = 0      # price_cents sum for booked services
@@ -373,6 +373,29 @@ class CallSession:
     # Order confirmed — dispatch then hang up
     # ------------------------------------------------------------------
 
+    async def _fire_on_call_complete(self) -> None:
+        """Fire on_call_complete exactly once per call. All call sites route through here.
+
+        Flag flip is BEFORE the await so a re-entrant invocation during the
+        callback is short-circuited. Exceptions in the callback are logged and
+        swallowed; the flag stays True (we don't retry analytics/billing).
+        """
+        if self._on_call_complete_fired:
+            return
+        self._on_call_complete_fired = True
+        if not self._on_call_complete:
+            return
+        try:
+            logger.info(f"[{self.call_sid}] Firing on_call_complete")
+            await self._on_call_complete(
+                call_sid=self.call_sid,
+                restaurant_id=self.restaurant_id,
+                transcript=self.transcript,
+                session=self,
+            )
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+
     async def _handle_order_confirmed(self):
         """Handle restaurant orders — dispatch order then hang up."""
         # Re-entry guard: only handle once even if called from multiple detection paths
@@ -387,19 +410,7 @@ class CallSession:
         self._hangup_scheduled = True
         if not self._order_dispatched:
             await self.dispatch_order_if_ready()
-        if self._on_call_complete:
-            try:
-                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_order_confirmed")
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        # Keep _hangup_scheduled = True — prevents on_client_disconnected from
-        # calling on_call_complete again. _schedule_hangup uses _skip_guard to proceed.
+        await self._fire_on_call_complete()
         if self._call_timer_task:
             self._call_timer_task.cancel()
             self._call_timer_task = None
@@ -413,17 +424,7 @@ class CallSession:
         """Handle appointment businesses — dispatch booking then hang up."""
         self._hangup_scheduled = True
         await self.dispatch_booking(db=self.db)
-        if self._on_call_complete:
-            try:
-                logger.info(f"[{self.call_sid}] Calling on_call_complete from _handle_appointment_confirmed")
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
+        await self._fire_on_call_complete()
         await self._schedule_hangup(reason="appointment_confirmed", _skip_guard=True)
 
     async def _handle_reservation_confirmed(self):
@@ -459,18 +460,8 @@ class CallSession:
         except Exception as e:
             logger.error(f"[{self.call_sid}] Reservation handling error: {e}", exc_info=True)
         
-        # Call on_call_complete if configured
-        if self._on_call_complete:
-            try:
-                await self._on_call_complete(
-                    call_sid=self.call_sid,
-                    restaurant_id=self.restaurant_id,
-                    transcript=self.transcript,
-                    session=self,
-                )
-            except Exception as e:
-                logger.error(f"[{self.call_sid}] on_call_complete error: {e}", exc_info=True)
-        
+        await self._fire_on_call_complete()
+
         # Schedule hangup after reservation confirmed — delay so AI finishes speaking
         await asyncio.sleep(2.0)
         await self._schedule_hangup(reason="reservation_confirmed")
@@ -1605,20 +1596,22 @@ async def create_call_pipeline(
                             if result["success"]:
                                 session.order.kitchen_order_id = result["order_id"]
 
-                # ✅ Only call on_call_complete if _schedule_hangup hasn't already called it
-                if on_call_complete and (not session or not session._hangup_scheduled):
-                    logger.info(f"[{call_sid}] Calling on_call_complete from on_client_disconnected")
-                    t = session.transcript if session else []
+                # Route through the session's idempotent helper — fires
+                # exactly once per call across every potential caller. If a
+                # prior path already fired (order_confirmed, _schedule_hangup,
+                # etc.), this is a no-op.
+                if session is not None:
+                    await session._fire_on_call_complete()
+                elif on_call_complete:
+                    # Defensive fallback: no session attached (pipeline failed
+                    # to build past WS handshake) — invoke the callback
+                    # directly with whatever we have.
+                    logger.info(f"[{call_sid}] Firing on_call_complete from disconnect (no session)")
                     await on_call_complete(
                         call_sid=call_sid,
                         restaurant_id=restaurant_id,
-                        transcript=t,
-                        session=session,
-                    )
-                else:
-                    logger.info(
-                        f"[{call_sid}] Skipping on_call_complete in disconnect "
-                        f"(already called via _schedule_hangup)"
+                        transcript=[],
+                        session=None,
                     )
 
             except Exception as e:
