@@ -58,6 +58,10 @@ def pipecat_mocks(monkeypatch):
             return deco
 
     class FakeSerializer:
+        class InputParams:
+            def __init__(self, **kw):
+                self.kwargs = kw
+
         def __init__(self, **kw):
             self.kwargs = kw
 

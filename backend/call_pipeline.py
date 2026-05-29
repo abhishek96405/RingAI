@@ -500,6 +500,17 @@ class CallSession:
                         except Exception:
                             pass
                     return  # Transfer took over — Telnyx controls the call
+            # Escalation requested but failed to dispatch (no number, or
+            # transfer endpoint errored) — fall through to terminate. We
+            # explicitly hang up the Telnyx leg since auto_hang_up=False.
+            import telnyx_service
+            await telnyx_service.hang_up_call(self.call_sid)
+        else:
+            # Normal hangup paths (order_confirmed, appointment_confirmed,
+            # reservation_confirmed, customer_idle, farewell_timeout).
+            # Explicit hangup required since the serializer no longer does it.
+            import telnyx_service
+            await telnyx_service.hang_up_call(self.call_sid)
 
         if self._pipeline_task is not None:
             try:
@@ -1026,12 +1037,19 @@ async def create_call_pipeline(
         if not _TELNYX_SERIALIZER_AVAILABLE:
             logger.error(f"[{call_sid}] TelnyxFrameSerializer not installed (pipecat-ai[telnyx] missing)")
             return None
+        # auto_hang_up=False: every hangup path in this module now invokes
+        # telnyx_service.hang_up_call(call_sid) explicitly before cancelling
+        # the pipeline. The serializer's implicit hangup-on-EndFrame killed
+        # in-progress transfers (race window between transfer-accepted and
+        # bridge-established); explicit ownership lets the escalation path
+        # cancel the pipeline AFTER call.bridged without ending the A-leg.
         _serializer = TelnyxFrameSerializer(
             stream_id=stream_sid or call_sid,
             outbound_encoding="PCMU",
             inbound_encoding="PCMU",
             call_control_id=call_sid,
             api_key=os.environ.get("TELNYX_API_KEY", ""),
+            params=TelnyxFrameSerializer.InputParams(auto_hang_up=False),
         )
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
@@ -1627,6 +1645,16 @@ async def create_call_pipeline(
                 logger.error(f"[{call_sid}] Post-call error: {e}", exc_info=True)
 
             finally:
+                # Explicit Telnyx hangup before pipeline teardown. Customer
+                # already disconnected (WS dropped), so this is idempotent —
+                # Telnyx returns 90018 if the leg is already gone, which
+                # hang_up_call treats as success. Necessary now that
+                # auto_hang_up=False on the serializer.
+                try:
+                    import telnyx_service
+                    await telnyx_service.hang_up_call(call_sid)
+                except Exception as e:
+                    logger.warning(f"[{call_sid}] Telnyx hangup in disconnect failed (non-fatal): {e}")
                 # Always cancel pipeline on disconnect — safe even if already cancelled
                 try:
                     await task.cancel()
