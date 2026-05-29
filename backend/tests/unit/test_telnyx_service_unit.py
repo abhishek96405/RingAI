@@ -248,6 +248,67 @@ async def test_transfer_call(monkeypatch):
     ok = await transfer_call("call_1", "+15551234567")
     assert ok is True
     assert captured["json"]["to"] == "+15551234567"
+    # Default Telnyx ring timeout is 30s — server-side durable fallback.
+    assert captured["json"]["timeout_secs"] == 30
+
+
+async def test_transfer_call_custom_timeout(monkeypatch):
+    """timeout_secs is configurable per call so the in-process fallback
+    watchdog can be tuned alongside it."""
+    from telnyx_service import transfer_call
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _resp(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    await transfer_call("call_1", "+15551234567", timeout_secs=45)
+    assert captured["json"]["timeout_secs"] == 45
+
+
+async def test_hang_up_call_already_ended_returns_true(monkeypatch):
+    """Telnyx error code 90018 (HTTP 422) means the call already ended —
+    treat as success since the desired end-state (call not active) is
+    already achieved. Necessary for the auto_hang_up=False world where
+    multiple cleanup paths may both try to hang up the same call."""
+    from telnyx_service import hang_up_call
+
+    async def fake_post(self, url, **kwargs):
+        return _resp(422, json={"errors": [{"code": "90018", "title": "Call has already ended"}]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    assert await hang_up_call("call_already_dead") is True
+
+
+async def test_stop_streaming_success(monkeypatch):
+    """stop_streaming hits the actions/streaming_stop endpoint and returns
+    True on 200. Used right after a successful transfer to make Gemini
+    Live go idle while keeping the call leg alive."""
+    from telnyx_service import stop_streaming
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        captured["url"] = url
+        return _resp(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    assert await stop_streaming("call_xyz") is True
+    assert captured["url"].endswith("/calls/call_xyz/actions/streaming_stop")
+
+
+async def test_stop_streaming_failure_returns_false(monkeypatch):
+    from telnyx_service import stop_streaming
+
+    async def fake_post(self, url, **kwargs):
+        return _resp(500, text="boom")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    assert await stop_streaming("call_xyz") is False
 
 
 async def test_answer_call_with_client_state(monkeypatch):

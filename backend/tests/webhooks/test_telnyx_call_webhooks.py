@@ -131,6 +131,90 @@ async def test_call_hangup_returns_200(client, telnyx_sdk_mock):
 
 
 # ---------------------------------------------------------------------------
+# call.bridged — transfer-race fix: cleanly releases the pipeline once
+# Telnyx confirms the customer-human bridge is live.
+# ---------------------------------------------------------------------------
+
+
+async def test_call_bridged_with_registered_session_invokes_handler(
+    client, telnyx_sdk_mock
+):
+    """When a session for this call_control_id is in the registry and is
+    awaiting a transfer bridge, the webhook handler must invoke
+    _handle_transfer_bridged on it."""
+    import server
+    from unittest.mock import AsyncMock
+
+    fake_session = AsyncMock()
+    fake_session._transfer_in_progress = True
+    fake_session._bridge_succeeded = False
+    server.register_call_session("cc_bridged_1", fake_session)
+    try:
+        event = _event("call.bridged", call_control_id="cc_bridged_1")
+        r = _post(client, event)
+        assert r.status_code == 200
+        fake_session._handle_transfer_bridged.assert_awaited_once()
+    finally:
+        server.unregister_call_session("cc_bridged_1")
+
+
+async def test_call_bridged_without_session_returns_200_quietly(
+    client, telnyx_sdk_mock
+):
+    """If no session is registered for this call_control_id (process restart
+    between transfer init and bridge complete), the webhook must not crash
+    and must return 200. The bridge itself is fine; we just can't do
+    post-bridge cleanup."""
+    event = _event("call.bridged", call_control_id="cc_orphan_bridge_1")
+    r = _post(client, event)
+    assert r.status_code == 200
+
+
+async def test_call_hangup_during_transfer_invokes_timeout_handler(
+    client, telnyx_sdk_mock
+):
+    """When call.hangup arrives for a session that's mid-transfer (transfer
+    initiated but bridge never succeeded), the webhook routes to the
+    timeout handler so the fallback watchdog gets cancelled and the
+    pipeline is released."""
+    import server
+    from unittest.mock import AsyncMock
+
+    fake_session = AsyncMock()
+    fake_session._transfer_in_progress = True
+    fake_session._bridge_succeeded = False
+    server.register_call_session("cc_timeout_1", fake_session)
+    try:
+        event = _event("call.hangup", call_control_id="cc_timeout_1")
+        r = _post(client, event)
+        assert r.status_code == 200
+        fake_session._handle_transfer_timeout.assert_awaited_once()
+    finally:
+        server.unregister_call_session("cc_timeout_1")
+
+
+async def test_call_hangup_for_normal_call_does_not_invoke_timeout_handler(
+    client, telnyx_sdk_mock
+):
+    """Regular call.hangup (customer hung up normally, no transfer in
+    progress) must NOT trigger the transfer timeout path."""
+    import server
+    from unittest.mock import AsyncMock
+
+    fake_session = AsyncMock()
+    fake_session._transfer_in_progress = False
+    fake_session._bridge_succeeded = False
+    server.register_call_session("cc_normal_hangup_1", fake_session)
+    try:
+        event = _event("call.hangup", call_control_id="cc_normal_hangup_1")
+        r = _post(client, event)
+        assert r.status_code == 200
+        fake_session._handle_transfer_timeout.assert_not_awaited()
+    finally:
+        server.unregister_call_session("cc_normal_hangup_1")
+
+
+# ---------------------------------------------------------------------------
 # Streaming events — log-only paths.
 # ---------------------------------------------------------------------------
 
@@ -150,7 +234,9 @@ async def test_streaming_events_return_200(client, telnyx_sdk_mock, event_type):
 
 
 async def test_unknown_event_type_returns_200(client, telnyx_sdk_mock):
-    event = _event("call.bridged", call_control_id="cc_unk_1")
+    # NOTE: call.bridged is now a handled event (see transfer-race fix).
+    # Use a truly unhandled type here.
+    event = _event("call.recording.saved", call_control_id="cc_unk_1")
     r = _post(client, event)
     assert r.status_code == 200
 
