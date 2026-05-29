@@ -222,7 +222,13 @@ async def send_sms(
 # ---------------------------------------------------------------------------
 
 async def hang_up_call(call_control_id: str) -> bool:
-    """Hang up an active call via Telnyx Call Control API."""
+    """Hang up an active call via Telnyx Call Control API.
+
+    Returns True for both fresh hangups and the "call already ended" case
+    (Telnyx error code 90018). Both outcomes leave the call in the desired
+    state; callers should not retry on either. Returns False only on
+    unexpected errors.
+    """
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -231,31 +237,77 @@ async def hang_up_call(call_control_id: str) -> bool:
                 json={},
                 timeout=10.0,
             )
+            if resp.status_code == 200:
+                logger.info(f"[Telnyx] Hung up call {call_control_id}")
+                return True
+            if resp.status_code == 422:
+                try:
+                    body = resp.json()
+                    if any(err.get("code") == "90018" for err in body.get("errors", [])):
+                        logger.debug(f"[Telnyx] Call {call_control_id} already ended (90018)")
+                        return True
+                except Exception:
+                    pass
             resp.raise_for_status()
-            logger.info(f"[Telnyx] Hung up call {call_control_id}")
             return True
     except Exception as e:
         logger.error(f"[Telnyx] Hang up failed for {call_control_id}: {e}")
         return False
 
 
-async def transfer_call(call_control_id: str, to_number: str) -> bool:
-    """Transfer an active call to a PSTN number via Telnyx Call Control API."""
+async def stop_streaming(call_control_id: str) -> bool:
+    """Stop the media WebSocket stream for an active call.
+
+    The call leg itself stays connected — Telnyx just stops forwarding
+    audio over our WebSocket. Used right after initiating a transfer so
+    the AI side stops receiving customer audio (which keeps Gemini Live
+    idle) while Telnyx bridges A↔B audio internally.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/streaming_stop",
+                headers=_auth_headers(),
+                json={},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            logger.info(f"[Telnyx] Stopped streaming for call {call_control_id}")
+            return True
+    except Exception as e:
+        logger.error(f"[Telnyx] Stop streaming failed for {call_control_id}: {e}")
+        return False
+
+
+async def transfer_call(
+    call_control_id: str,
+    to_number: str,
+    timeout_secs: int = 30,
+) -> bool:
+    """Transfer an active call to a PSTN number via Telnyx Call Control API.
+
+    Args:
+        call_control_id: A-leg call_control_id (the customer's leg).
+        to_number: E.164 destination number for the B-leg dial.
+        timeout_secs: Seconds Telnyx waits for the destination to answer
+            before giving up. Defaults to 30. Telnyx fires call.hangup on
+            the B-leg with cause indicating timeout when this elapses.
+    """
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{TELNYX_API_BASE}/calls/{call_control_id}/actions/transfer",
                 headers=_auth_headers(),
-                json={"to": to_number},
+                json={"to": to_number, "timeout_secs": timeout_secs},
                 timeout=10.0,
             )
             resp.raise_for_status()
-            logger.info(f"[Telnyx] Transferred call {call_control_id} to {to_number}")
+            logger.info(f"[Telnyx] Transferred call {call_control_id} to {to_number} (timeout={timeout_secs}s)")
             return True
     except Exception as e:
         logger.error(f"[Telnyx] Transfer failed for {call_control_id} -> {to_number}: {e}")
         return False
-    
+
 
 async def answer_call(call_control_id: str, client_state: Optional[str] = None) -> bool:
     """Answer an incoming call via Telnyx Call Control API.
