@@ -78,7 +78,13 @@ async def test_schedule_hangup_fires_on_call_complete_for_escalation(
     """Regression for the latent bug: escalation never produced a call_records
     insert because _schedule_hangup didn't fire on_call_complete and the
     on_client_disconnected fallback was suppressed by the _hangup_scheduled
-    flag set at the top of _schedule_hangup."""
+    flag set at the top of _schedule_hangup.
+
+    Post-bug-2-fix: the fire is dispatched as a background task to avoid
+    blocking the transfer on slow Gemini analytics. We yield to the event
+    loop to let the background task complete before asserting."""
+    import asyncio
+
     sess = make_call_session()
     monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
     sess._pipeline_task = AsyncMock()
@@ -89,6 +95,9 @@ async def test_schedule_hangup_fires_on_call_complete_for_escalation(
     monkeypatch.setattr("telnyx_service.hang_up_call", AsyncMock(return_value=True))
 
     await sess._schedule_hangup(reason="escalation")
+    # Let the asyncio.create_task background fire complete.
+    for _ in range(5):
+        await asyncio.sleep(0)
 
     on_complete.assert_awaited_once()
     assert sess._on_call_complete_fired is True
@@ -273,6 +282,64 @@ async def test_transfer_timeout_does_not_double_fire_on_call_complete(
 # in PR1 identified three insertion points; these tests pin the assertion
 # so regressions surface immediately.
 # ---------------------------------------------------------------------------
+
+
+async def test_escalation_does_not_await_on_call_complete_before_transfer(
+    make_call_session, monkeypatch
+):
+    """Regression for 2026-05-29 production observation. on_call_complete
+    runs analyse_call_transcript which makes a Gemini API call; when
+    Gemini 503s and retries, it can take 12-16 seconds. Awaiting that
+    synchronously before invoking _transfer_call meant the customer
+    heard 'Please hold' then dead air for 12+ seconds while we did
+    analytics — the actual transfer didn't fire until extraction
+    finished.
+
+    Fix: the escalation branch dispatches on_call_complete as an
+    asyncio.create_task background fire. This test pins that contract:
+    even when on_call_complete sleeps for several seconds, _transfer_call
+    must run immediately without waiting on it."""
+    import asyncio
+    import time
+
+    sess = make_call_session()
+    monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
+    sess._pipeline_task = AsyncMock()
+    sess._pipeline_task.cancel = AsyncMock()
+
+    # Simulate slow on_call_complete (Gemini 503 retries).
+    async def slow_complete(**kwargs):
+        await asyncio.sleep(5.0)
+
+    sess._on_call_complete = slow_complete
+
+    transfer_started_at = []
+
+    async def fake_transfer(to_number):
+        transfer_started_at.append(time.monotonic())
+        return True
+
+    sess._transfer_call = fake_transfer
+    monkeypatch.setattr("telnyx_service.stop_streaming", AsyncMock(return_value=True))
+    monkeypatch.setattr("telnyx_service.hang_up_call", AsyncMock(return_value=True))
+
+    start = time.monotonic()
+    await sess._schedule_hangup(reason="escalation")
+    elapsed = time.monotonic() - start
+
+    # Transfer was attempted.
+    assert len(transfer_started_at) == 1
+    # _schedule_hangup returned in well under a second despite the 5s
+    # on_call_complete; the background task is still running.
+    assert elapsed < 1.0, (
+        f"_schedule_hangup blocked for {elapsed:.2f}s — escalation transfer "
+        f"was delayed by synchronous on_call_complete. Background-task "
+        f"dispatch regressed."
+    )
+
+    # Clean up the still-running background task to avoid lingering work.
+    if sess._transfer_fallback_task is not None:
+        sess._transfer_fallback_task.cancel()
 
 
 async def test_normal_hangup_branch_explicitly_hangs_up_telnyx_leg(
