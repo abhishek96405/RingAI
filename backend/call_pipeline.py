@@ -1717,16 +1717,29 @@ async def create_call_pipeline(
                 logger.error(f"[{call_sid}] Post-call error: {e}", exc_info=True)
 
             finally:
-                # Explicit Telnyx hangup before pipeline teardown. Customer
-                # already disconnected (WS dropped), so this is idempotent —
-                # Telnyx returns 90018 if the leg is already gone, which
-                # hang_up_call treats as success. Necessary now that
-                # auto_hang_up=False on the serializer.
-                try:
-                    import telnyx_service
-                    await telnyx_service.hang_up_call(call_sid)
-                except Exception as e:
-                    logger.warning(f"[{call_sid}] Telnyx hangup in disconnect failed (non-fatal): {e}")
+                # Skip explicit Telnyx hangup when a transfer is or was in
+                # progress for this session. After call.bridged, the WS
+                # closes (our side of the pipeline is gone, by design) and
+                # this disconnect handler runs — but the A-leg is the
+                # bridge anchor and hanging it up tears down the
+                # customer↔human audio path. Telnyx manages the bridge
+                # lifecycle; we get call.hangup webhooks when it ends
+                # naturally.
+                #
+                # For non-transfer disconnects (customer hangs up normally,
+                # network drop, etc.) we still explicitly hang up — the
+                # serializer's auto_hang_up=False means nothing else will.
+                if session is None or not getattr(session, "_transfer_in_progress", False):
+                    try:
+                        import telnyx_service
+                        await telnyx_service.hang_up_call(call_sid)
+                    except Exception as e:
+                        logger.warning(f"[{call_sid}] Telnyx hangup in disconnect failed (non-fatal): {e}")
+                else:
+                    logger.info(
+                        f"[{call_sid}] Skipping A-leg hangup in disconnect — "
+                        f"transfer in progress (bridge owned by Telnyx)"
+                    )
                 # Always cancel pipeline on disconnect — safe even if already cancelled
                 try:
                     await task.cancel()
