@@ -452,6 +452,7 @@ export default function Onboarding() {
               <div className="space-y-2">
                 <Label>Business Phone</Label>
                 <Input value={restaurantData.business_phone} onChange={(e) => setRestaurantData({ ...restaurantData, business_phone: e.target.value })} className="h-11 rounded-xl" />
+                <p className="text-xs text-muted-foreground">We'll forward calls from this number to your Duuutah AI line. You can set up forwarding instructions in Settings after onboarding.</p>
               </div>
               <div className="space-y-2">
                 <Label>Billing Email</Label>
@@ -628,6 +629,7 @@ export default function Onboarding() {
             <div className="space-y-2">
               <Label>Escalation Phone Number</Label>
               <Input value={aiConfig.escalation_phone_number} onChange={(e) => setAiConfig({ ...aiConfig, escalation_phone_number: e.target.value })} className="h-11 rounded-xl" />
+              <p className="text-xs text-muted-foreground">This is the phone inside your business that rings when the AI hands off to a human. Must be different from your business phone.</p>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
