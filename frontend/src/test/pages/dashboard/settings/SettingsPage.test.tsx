@@ -32,6 +32,13 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("tab", { name: /rules/i })).toBeInTheDocument();
   });
 
+  it("renders the Phone & Forwarding tab", async () => {
+    renderWithProviders(<Shell />);
+    expect(
+      await screen.findByRole("tab", { name: /phone & forwarding/i }),
+    ).toBeInTheDocument();
+  });
+
   it("includes a Fulfillment tab for restaurant business type", async () => {
     renderWithProviders(<Shell />);
     expect(
