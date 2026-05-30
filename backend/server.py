@@ -1134,6 +1134,26 @@ async def select_restaurant(data: RestaurantSelection, user: Dict[str, Any] = De
 async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depends(get_current_user)):
     restaurant_data = data.model_dump()
 
+    # Normalize the two phones now stored on the Restaurant document so that
+    # the distinctness check (and downstream lookups) compare canonical forms.
+    from security_utils import normalize_e164, validate_phones_distinct
+    for field in ("phone_number", "business_phone"):
+        raw = restaurant_data.get(field)
+        if raw:
+            try:
+                restaurant_data[field] = normalize_e164(raw)
+            except ValueError:
+                # Leave the raw value; field-level validation lives elsewhere.
+                pass
+    try:
+        validate_phones_distinct(
+            restaurant_data.get("phone_number"),
+            restaurant_data.get("business_phone"),
+            None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     # Auto-detect timezone from address if not explicitly set
     if restaurant_data.get("address") and restaurant_data.get("timezone") == "America/Chicago":
         detected_tz = await auto_detect_timezone(restaurant_data["address"])
@@ -1191,6 +1211,27 @@ async def update_restaurant(restaurant_id: str, data: RestaurantUpdate, user: Di
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
     coll = get_business_collection(business_type)
+
+    # Phone validation: only when phone_number or business_phone is being changed.
+    # Partial updates that don't touch phone fields do not re-validate existing data.
+    if "phone_number" in update_data or "business_phone" in update_data:
+        from security_utils import normalize_e164, validate_phones_distinct
+        for field in ("phone_number", "business_phone"):
+            if field in update_data and update_data[field]:
+                try:
+                    update_data[field] = normalize_e164(update_data[field])
+                except ValueError:
+                    pass
+        post_phone = update_data.get("phone_number", restaurant.get("phone_number"))
+        post_business = update_data.get("business_phone", restaurant.get("business_phone"))
+        existing_config = await get_config_collection(business_type).find_one(
+            {"restaurant_id": restaurant_id}, {"_id": 0}
+        )
+        existing_escalation = (existing_config or {}).get("escalation_phone_number")
+        try:
+            validate_phones_distinct(post_phone, post_business, existing_escalation)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     result = await coll.update_one({"id": restaurant_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -1221,6 +1262,23 @@ async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpd
     plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
     if not plan_features["upsell_enabled"]:
         update_data.pop("upsell_enabled", None)
+
+    # Phone validation: escalation_phone_number must differ from the
+    # restaurant's AI DID and publicly-listed business phone.
+    if "escalation_phone_number" in update_data and update_data["escalation_phone_number"]:
+        from security_utils import normalize_e164, validate_phones_distinct
+        try:
+            update_data["escalation_phone_number"] = normalize_e164(update_data["escalation_phone_number"])
+        except ValueError:
+            pass
+        try:
+            validate_phones_distinct(
+                restaurant.get("phone_number"),
+                restaurant.get("business_phone"),
+                update_data["escalation_phone_number"],
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
@@ -3392,7 +3450,7 @@ async def startup_seed():
             monthly_call_count=0,
             owner_name="Bella Owner",
             owner_email="owner@bellacucina.example",
-            business_phone="+15551234567",
+            business_phone="+15552345678",
             billing_email="billing@bellacucina.example",
             status="active",
             onboarding_step=7,
@@ -3403,6 +3461,7 @@ async def startup_seed():
             restaurant_id="demo-restaurant-001",
             persona="warm and friendly Italian-American",
             voice_id="21m00Tcm4TlvDq8ikWAM",
+            escalation_phone_number="+15553456789",
             business_rules=[
                 "Maximum party size for reservations is 12",
                 "Delivery minimum order is $15",
