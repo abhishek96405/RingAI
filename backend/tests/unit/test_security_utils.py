@@ -38,6 +38,103 @@ def test_validate_phone(phone, expected):
 
 
 # ---------------------------------------------------------------------------
+# normalize_e164
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw", [
+    "+18156932226",
+    "8156932226",
+    "(815) 693-2226",
+    "815-693-2226",
+    "815.693.2226",
+    "18156932226",
+    "  815 693 2226  ",
+])
+def test_normalize_e164_accepts_various_us_formats(raw):
+    from security_utils import normalize_e164
+    assert normalize_e164(raw) == "+18156932226"
+
+
+def test_normalize_e164_passes_through_other_e164():
+    from security_utils import normalize_e164
+    # UK number in E.164 form (with spaces) should normalize unchanged.
+    assert normalize_e164("+44 20 7946 0958") == "+442079460958"
+    assert normalize_e164("+447911123456") == "+447911123456"
+
+
+@pytest.mark.parametrize("empty", ["", None, "   "])
+def test_normalize_e164_returns_empty_for_empty_input(empty):
+    from security_utils import normalize_e164
+    assert normalize_e164(empty) == ""
+
+
+@pytest.mark.parametrize("bad", [
+    "abc",
+    "1234",         # too short to be a US 10-digit
+    "+",
+    "+0",
+])
+def test_normalize_e164_rejects_garbage(bad):
+    from security_utils import normalize_e164
+    with pytest.raises(ValueError):
+        normalize_e164(bad)
+
+
+# ---------------------------------------------------------------------------
+# validate_phones_distinct
+# ---------------------------------------------------------------------------
+
+def test_validate_phones_distinct_passes_for_distinct():
+    from security_utils import validate_phones_distinct
+    # Should not raise.
+    validate_phones_distinct(
+        "+15551112222",
+        "+15553334444",
+        "+15555556666",
+    )
+
+
+def test_validate_phones_distinct_passes_for_partial_unset():
+    from security_utils import validate_phones_distinct
+    validate_phones_distinct("+15551112222", None, None)
+    validate_phones_distinct("+15551112222", "", None)
+    validate_phones_distinct(None, None, "+15553334444")
+
+
+def test_validate_phones_distinct_rejects_phone_business_dupe():
+    from security_utils import validate_phones_distinct
+    with pytest.raises(ValueError) as exc_info:
+        validate_phones_distinct("+15551112222", "+15551112222", "+15553334444")
+    assert "phone_number" in str(exc_info.value)
+    assert "business_phone" in str(exc_info.value)
+
+
+def test_validate_phones_distinct_rejects_phone_escalation_dupe():
+    from security_utils import validate_phones_distinct
+    with pytest.raises(ValueError) as exc_info:
+        validate_phones_distinct("+15551112222", "+15553334444", "+15551112222")
+    assert "phone_number" in str(exc_info.value)
+    assert "escalation_phone_number" in str(exc_info.value)
+
+
+def test_validate_phones_distinct_rejects_business_escalation_dupe():
+    from security_utils import validate_phones_distinct
+    with pytest.raises(ValueError) as exc_info:
+        validate_phones_distinct("+15551112222", "+15553334444", "+15553334444")
+    assert "business_phone" in str(exc_info.value)
+    assert "escalation_phone_number" in str(exc_info.value)
+
+
+def test_validate_phones_distinct_compares_after_normalization():
+    from security_utils import validate_phones_distinct
+    # Same number, different formats — should be detected as duplicate.
+    with pytest.raises(ValueError):
+        validate_phones_distinct("+18156932226", "8156932226", None)
+    with pytest.raises(ValueError):
+        validate_phones_distinct(None, "(815) 693-2226", "+18156932226")
+
+
+# ---------------------------------------------------------------------------
 # validate_email
 # ---------------------------------------------------------------------------
 

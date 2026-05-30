@@ -284,6 +284,7 @@ class CallSession:
         menu_items: List[Dict[str, Any]],
         services: Optional[List[Dict[str, Any]]] = None,
         lang: str = "en",
+        restaurant_phone_number: Optional[str] = None,
     ):
         self.call_sid       = call_sid
         self.restaurant_id  = restaurant_id
@@ -293,6 +294,9 @@ class CallSession:
         self.menu_index     = MenuIndex(menu_items)
         self.services       = services or []  # For appointment businesses
         self.lang           = lang  # ISO 639-1 code; drives signals_for() phrase matching
+        # Our AI DID. When set, _transfer_call refuses to dial it (loop guard).
+        # None disables the guard — keeps legacy tests/callers working.
+        self.restaurant_phone_number = restaurant_phone_number
         self.transcript: List[Dict] = []
         self.started_at     = datetime.now(timezone.utc).isoformat()
         self.order          = LiveOrder(
@@ -611,6 +615,27 @@ class CallSession:
         timeout (timeout_secs) is wired through consistently. The service
         layer handles the env-var guard and HTTP error mapping.
         """
+        # Safety guard: never transfer to our own AI DID — would create
+        # an infinite forwarding loop. Validation at config-save time is
+        # the primary defense; this is belt-and-suspenders.
+        if self.restaurant_phone_number:
+            try:
+                from security_utils import normalize_e164
+                normalized_to = normalize_e164(to_number)
+                normalized_self = normalize_e164(self.restaurant_phone_number)
+                if normalized_to == normalized_self and normalized_to:
+                    logger.error(
+                        f"[{self.call_sid}] Refusing to transfer to "
+                        f"{to_number} — equals our own AI DID. "
+                        f"Misconfiguration; check restaurant config."
+                    )
+                    return False
+            except ValueError as e:
+                logger.warning(
+                    f"[{self.call_sid}] Could not normalize for DID "
+                    f"safety check: {e}"
+                )
+
         if not os.environ.get("TELNYX_API_KEY"):
             logger.error(
                 f"[{self.call_sid}] Cannot transfer call to {to_number} — "

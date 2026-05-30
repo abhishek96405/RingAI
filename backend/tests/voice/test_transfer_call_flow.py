@@ -361,3 +361,68 @@ async def test_normal_hangup_branch_explicitly_hangs_up_telnyx_leg(
 
     hang_up.assert_awaited_once_with(sess.call_sid)
     sess._pipeline_task.cancel.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# DID safety guard inside _transfer_call.
+#
+# Defense in depth: even if a misconfiguration slips past the API-level
+# validate_phones_distinct check, _transfer_call must refuse to dial our
+# own AI DID. Forwarding loops back to AI would otherwise re-enter the
+# pipeline infinitely.
+# ---------------------------------------------------------------------------
+
+
+async def test_transfer_call_refuses_when_destination_equals_ai_did(
+    make_call_session, monkeypatch
+):
+    """When restaurant_phone_number matches the transfer destination (after
+    normalization), _transfer_call returns False and never touches Telnyx."""
+    sess = make_call_session()
+    sess.restaurant_phone_number = "+18156932226"
+
+    monkeypatch.setenv("TELNYX_API_KEY", "test-key")
+    transfer_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.transfer_call", transfer_mock)
+
+    result = await sess._transfer_call("+18156932226")
+
+    assert result is False
+    transfer_mock.assert_not_awaited()
+
+
+async def test_transfer_call_proceeds_when_destination_differs(
+    make_call_session, monkeypatch
+):
+    """Positive regression: distinct numbers still flow through to Telnyx."""
+    sess = make_call_session()
+    sess.restaurant_phone_number = "+18156932226"
+
+    monkeypatch.setenv("TELNYX_API_KEY", "test-key")
+    transfer_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.transfer_call", transfer_mock)
+
+    result = await sess._transfer_call("+15553334444")
+
+    assert result is True
+    transfer_mock.assert_awaited_once()
+
+
+async def test_transfer_call_proceeds_when_restaurant_phone_number_is_none(
+    make_call_session, monkeypatch
+):
+    """Regression: callers that don't supply restaurant_phone_number (legacy
+    tests, in-flight callers before the rollout) must keep working — the
+    guard is opt-in via the new constructor kwarg."""
+    sess = make_call_session()
+    # Factory default leaves restaurant_phone_number=None.
+    assert sess.restaurant_phone_number is None
+
+    monkeypatch.setenv("TELNYX_API_KEY", "test-key")
+    transfer_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.transfer_call", transfer_mock)
+
+    result = await sess._transfer_call("+15553334444")
+
+    assert result is True
+    transfer_mock.assert_awaited_once()

@@ -31,6 +31,81 @@ def validate_phone(phone: str) -> bool:
     return bool(PHONE_PATTERN.match(cleaned))
 
 
+def normalize_e164(number: Optional[str]) -> str:
+    """Normalize a phone number to E.164 format.
+
+    Accepts: '+18156932226', '8156932226', '(815) 693-2226',
+    '815-693-2226', '815.693.2226', '+44 20 7946 0958', etc.
+    Returns: canonical E.164 string (e.g. '+18156932226').
+    Empty/None input returns empty string (caller decides if allowed).
+    Raises ValueError for anything that cannot be normalized.
+    """
+    if not number:
+        return ""
+
+    raw = number.strip()
+    if not raw:
+        return ""
+
+    if raw.startswith("+"):
+        digits = re.sub(r"\D", "", raw[1:])
+        candidate = "+" + digits
+    else:
+        digits = re.sub(r"\D", "", raw)
+        if len(digits) == 11 and digits.startswith("1"):
+            candidate = "+" + digits
+        elif len(digits) == 10:
+            candidate = "+1" + digits
+        else:
+            raise ValueError(f"Cannot normalize phone number: {number!r}")
+
+    if not PHONE_PATTERN.match(candidate):
+        raise ValueError(f"Invalid phone number after normalization: {number!r}")
+
+    return candidate
+
+
+def validate_phones_distinct(
+    phone_number: Optional[str],
+    business_phone: Optional[str],
+    escalation_phone_number: Optional[str],
+) -> None:
+    """Validate that no two non-empty phone numbers are equal.
+
+    Compares normalized E.164 values. Empty/None values are skipped.
+    Raises ValueError with a clear message identifying which pair conflicts.
+    """
+    pairs = [
+        ("phone_number", phone_number),
+        ("business_phone", business_phone),
+        ("escalation_phone_number", escalation_phone_number),
+    ]
+    normalized: Dict[str, str] = {}
+    for label, value in pairs:
+        if value is None or value == "":
+            continue
+        try:
+            n = normalize_e164(value)
+        except ValueError:
+            # Not normalizable: skip the distinctness check for this field;
+            # field-level validation is the caller's responsibility.
+            continue
+        if not n:
+            continue
+        normalized[label] = n
+
+    seen: Dict[str, str] = {}
+    for label, n in normalized.items():
+        if n in seen:
+            other = seen[n]
+            raise ValueError(
+                f"{label} and {other} must be different phone numbers "
+                f"(both resolve to {n}). The AI DID, the publicly listed "
+                f"business number, and the escalation number must all be distinct."
+            )
+        seen[n] = label
+
+
 def validate_email(email: str) -> bool:
     """Validate email format."""
     if not email:
