@@ -4485,6 +4485,7 @@ async def telnyx_media_stream(websocket: WebSocket):
             menu_items=menu_items,
             services=services,
             lang=lang,
+            restaurant_phone_number=restaurant.get("phone_number"),
         )
         session.is_open = calculate_is_open(
             operating_hours=config.get("operating_hours") if config else None,
