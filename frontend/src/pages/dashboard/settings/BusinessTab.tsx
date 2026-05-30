@@ -24,7 +24,7 @@ const FieldError = ({ msg }: { msg?: string }) => msg ? <p className="text-xs te
 const errCls = (msg?: string) => msg ? "border-destructive focus-visible:ring-destructive" : "";
 
 export default function BusinessTab({
-  restaurant, setRestaurant, config, setConfig, businessType, isAppointmentBusiness,
+  restaurant, setRestaurant, businessType,
   saving, errors, clearError, onSave,
 }: Props) {
   const setR = (patch: any, errorKey?: string) => {
@@ -70,7 +70,11 @@ export default function BusinessTab({
 
         <div className="space-y-2"><Label>Owner Name</Label><Input value={restaurant?.owner_name || ""} onChange={(e) => setRestaurant({ ...restaurant, owner_name: e.target.value })} className="h-11 rounded-xl" /></div>
         <div className="space-y-2"><Label>Owner Email</Label><Input value={restaurant?.owner_email || ""} onChange={(e) => setRestaurant({ ...restaurant, owner_email: e.target.value })} className="h-11 rounded-xl" /></div>
-        <div className="space-y-2"><Label>Business Phone</Label><Input value={restaurant?.business_phone || ""} onChange={(e) => setRestaurant({ ...restaurant, business_phone: e.target.value })} className="h-11 rounded-xl" /></div>
+        <div className="space-y-2">
+          <Label>Business Phone</Label>
+          <Input value={restaurant?.business_phone || ""} onChange={(e) => setRestaurant({ ...restaurant, business_phone: e.target.value })} className="h-11 rounded-xl" />
+          <p className="text-xs text-muted-foreground">Set up call forwarding for this number in Settings → Phone & Forwarding.</p>
+        </div>
         <div className="space-y-2"><Label>Billing Email</Label><Input value={restaurant?.billing_email || ""} onChange={(e) => setRestaurant({ ...restaurant, billing_email: e.target.value })} className="h-11 rounded-xl" /></div>
 
         <div className="space-y-2 sm:col-span-2">
@@ -132,22 +136,6 @@ export default function BusinessTab({
           </Select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Duuutah AI Phone Number</Label>
-          <Input value={restaurant?.phone_number || ""} readOnly className="h-11 rounded-xl opacity-60" />
-        </div>
-
-        <div className="space-y-2 sm:col-span-2">
-          <Label>Escalation Phone Number<Req /></Label>
-          <Input
-            value={config?.escalation_phone_number || ""}
-            onChange={(e) => { setConfig({ ...config, escalation_phone_number: e.target.value }); clearError("escalation_phone_number"); }}
-            placeholder="+13125551234"
-            className={`h-11 rounded-xl ${errCls(errors.escalation_phone_number)}`}
-          />
-          <FieldError msg={errors.escalation_phone_number} />
-          <p className="text-xs text-muted-foreground">Calls escalated by the AI (or forwarded after hours) will ring this number.</p>
-        </div>
       </div>
 
       <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
