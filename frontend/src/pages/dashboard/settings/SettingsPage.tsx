@@ -3,10 +3,11 @@ import { useAppSession } from "@/context/AppSessionContext";
 import { getConfig, getRestaurant, getRestaurantId, updateConfig, updateRestaurant } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Building2, Clock, ShoppingBag, Mic, ShieldAlert } from "lucide-react";
+import { Building2, Clock, PhoneForwarded, ShoppingBag, Mic, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { APPOINTMENT_TYPES, defaultHours, getBusinessLabel, type FieldErrors } from "./constants";
 import BusinessTab from "./BusinessTab";
+import PhoneForwardingTab from "./PhoneForwardingTab";
 import HoursTab from "./HoursTab";
 import FulfillmentTab from "./FulfillmentTab";
 import VoiceAndAITab from "./VoiceAndAITab";
@@ -66,7 +67,6 @@ const SettingsPage = () => {
     if (!restaurant?._city?.trim()) e._city = "City is required.";
     if (!restaurant?._state?.trim()) e._state = "State is required.";
     if (!restaurant?._zip?.trim()) e._zip = "Zip code is required.";
-    if (!config?.escalation_phone_number?.trim()) e.escalation_phone_number = "Escalation phone number is required.";
     return { ok: Object.keys(e).length === 0, errors: e };
   };
 
@@ -114,12 +114,8 @@ const SettingsPage = () => {
         payload.reservation_advance_booking_days = Number(restaurant?.reservation_advance_booking_days || 7);
       }
       await updateRestaurant(restaurantId, payload);
-
-      // Escalation phone lives on the config doc — persist it alongside restaurant save.
-      await updateConfig(restaurantId, {
-        escalation_phone_number: config.escalation_phone_number,
-      });
-
+      // Escalation phone is owned by the Phone & Forwarding tab — it
+      // persists to RestaurantConfig directly and is not part of this save.
       await refreshSession(restaurantId);
       toast.success(`${getBusinessLabel(businessType)} info saved!`);
     } catch (err: any) {
@@ -171,6 +167,9 @@ const SettingsPage = () => {
           <TabsTrigger value="business" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Building2 className="w-4 h-4 mr-2" />Business
           </TabsTrigger>
+          <TabsTrigger value="phone" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <PhoneForwarded className="w-4 h-4 mr-2" />Phone & Forwarding
+          </TabsTrigger>
           <TabsTrigger value="hours" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Clock className="w-4 h-4 mr-2" />Hours
           </TabsTrigger>
@@ -199,6 +198,19 @@ const SettingsPage = () => {
             errors={errors}
             clearError={clearError}
             onSave={saveRestaurant}
+          />
+        </TabsContent>
+
+        <TabsContent value="phone">
+          <PhoneForwardingTab
+            restaurantId={activeRestaurant?.id || getRestaurantId()}
+            restaurant={restaurant}
+            setRestaurant={setRestaurant}
+            config={config}
+            setConfig={setConfig}
+            onAfterSave={async () => {
+              await refreshSession(activeRestaurant?.id || getRestaurantId());
+            }}
           />
         </TabsContent>
 
