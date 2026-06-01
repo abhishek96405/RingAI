@@ -178,15 +178,21 @@ class RingAIGeminiLive(GeminiLiveLLMService):
 
     # _handle_interruption is defined below _flush_ai_buffer (single definition)
 
-    async def _run_function_call(self, tool_call, llm_context):
+    async def _run_function_call(self, tool_call, llm_context=None):
         """
         Set _fn_in_progress BEFORE the handler coroutine is scheduled.
-        Without this, _cancel_function_call fires from the pipeline's
-        interruption broadcast path before the handler body can set the flag.
+        ...
+        Note: llm_context made optional — Pipecat 0.0.104 calls this with
+        just (tool_call) in some code paths (e.g. mid-turn function calls
+        via compute_order_total) and (tool_call, llm_context) in others
+        (e.g. check_availability). Forward whatever we received.
         """
         self._fn_in_progress = True
         try:
-            await super()._run_function_call(tool_call, llm_context)
+            if llm_context is not None:
+                await super()._run_function_call(tool_call, llm_context)
+            else:
+                await super()._run_function_call(tool_call)
         finally:
             self._fn_in_progress = False
 
