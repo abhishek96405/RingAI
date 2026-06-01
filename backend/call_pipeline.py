@@ -99,9 +99,51 @@ try:
             )
         ]
     )
+
+    COMPUTE_ORDER_TOTAL_TOOL = _genai_types.Tool(
+        function_declarations=[
+            _genai_types.FunctionDeclaration(
+                name="compute_order_total",
+                description=(
+                    "Compute the exact total price (in dollars) for the order. "
+                    "Call this RIGHT BEFORE doing the readback to the customer. "
+                    "Always use the returned total_dollars verbatim — never "
+                    "compute the total yourself."
+                ),
+                parameters=_genai_types.Schema(
+                    type=_genai_types.Type.OBJECT,
+                    properties={
+                        "items": _genai_types.Schema(
+                            type=_genai_types.Type.ARRAY,
+                            items=_genai_types.Schema(
+                                type=_genai_types.Type.OBJECT,
+                                properties={
+                                    "name": _genai_types.Schema(
+                                        type=_genai_types.Type.STRING,
+                                        description=(
+                                            "Exact menu item name as it appears in "
+                                            "the menu (e.g. 'Chicken Dum Biryani (Regular)')"
+                                        ),
+                                    ),
+                                    "quantity": _genai_types.Schema(
+                                        type=_genai_types.Type.INTEGER,
+                                        description="Number of this item ordered (>=1)",
+                                    ),
+                                },
+                                required=["name", "quantity"],
+                            ),
+                            description="List of items in the order with quantities",
+                        ),
+                    },
+                    required=["items"],
+                ),
+            )
+        ]
+    )
     _TOOLS_AVAILABLE = True
 except Exception as _tools_err:
     CHECK_AVAILABILITY_TOOL = None
+    COMPUTE_ORDER_TOTAL_TOOL = None
     _TOOLS_AVAILABLE = False
     logging.getLogger(__name__).warning(f"Tool definition failed: {_tools_err}")
 
@@ -1258,15 +1300,21 @@ async def create_call_pipeline(
                             asyncio.create_task(session._schedule_hangup(reason="farewell_timeout"))
                     session._farewell_timer = asyncio.create_task(_farewell_hangup())
 
-        # Only pass availability tool for appointment businesses
+        # Pass availability tool for appointment businesses, order total tool
+        # for everything else (order-based businesses like restaurants).
         _tools_list = None
-        if (
-            _TOOLS_AVAILABLE
-            and CHECK_AVAILABILITY_TOOL
-            and session
-            and session.business_type in ("clinic", "salon", "home_services", "legal")
-        ):
-            _tools_list = [CHECK_AVAILABILITY_TOOL]
+        if _TOOLS_AVAILABLE and session:
+            is_appointment_business = session.business_type in (
+                "clinic", "salon", "home_services", "legal"
+            )
+            _tools_collected = []
+            if is_appointment_business and CHECK_AVAILABILITY_TOOL:
+                _tools_collected.append(CHECK_AVAILABILITY_TOOL)
+            elif not is_appointment_business and COMPUTE_ORDER_TOTAL_TOOL:
+                # Restaurant / any non-appointment business uses order total tool
+                _tools_collected.append(COMPUTE_ORDER_TOTAL_TOOL)
+            if _tools_collected:
+                _tools_list = _tools_collected
 
         gemini_live = RingAIGeminiLive(
             on_ai_transcript=on_ai_transcript,
@@ -1356,6 +1404,71 @@ async def create_call_pipeline(
                     await params.result_callback({"error": "Could not check availability right now."})
 
             gemini_live.register_function("check_availability", _handle_check_availability)
+
+        # ── compute_order_total handler (non-appointment businesses) ─────────
+        # Fires right before the STEP 4 readback so Gemini speaks the tool's
+        # total verbatim rather than computing arithmetic in-context.
+        if _tools_list and COMPUTE_ORDER_TOTAL_TOOL in _tools_list:
+            async def _handle_compute_order_total(params):
+                args = params.arguments or {}
+                items_request = args.get("items", []) or []
+                logger.info(
+                    f"[{call_sid}] compute_order_total INVOKED by Gemini "
+                    f"with {len(items_request)} item(s)"
+                )
+                total_cents = 0
+                resolved = []
+                unresolved = []
+                try:
+                    for it in items_request:
+                        raw_name = (it.get("name") or "").strip()
+                        if not raw_name:
+                            continue
+                        try:
+                            qty = int(it.get("quantity", 1))
+                        except (TypeError, ValueError):
+                            qty = 1
+                        if qty < 1:
+                            qty = 1
+                        menu_item = (
+                            session.menu_index.find(raw_name)
+                            if session.menu_index else None
+                        )
+                        if menu_item:
+                            unit_cents = int(menu_item.get("price", 0))
+                            subtotal_cents = unit_cents * qty
+                            total_cents += subtotal_cents
+                            resolved.append({
+                                "name": menu_item.get("name", raw_name),
+                                "quantity": qty,
+                                "unit_price_dollars": f"${unit_cents / 100:.2f}",
+                                "subtotal_dollars": f"${subtotal_cents / 100:.2f}",
+                            })
+                        else:
+                            unresolved.append(raw_name)
+                    result = {
+                        "total_dollars": f"${total_cents / 100:.2f}",
+                        "items_resolved": resolved,
+                        "items_unresolved": unresolved,
+                    }
+                    logger.info(
+                        f"[{call_sid}] compute_order_total result: "
+                        f"{result['total_dollars']} "
+                        f"({len(resolved)} resolved, {len(unresolved)} unresolved)"
+                    )
+                    await params.result_callback(result)
+                except Exception as _e:
+                    logger.error(f"[{call_sid}] compute_order_total error: {_e}")
+                    await params.result_callback({
+                        "total_dollars": "",
+                        "items_resolved": [],
+                        "items_unresolved": [],
+                        "error": str(_e),
+                    })
+
+            gemini_live.register_function(
+                "compute_order_total", _handle_compute_order_total
+            )
 
         # ── Classifier-based fallback path (fires when native call was cancelled) ─
         # Triggered from on_ai_transcript when the AI says a check phrase.
