@@ -181,3 +181,18 @@ def test_prompt_premium_with_or_without_upsell_differs():
     with_upsell = _build(plan="PRO", upsell_enabled=True)
     without_upsell = _build(plan="PRO", upsell_enabled=False)
     assert with_upsell != without_upsell
+
+
+def test_prompt_contains_compute_order_total_instruction():
+    """STEP 4 must instruct the model to call the compute_order_total tool."""
+    out = _build()
+    assert "compute_order_total" in out
+    assert "USE THE TOOL" in out
+
+
+def test_prompt_no_longer_has_internal_calculation_block():
+    """The previous LLM-only arithmetic procedure was reverted; ensure the
+    old text is gone so the model doesn't fall back to it."""
+    out = _build()
+    assert "STEP 4A — INTERNAL CALCULATION" not in out
+    assert "DOUBLE-CHECK BEFORE SPEAKING" not in out

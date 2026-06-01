@@ -196,7 +196,7 @@ async def test_create_call_pipeline_runs_for_restaurant_session(
     assert sess._pipeline_task is task
 
 
-async def test_create_call_pipeline_passes_no_tools_for_restaurant(
+async def test_create_call_pipeline_passes_compute_order_total_for_restaurant(
     pipecat_mocks, fake_gemini_live, make_call_session
 ):
     import call_pipeline
@@ -209,9 +209,11 @@ async def test_create_call_pipeline_passes_no_tools_for_restaurant(
         call_sid="c",
         session=sess,
     )
-    # The fake GeminiLive instance was constructed with tools=None for restaurant.
+    # Restaurants get the order total tool, not the availability tool.
     inst = fake_gemini_live.instances[0]
-    assert inst.tools is None
+    assert inst.tools is not None
+    assert call_pipeline.COMPUTE_ORDER_TOTAL_TOOL in inst.tools
+    assert call_pipeline.CHECK_AVAILABILITY_TOOL not in inst.tools
 
 
 async def test_create_call_pipeline_passes_tools_for_salon(
