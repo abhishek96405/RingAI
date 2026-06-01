@@ -99,9 +99,51 @@ try:
             )
         ]
     )
+
+    COMPUTE_ORDER_TOTAL_TOOL = _genai_types.Tool(
+        function_declarations=[
+            _genai_types.FunctionDeclaration(
+                name="compute_order_total",
+                description=(
+                    "Compute the exact total price (in dollars) for the order. "
+                    "Call this RIGHT BEFORE doing the readback to the customer. "
+                    "Always use the returned total_dollars verbatim — never "
+                    "compute the total yourself."
+                ),
+                parameters=_genai_types.Schema(
+                    type=_genai_types.Type.OBJECT,
+                    properties={
+                        "items": _genai_types.Schema(
+                            type=_genai_types.Type.ARRAY,
+                            items=_genai_types.Schema(
+                                type=_genai_types.Type.OBJECT,
+                                properties={
+                                    "name": _genai_types.Schema(
+                                        type=_genai_types.Type.STRING,
+                                        description=(
+                                            "Exact menu item name as it appears in "
+                                            "the menu (e.g. 'Chicken Dum Biryani (Regular)')"
+                                        ),
+                                    ),
+                                    "quantity": _genai_types.Schema(
+                                        type=_genai_types.Type.INTEGER,
+                                        description="Number of this item ordered (>=1)",
+                                    ),
+                                },
+                                required=["name", "quantity"],
+                            ),
+                            description="List of items in the order with quantities",
+                        ),
+                    },
+                    required=["items"],
+                ),
+            )
+        ]
+    )
     _TOOLS_AVAILABLE = True
 except Exception as _tools_err:
     CHECK_AVAILABILITY_TOOL = None
+    COMPUTE_ORDER_TOTAL_TOOL = None
     _TOOLS_AVAILABLE = False
     logging.getLogger(__name__).warning(f"Tool definition failed: {_tools_err}")
 
