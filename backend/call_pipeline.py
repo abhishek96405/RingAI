@@ -53,6 +53,18 @@ except ImportError as e:
     logging.getLogger(__name__).warning(f"Pipecat not available: {e}")
     _PIPECAT_AVAILABLE = False
 
+# Ambient background noise (comfort noise) — soft cafe ambience mixed into outbound audio
+# so calls feel alive during silent moments. Gated by env var, gracefully degrades.
+try:
+    from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
+    _SOUNDFILE_MIXER_AVAILABLE = True
+except Exception as _mixer_import_err:
+    SoundfileMixer = None  # type: ignore
+    _SOUNDFILE_MIXER_AVAILABLE = False
+    logging.getLogger(__name__).warning(
+        f"SoundfileMixer unavailable (soundfile package not installed?): {_mixer_import_err}"
+    )
+
 from gemini_service import (
     LiveOrder, OrderState, MenuIndex,
     extract_order_from_transcript,
@@ -69,6 +81,42 @@ except ImportError:
     _APPOINTMENT_SERVICE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _build_ambient_mixer():
+    """Construct a SoundfileMixer for cafe ambient noise, or return None.
+
+    Env-gated by AMBIENT_NOISE_ENABLED (default "true"). Gracefully degrades
+    to None when the soundfile package is missing, the asset file is missing,
+    or construction fails — calls work normally without ambient noise.
+    """
+    if os.getenv("AMBIENT_NOISE_ENABLED", "true").lower() != "true":
+        return None
+    if not _SOUNDFILE_MIXER_AVAILABLE:
+        return None
+    try:
+        from pathlib import Path
+        _ambient_path = Path(__file__).parent / "assets" / "cafe_ambience_8k_mono.wav"
+        if not _ambient_path.exists():
+            logger.warning(f"[ambient_noise] asset file not found at {_ambient_path}, disabling")
+            return None
+        _mixer = SoundfileMixer(
+            sound_files={"cafe": str(_ambient_path)},
+            default_sound="cafe",
+            volume=0.06,   # very quiet — tune via AMBIENT_NOISE_VOLUME env var if needed
+            loop=True,
+        )
+        try:
+            _ambient_volume_override = float(os.getenv("AMBIENT_NOISE_VOLUME", "0.06"))
+            _mixer._volume = _ambient_volume_override  # apply override before start
+        except (TypeError, ValueError):
+            pass
+        logger.info(f"[ambient_noise] mixer initialized from {_ambient_path}")
+        return _mixer
+    except Exception as _mixer_init_err:
+        logger.error(f"[ambient_noise] failed to initialize mixer: {_mixer_init_err}")
+        return None
+
 
 # ── Gemini Live function-calling tool definition ──────────────────────────
 try:
@@ -1203,12 +1251,19 @@ async def create_call_pipeline(
             api_key=os.environ.get("TELNYX_API_KEY", ""),
             params=TelnyxFrameSerializer.InputParams(auto_hang_up=False),
         )
+        # ── Ambient noise mixer (optional, env-gated, graceful) ─────────────────
+        # AMBIENT_NOISE_ENABLED=false in env disables. Mixer creation failures
+        # (missing file, missing package) silently degrade to no ambient noise —
+        # calls work normally without it.
+        _ambient_mixer = _build_ambient_mixer()
+
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=FastAPIWebsocketParams(
                 audio_in_enabled=True,
                 audio_out_enabled=True,
                 serializer=_serializer,
+                audio_out_mixer=_ambient_mixer,
             ),
         )
 
