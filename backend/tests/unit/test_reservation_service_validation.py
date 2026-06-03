@@ -148,7 +148,7 @@ async def test_dispatch_reservation_creates_and_sends_sms(async_db, monkeypatch)
             "reservation_time": "18:00",
         },
         restaurant={"id": "rest_a", "name": "Tasty Bistro", "address": "123 Main"},
-        config={"sms_enabled": True},
+        config={"sms_enabled": True, "operating_hours": OPERATING_HOURS},
         db=async_db,
     )
     assert result["success"] is True
@@ -176,7 +176,7 @@ async def test_dispatch_reservation_skips_sms_when_disabled(async_db, monkeypatc
             "reservation_time": "18:00",
         },
         restaurant={"id": "rest_a", "name": "Tasty"},
-        config={"sms_enabled": False},
+        config={"sms_enabled": False, "operating_hours": OPERATING_HOURS},
         db=async_db,
     )
     assert result["success"] is True
@@ -198,7 +198,7 @@ async def test_dispatch_reservation_marks_failure_silently_when_sms_fails(async_
             "reservation_time": "18:00",
         },
         restaurant={"id": "rest_a", "name": "Tasty"},
-        config={"sms_enabled": True},
+        config={"sms_enabled": True, "operating_hours": OPERATING_HOURS},
         db=async_db,
     )
     # Reservation is still saved, only sms_sent flag is false

@@ -551,13 +551,27 @@ class CallSession:
         logger.info(f"[{self.call_sid}] Processing RESERVATION_CONFIRMED")
         try:
             from reservation_service import extract_reservation_from_transcript, dispatch_reservation
-            
-            # Extract reservation details from transcript
-            reservation_data = await extract_reservation_from_transcript(
-                transcript=self.transcript,
-                menu_index=None,  # Not needed for reservations
+
+            # Reservations disabled → skip extraction/dispatch entirely. Read the
+            # toggle inline (same field build_system_prompt uses) rather than via
+            # reservation_service, so this stays safe when the module is stubbed.
+            # Fail-open on an absent field: this fires only on an explicit
+            # RESERVATION_CONFIRMED signal, and dispatch_reservation self-gates too.
+            _res_enabled = self.restaurant.get(
+                "reservations_enabled",
+                (self.config or {}).get("reservations_enabled", True),
             )
-            
+
+            # Extract reservation details from transcript
+            reservation_data = (
+                await extract_reservation_from_transcript(
+                    transcript=self.transcript,
+                    menu_index=None,  # Not needed for reservations
+                )
+                if _res_enabled
+                else None
+            )
+
             if reservation_data:
                 reservation_data["customer_phone"] = self.order.caller_number
                 reservation_data["call_id"] = self.call_sid
@@ -576,9 +590,11 @@ class CallSession:
                     logger.warning(
                         f"[{self.call_sid}] Reservation dispatch failed: {result.get('reason')}"
                     )
+            elif not _res_enabled:
+                logger.info(f"[{self.call_sid}] RESERVATION_CONFIRMED ignored — reservations disabled")
             else:
                 logger.warning(f"[{self.call_sid}] Could not extract reservation details from transcript")
-                
+
         except Exception as e:
             logger.error(f"[{self.call_sid}] Reservation handling error: {e}", exc_info=True)
         
@@ -1715,7 +1731,20 @@ async def create_call_pipeline(
                             session._detected_order_type = "pickup"
                             logger.info(f"[{call_sid}] Order type locked: pickup (from customer)")
                         elif any(w in _tl for w in ["reservation", "reserve", "book a table", "table for"]):
-                            if _plan == "PRO" and _rest_has_reservations:
+                            # Same signal build_system_prompt derives reservations_enabled
+                            # from (restaurant doc first, then config). When off, a table
+                            # mention must NOT engage reservation logic.
+                            _reservations_enabled = session.restaurant.get(
+                                "reservations_enabled",
+                                (session.config or {}).get("reservations_enabled", False),
+                            )
+                            if not _reservations_enabled:
+                                # Reservations disabled — do NOT engage reservation
+                                # logic: don't flip order_type (stays pickup/delivery)
+                                # and don't defer escalation. The prompt's decline block
+                                # instructs the AI to decline the table.
+                                logger.info(f"[{call_sid}] Table mention but reservations disabled — not engaging reservation logic")
+                            elif _plan == "PRO" and _rest_has_reservations:
                                 session._detected_order_type = "reservation"
                                 logger.info(f"[{call_sid}] Order type locked: reservation (from customer)")
                             elif _rest_has_reservations:

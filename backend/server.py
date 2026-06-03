@@ -4685,9 +4685,17 @@ async def telnyx_media_stream(websocket: WebSocket):
             # order post-call processing, the call record, or hangup — all of
             # which already completed above.
             try:
+                # Same signal build_system_prompt derives reservations_enabled
+                # from (restaurant doc first, then config). When reservations are
+                # disabled, skip extraction/dispatch entirely — no-op.
+                _reservations_enabled = restaurant.get(
+                    "reservations_enabled",
+                    (config or {}).get("reservations_enabled", False),
+                )
                 if (
                     session is not None
                     and getattr(session, "business_type", "restaurant") == "restaurant"
+                    and _reservations_enabled
                     and not getattr(session, "_reservation_booked", False)
                     and session.transcript
                 ):
