@@ -424,6 +424,35 @@ JSON:"""
 # RESERVATION DISPATCH (CREATE + SMS)
 # ============================================================
 
+def _normalize_time_to_24h(time_str: str) -> str:
+    """Normalize a reservation time to 24-hour "HH:MM".
+
+    extract_reservation_from_transcript returns 12-hour times ("6:30 PM"),
+    but get_reservation_slots / check_reservation_availability work in 24h
+    "HH:MM" — and capacity counting in get_reservation_slots only matches
+    reservations STORED in 24h. Normalizing here keeps the availability
+    re-check, storage, and capacity counting consistent. Already-24h values
+    and unparseable strings are returned unchanged.
+    """
+    if not time_str:
+        return time_str
+    t = time_str.strip()
+    for fmt in ("%I:%M %p", "%I %p", "%H:%M"):
+        try:
+            return datetime.strptime(t, fmt).strftime("%H:%M")
+        except ValueError:
+            continue
+    return t
+
+
+def _format_time_12h(time_24h: str) -> str:
+    """Format a 24h "HH:MM" time as "7:00 PM" (no leading zero, cross-platform)."""
+    try:
+        return datetime.strptime(time_24h, "%H:%M").strftime("%I:%M %p").lstrip("0")
+    except ValueError:
+        return time_24h
+
+
 async def dispatch_reservation(
     reservation_data: Dict[str, Any],
     restaurant: Dict[str, Any],
@@ -432,24 +461,82 @@ async def dispatch_reservation(
 ) -> Dict[str, Any]:
     """
     Create reservation in database and send SMS confirmation.
-    
+
+    Before creating, re-checks live DB availability so a confirmed-but-
+    unavailable slot (capacity filled between the live call and this dispatch,
+    or a hallucinated slot) never becomes a real booking. If the slot is no
+    longer available, sends an apology SMS naming open alternatives and
+    returns {"success": False, ...} WITHOUT creating a reservation.
+
     Returns:
-        Dict with success status, reservation_id, sms_sent
+        Dict with success status, reservation_id, sms_sent (on success), or
+        {"success": False, "reason": ..., "suggested_times": [...]} when the
+        availability gate blocks the booking.
     """
     restaurant_id = restaurant.get("id", "")
-    
-    # Create reservation document
+    config = config or {}
+
+    # Normalize the requested time to 24h "HH:MM" so the availability re-check
+    # below matches the slot grid, and so the reservation is STORED in 24h for
+    # correct future capacity counting in get_reservation_slots.
+    reservation_date = reservation_data.get("reservation_date", "")
+    reservation_time_24h = _normalize_time_to_24h(reservation_data.get("reservation_time", ""))
+    party_size = reservation_data.get("party_size", 2)
+
+    # ── Live availability gate ─────────────────────────────────────────────
+    operating_hours = config.get("operating_hours", {}) or {}
+    restaurant_timezone = restaurant.get("timezone", "America/Chicago")
+    availability = await check_reservation_availability(
+        restaurant_id=restaurant_id,
+        date_str=reservation_date,
+        time_str=reservation_time_24h,
+        party_size=party_size,
+        config=config,
+        operating_hours=operating_hours,
+        db=db,
+        restaurant_timezone=restaurant_timezone,
+        restaurant=restaurant,
+    )
+
+    if not availability.get("available"):
+        suggested_times = availability.get("suggested_times", []) or []
+        reason = availability.get("reason", "Requested time is no longer available")
+        logger.warning(
+            f"Reservation availability gate blocked booking "
+            f"({restaurant_id} {reservation_date} {reservation_time_24h} "
+            f"party={party_size}): {reason}"
+        )
+        # Apology SMS naming open alternatives — never blame "AI" in the copy.
+        customer_phone = reservation_data.get("customer_phone", "")
+        if config.get("sms_enabled", True) and customer_phone:
+            try:
+                await send_reservation_unavailable_sms(
+                    customer_phone=customer_phone,
+                    restaurant_name=restaurant.get("name", "the restaurant"),
+                    reservation_date=reservation_date,
+                    reservation_time=reservation_time_24h,
+                    suggested_times=suggested_times,
+                )
+            except Exception as e:
+                logger.error(f"Reservation apology SMS error: {e}")
+        return {
+            "success": False,
+            "reason": reason,
+            "suggested_times": suggested_times,
+        }
+
+    # Create reservation document (store time in 24h for capacity counting)
     doc = create_reservation_doc(
         restaurant_id=restaurant_id,
         customer_name=reservation_data.get("customer_name", "Guest"),
         customer_phone=reservation_data.get("customer_phone", ""),
-        party_size=reservation_data.get("party_size", 2),
-        reservation_date=reservation_data.get("reservation_date", ""),
-        reservation_time=reservation_data.get("reservation_time", ""),
+        party_size=party_size,
+        reservation_date=reservation_date,
+        reservation_time=reservation_time_24h,
         call_id=reservation_data.get("call_id"),
         special_requests=reservation_data.get("special_requests"),
     )
-    
+
     # Save to database
     await db.reservations.insert_one(doc)
     
@@ -529,6 +616,50 @@ async def send_reservation_sms(
             "purpose": "reservation_confirmation",
             "restaurant_name": restaurant_name,
             "party_size": party_size,
+            "reservation_date": reservation_date,
+            "reservation_time": reservation_time,
+        },
+    )
+    return result.success
+
+
+async def send_reservation_unavailable_sms(
+    customer_phone: str,
+    restaurant_name: str,
+    reservation_date: str,  # YYYY-MM-DD
+    reservation_time: str,  # HH:MM (24h)
+    suggested_times: List[str],
+) -> bool:
+    """Send an apology SMS when a requested reservation slot can't be confirmed.
+
+    Names the open alternatives so the customer can pick another time. The copy
+    never references "AI" — it reads as a normal "that time just filled up" note.
+    """
+    # Format requested date/time for display
+    try:
+        date_obj = datetime.strptime(reservation_date, "%Y-%m-%d")
+        day_label = date_obj.strftime("%a")
+    except ValueError:
+        day_label = ""
+    time_label = _format_time_12h(reservation_time)
+    when = f"{day_label} {time_label}".strip()
+
+    message = f"Sorry, we couldn't confirm your table at {restaurant_name}"
+    if when:
+        message += f" for {when}"
+    message += "."
+    if suggested_times:
+        message += f" Next open times: {', '.join(suggested_times)}."
+    message += " Reply or call to lock one in."
+
+    from telnyx_service import send_sms
+    result = await send_sms(
+        to=customer_phone,
+        body=message,
+        idempotency_key=f"reservation_unavailable:{customer_phone}:{reservation_date}:{reservation_time}",
+        metadata={
+            "purpose": "reservation_unavailable",
+            "restaurant_name": restaurant_name,
             "reservation_date": reservation_date,
             "reservation_time": reservation_time,
         },

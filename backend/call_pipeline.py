@@ -411,7 +411,12 @@ class CallSession:
         self._bridge_succeeded = False       # set by call.bridged webhook handler
         self._transfer_fallback_task: Optional[Any] = None  # 35s safety timeout
         self._booking_dispatched = False  # For appointment businesses
-        self._reservation_dispatched = False  # For restaurant reservations
+        self._reservation_dispatched = False  # For restaurant reservations — live signal fired
+        # Set True ONLY after a reservation is successfully booked (live or
+        # post-call). _reservation_dispatched flips the moment the live signal
+        # fires (before extraction), so it cannot gate the post-call fallback;
+        # this flag does. It also prevents double-booking across both paths.
+        self._reservation_booked = False
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
@@ -565,9 +570,12 @@ class CallSession:
                 )
                 
                 if result.get("success"):
+                    self._reservation_booked = True
                     logger.info(f"[{self.call_sid}] Reservation dispatched: {result.get('reservation_id')}")
                 else:
-                    logger.warning(f"[{self.call_sid}] Reservation dispatch failed")
+                    logger.warning(
+                        f"[{self.call_sid}] Reservation dispatch failed: {result.get('reason')}"
+                    )
             else:
                 logger.warning(f"[{self.call_sid}] Could not extract reservation details from transcript")
                 

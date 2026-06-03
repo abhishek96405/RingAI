@@ -1317,9 +1317,9 @@ STEP R4: Any special requests
   "Any special requests? Birthday, high chair, outdoor seating?"
   Accept or skip — do not push.
 
-STEP R5: Confirm the reservation
-  "Perfect! I have a table for [party_size] on [date] at [time] under [name]. 
-   We'll send you a confirmation text. Anything else I can help with?"
+STEP R5: Confirm the reservation (provisional — the SMS is the real confirmation)
+  "Great, I've got those details — a table for [party_size] on [date] at [time] under [name].
+   I'll text you to confirm the table shortly. Anything else I can help with?"
 
 After confirming, signal: RESERVATION_CONFIRMED
 
