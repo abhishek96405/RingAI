@@ -86,6 +86,12 @@ DEFAULT_RESERVATION_SETTINGS = {
 def get_reservation_settings(config: Dict[str, Any], restaurant: Dict[str, Any] = None) -> Dict[str, Any]:
     """Get reservation settings from restaurant document and config with defaults."""
     settings = dict(DEFAULT_RESERVATION_SETTINGS)
+    # Reservations are opt-in and plan-gated: default OFF unless config or the
+    # restaurant doc explicitly turns them on. This aligns the booking path with
+    # build_system_prompt, which treats an absent reservations_enabled as False
+    # (server.py). The config/restaurant merges below still honor an explicit
+    # True or False from either source.
+    settings["reservations_enabled"] = False
     # Merge with config values first
     if config:
         for key in settings:
@@ -93,6 +99,12 @@ def get_reservation_settings(config: Dict[str, Any], restaurant: Dict[str, Any] 
                 settings[key] = config[key]
     # Restaurant document overrides config (restaurant fields are source of truth)
     if restaurant:
+        # The dashboard reservations toggle is stored on the restaurant doc
+        # (same signal build_system_prompt derives reservations_enabled from).
+        # get_reservation_settings previously ignored it, so the disabled-gate
+        # in dispatch_reservation couldn't see a restaurant-level "off".
+        if "reservations_enabled" in restaurant:
+            settings["reservations_enabled"] = restaurant["reservations_enabled"]
         if restaurant.get("reservation_slot_duration"):
             settings["slot_interval_minutes"] = restaurant["reservation_slot_duration"]
         if restaurant.get("reservation_max_per_slot"):
@@ -171,9 +183,28 @@ async def get_reservation_slots(
             except ValueError:
                 return None
     
-    open_minutes = parse_time(day_hours.get("open", "17:00")) or 17 * 60  # Default 5 PM
-    close_minutes = parse_time(day_hours.get("close", "22:00")) or 22 * 60  # Default 10 PM
-    
+    open_minutes = parse_time(day_hours.get("open", ""))
+    close_minutes = parse_time(day_hours.get("close", ""))
+
+    # Missing/unparseable hours for this day → no slots. Don't fabricate a
+    # default window: the old `... or 17*60` silently showed every such day —
+    # and every midnight "00:00"/"12:00 AM" open (which parses to 0, a falsy
+    # value) — as a 5 PM start. Use explicit None checks and surface gaps.
+    if open_minutes is None or close_minutes is None:
+        logger.warning(
+            f"get_reservation_slots: missing/unparseable hours for {restaurant_id} "
+            f"on {date_str} (day={day_name}, open={day_hours.get('open')!r}, "
+            f"close={day_hours.get('close')!r}) — returning no slots"
+        )
+        return []
+
+    # Overnight hours (e.g. 8 AM → 2 AM, or a midnight close): close is at/before
+    # open. Cap slot generation at end of day rather than wrapping into the next
+    # calendar day (which would make the reservation's date ambiguous). Without
+    # this, close <= open yields zero slots.
+    if close_minutes <= open_minutes:
+        close_minutes = 24 * 60
+
     # Don't accept reservations within 1 hour of closing
     close_minutes -= 60
     
@@ -475,6 +506,17 @@ async def dispatch_reservation(
     """
     restaurant_id = restaurant.get("id", "")
     config = config or {}
+
+    # Hard gate: reservations disabled for this restaurant → never book.
+    # Clean no-op (no SMS): the availability path below can otherwise fire a
+    # confusing "couldn't confirm your table" apology when the real reason is
+    # that the venue doesn't take reservations at all.
+    settings = get_reservation_settings(config, restaurant)
+    if not settings.get("reservations_enabled", True):
+        logger.warning(
+            f"dispatch_reservation blocked — reservations disabled for {restaurant_id}"
+        )
+        return {"success": False, "reason": "reservations_disabled"}
 
     # Normalize the requested time to 24h "HH:MM" so the availability re-check
     # below matches the slot grid, and so the reservation is STORED in 24h for

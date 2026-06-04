@@ -969,6 +969,7 @@ def build_system_prompt(
     reservations_enabled: bool = False,
     reservation_settings: Optional[Dict] = None,
     available_reservation_slots: Optional[List[Dict]] = None,
+    reservation_decline_message: Optional[str] = None,
     plan: str = "STARTER",
     lang: str = "en",  # accepted but unused — multilingual deferred for re-implementation
 ) -> str:
@@ -1333,6 +1334,24 @@ RESERVATION RULES:
 - Always repeat the full details before confirming
 - If customer wants BOTH an order AND a reservation: handle order first, then reservation
 - Do NOT offer to schedule future orders — only reservations
+"""
+    else:
+        _decline_line = reservation_decline_message or (
+            "I'm sorry, we don't take table reservations. "
+            "You're welcome to stop by, or I'd be happy to take a pickup order for you."
+        )
+        reservation_block = f"""
+═══════════════════════════
+RESERVATIONS — NOT OFFERED
+═══════════════════════════
+This restaurant does NOT take table reservations over the phone.
+- If the customer asks to book a table, reserve a table, or hold a table:
+  Say: "{_decline_line}"
+- Do NOT ask for party size, date, or time.
+- Do NOT say a table is "booked", "noted", "held", "locked in", or "reserved".
+- Do NOT collect or confirm any reservation details.
+- NEVER output the signal RESERVATION_CONFIRMED.
+- If the customer also wants a pickup order, handle the order normally per the ORDER PROTOCOL.
 """
 
     return f"""You are a friendly, warm phone assistant for {restaurant_name}, a {cuisine_type} restaurant.
