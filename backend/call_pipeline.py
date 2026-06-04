@@ -417,6 +417,7 @@ class CallSession:
         # fires (before extraction), so it cannot gate the post-call fallback;
         # this flag does. It also prevents double-booking across both paths.
         self._reservation_booked = False
+        self._reservation_lock = asyncio.Lock()  # serializes live + post-call reservation dispatch
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
@@ -529,6 +530,10 @@ class CallSession:
         self._hangup_scheduled = True
         if not self._order_dispatched:
             await self.dispatch_order_if_ready()
+        # Multi-intent: a table may have been confirmed alongside the order.
+        # Book it now, in the same teardown-protected window as the order —
+        # not later from on_call_complete, which races call teardown.
+        await self._ensure_reservation_booked()
         await self._fire_on_call_complete()
         if self._call_timer_task:
             self._call_timer_task.cancel()
@@ -547,62 +552,67 @@ class CallSession:
         await self._schedule_hangup(reason="appointment_confirmed", _skip_guard=True)
 
     async def _handle_reservation_confirmed(self):
-        """Handle restaurant reservation — extract details and dispatch reservation."""
+        """Live RESERVATION_CONFIRMED path — book the reservation, then hang up."""
         logger.info(f"[{self.call_sid}] Processing RESERVATION_CONFIRMED")
-        try:
-            from reservation_service import extract_reservation_from_transcript, dispatch_reservation
-
-            # Reservations disabled → skip extraction/dispatch entirely. Read the
-            # toggle inline (same field build_system_prompt uses) rather than via
-            # reservation_service, so this stays safe when the module is stubbed.
-            # Fail-open on an absent field: this fires only on an explicit
-            # RESERVATION_CONFIRMED signal, and dispatch_reservation self-gates too.
-            _res_enabled = self.restaurant.get(
-                "reservations_enabled",
-                (self.config or {}).get("reservations_enabled", True),
-            )
-
-            # Extract reservation details from transcript
-            reservation_data = (
-                await extract_reservation_from_transcript(
-                    transcript=self.transcript,
-                    menu_index=None,  # Not needed for reservations
-                )
-                if _res_enabled
-                else None
-            )
-
-            if reservation_data:
-                reservation_data["customer_phone"] = self.order.caller_number
-                reservation_data["call_id"] = self.call_sid
-                
-                result = await dispatch_reservation(
-                    reservation_data=reservation_data,
-                    restaurant=self.restaurant,
-                    config=self.config,
-                    db=self.db,
-                )
-                
-                if result.get("success"):
-                    self._reservation_booked = True
-                    logger.info(f"[{self.call_sid}] Reservation dispatched: {result.get('reservation_id')}")
-                else:
-                    logger.warning(
-                        f"[{self.call_sid}] Reservation dispatch failed: {result.get('reason')}"
-                    )
-            elif not _res_enabled:
-                logger.info(f"[{self.call_sid}] RESERVATION_CONFIRMED ignored — reservations disabled")
-            else:
-                logger.warning(f"[{self.call_sid}] Could not extract reservation details from transcript")
-
-        except Exception as e:
-            logger.error(f"[{self.call_sid}] Reservation handling error: {e}", exc_info=True)
-        
+        await self._ensure_reservation_booked()
         await self._fire_on_call_complete()
-
-        # Schedule hangup after reservation confirmed — delay so AI finishes speaking
+        # Delay so the AI finishes speaking before we tear down.
         await asyncio.sleep(2.0)
         await self._schedule_hangup(reason="reservation_confirmed")
+
+    async def _ensure_reservation_booked(self) -> None:
+        """Single source of truth for reservation dispatch (live + post-call).
+
+        Idempotent and concurrency-safe via _reservation_lock + the
+        _reservation_booked re-check, so the live-signal path, the
+        order-confirmed path, the disconnect handler, and the on_call_complete
+        fallback can all call it without double-booking. _reservation_booked is
+        set only on a SUCCESSFUL dispatch, so a failed booking is retried by a
+        later caller. Runs in the same awaited, teardown-protected sequence as
+        the order dispatch — it must NOT be relied on solely from the tail of
+        on_call_complete, which runs after the slow analyse_call_transcript and
+        races call teardown (that lateness dropped the reservation).
+        """
+        if self.business_type != "restaurant":
+            return
+        if self._reservation_booked or not self.transcript:
+            return
+        # Same toggle build_system_prompt uses; absent → off (opt-in/plan-gated).
+        _res_enabled = self.restaurant.get(
+            "reservations_enabled",
+            (self.config or {}).get("reservations_enabled", False),
+        )
+        if not _res_enabled:
+            return
+        async with self._reservation_lock:
+            if self._reservation_booked:
+                return
+            try:
+                from reservation_service import (
+                    extract_reservation_from_transcript as _extract_reservation,
+                    dispatch_reservation as _dispatch_reservation,
+                )
+                # extract_reservation_from_transcript early-returns None when the
+                # transcript has no reservation keywords (no Gemini call), so
+                # pickup-only calls don't pay for this.
+                _res_data = await _extract_reservation(self.transcript, menu_index=None)
+                if not _res_data:
+                    return
+                _res_data["customer_phone"] = self.caller_number
+                _res_data["call_id"] = self.call_sid
+                _res_result = await _dispatch_reservation(
+                    reservation_data=_res_data,
+                    restaurant=self.restaurant,
+                    config=self.config or {},
+                    db=self.db,
+                )
+                if _res_result.get("success"):
+                    self._reservation_booked = True
+                    logger.info(f"[{self.call_sid}] Reservation booked: {_res_result.get('reservation_id')}")
+                else:
+                    logger.info(f"[{self.call_sid}] Reservation not booked: {_res_result.get('reason')}")
+            except Exception as e:
+                logger.error(f"[{self.call_sid}] _ensure_reservation_booked error: {e}", exc_info=True)
 
     # ------------------------------------------------------------------
     # Schedule hangup — calls on_call_complete FIRST, then terminates
@@ -1937,6 +1947,11 @@ async def create_call_pipeline(
                             result = await send_order_to_kitchen(extracted, session.restaurant)
                             if result["success"]:
                                 session.order.kitchen_order_id = result["order_id"]
+
+                    # Multi-intent / missed live signal: book any confirmed
+                    # reservation now, awaited before the pipeline is cancelled
+                    # in `finally`. Mirrors the order dispatch above.
+                    await session._ensure_reservation_booked()
 
                 # Route through the session's idempotent helper — fires
                 # exactly once per call across every potential caller. If a

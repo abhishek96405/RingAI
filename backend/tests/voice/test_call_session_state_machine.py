@@ -585,6 +585,11 @@ async def test_handle_reservation_confirmed_extracts_and_dispatches(
     on_complete = AsyncMock()
     sess._on_call_complete = on_complete
 
+    # Reservations enabled + a non-empty transcript so the shared
+    # _ensure_reservation_booked path reaches extraction/dispatch.
+    sess.restaurant["reservations_enabled"] = True
+    sess.transcript = [{"role": "customer", "text": "I'd like to book a table for 4"}]
+
     await sess._handle_reservation_confirmed()
     assert len(extract_calls) == 1
     assert len(dispatch_calls) == 1
@@ -626,6 +631,11 @@ async def test_handle_reservation_confirmed_no_extraction_skips_dispatch(
     fake_module.dispatch_reservation = fake_dispatch
     monkeypatch.setitem(sys.modules, "reservation_service", fake_module)
 
+    # Reservations enabled + a non-empty transcript so the shared
+    # _ensure_reservation_booked path reaches extraction (which returns None).
+    sess.restaurant["reservations_enabled"] = True
+    sess.transcript = [{"role": "customer", "text": "maybe a table later"}]
+
     await sess._handle_reservation_confirmed()
     assert dispatch_calls == []
 
@@ -661,6 +671,11 @@ async def test_handle_reservation_confirmed_swallows_exceptions(
 
     on_complete = AsyncMock()
     sess._on_call_complete = on_complete
+
+    # Reservations enabled + a non-empty transcript so the shared
+    # _ensure_reservation_booked path reaches extraction (which raises).
+    sess.restaurant["reservations_enabled"] = True
+    sess.transcript = [{"role": "customer", "text": "book a table please"}]
 
     # Must not raise — exception is logged.
     await sess._handle_reservation_confirmed()

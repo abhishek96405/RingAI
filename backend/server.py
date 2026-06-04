@@ -4665,70 +4665,19 @@ async def telnyx_media_stream(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
 
-            # ── Post-call reservation safety net (restaurants only) ──────────
-            # Reservations only book if a live RESERVATION_CONFIRMED signal is
-            # caught mid-call. In a multi-intent call (pickup order, then
-            # reservation) that signal can be missed and the reservation
-            # dropped — orders don't have this problem because they're
-            # re-extracted post-call. Mirror that here: if nothing was booked
-            # yet, re-extract and dispatch. dispatch_reservation self-gates on a
-            # live availability re-check (see step 1). On a pickup-only call
-            # extract_reservation_from_transcript returns None → clean no-op.
-            #
-            # Gated on _reservation_booked (set only on a SUCCESSFUL dispatch),
-            # NOT _reservation_dispatched (which flips when the live signal
-            # fires, before extraction — so it would wrongly block this path if
-            # live extraction returned None). The booked flag also prevents
-            # double-booking across the live and post-call paths.
-            #
-            # Wrapped in its own try/except so a failure here can NEVER break
-            # order post-call processing, the call record, or hangup — all of
-            # which already completed above.
+            # ── Post-call reservation fallback (restaurants only) ────────────
+            # Final safety net only. Primary reservation dispatch now runs
+            # earlier, in the same teardown-protected sequence as the order
+            # (CallSession._ensure_reservation_booked, from _handle_order_confirmed
+            # and the disconnect handler). This tail runs after the slow
+            # analyse_call_transcript above and races teardown, so it must not be
+            # the only dispatch path — by the time it runs the reservation is
+            # usually already booked (no-op).
             try:
-                # Same signal build_system_prompt derives reservations_enabled
-                # from (restaurant doc first, then config). When reservations are
-                # disabled, skip extraction/dispatch entirely — no-op.
-                _reservations_enabled = restaurant.get(
-                    "reservations_enabled",
-                    (config or {}).get("reservations_enabled", False),
-                )
-                if (
-                    session is not None
-                    and getattr(session, "business_type", "restaurant") == "restaurant"
-                    and _reservations_enabled
-                    and not getattr(session, "_reservation_booked", False)
-                    and session.transcript
-                ):
-                    from reservation_service import (
-                        extract_reservation_from_transcript as _extract_reservation,
-                        dispatch_reservation as _dispatch_reservation,
-                    )
-                    _res_data = await _extract_reservation(session.transcript, menu_index=None)
-                    if _res_data:
-                        _res_data["customer_phone"] = active_call.get("caller_number", "")
-                        _res_data["call_id"] = call_sid
-                        _res_result = await _dispatch_reservation(
-                            reservation_data=_res_data,
-                            restaurant=restaurant,
-                            config=config or {},
-                            db=db,
-                        )
-                        if _res_result.get("success"):
-                            session._reservation_booked = True
-                            logger.info(
-                                f"[{call_sid}] Post-call reservation booked: "
-                                f"{_res_result.get('reservation_id')}"
-                            )
-                        else:
-                            logger.info(
-                                f"[{call_sid}] Post-call reservation not booked: "
-                                f"{_res_result.get('reason')}"
-                            )
+                if session is not None:
+                    await session._ensure_reservation_booked()
             except Exception as e:
-                logger.error(
-                    f"[{call_sid}] Post-call reservation safety net error: {e}",
-                    exc_info=True,
-                )
+                logger.error(f"[{call_sid}] Post-call reservation fallback error: {e}", exc_info=True)
 
         if is_pipeline_available():
             await create_call_pipeline(
