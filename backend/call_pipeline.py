@@ -848,9 +848,16 @@ class CallSession:
                     extracted.caller_number = self.caller_number
                     extracted.order_confirmed = True
                     self.order = extracted
-                    # Override with detected order type from conversation
-                    if self._detected_order_type and self._detected_order_type in ("pickup", "delivery"):
-                        self.order.order_type = self._detected_order_type
+                    # Set correct order_type. The extraction LLM may infer "reservation"
+                    # when the customer also booked a table, but a food order's fulfillment
+                    # type is always "pickup" or "delivery". For dual-intent calls use a
+                    # combined label so the stored record reflects both intents.
+                    _ot = self._detected_order_type or self.order.order_type or "pickup"
+                    _food = "delivery" if ("delivery" in _ot or self.order.order_type == "delivery") else "pickup"
+                    if "reservation" in _ot or self.order.order_type == "reservation":
+                        self.order.order_type = f"{_food}+reservation"
+                    else:
+                        self.order.order_type = _food
                     logger.info(
                         f"[{self.call_sid}] Extraction succeeded with "
                         f"{len(extracted.items)} items (confirmed override)"
@@ -868,7 +875,8 @@ class CallSession:
                 return False
 
         # Post-call delivery address validation (distance check)
-        if self.order.order_type == "delivery" and self.order.delivery_address:
+        # startswith covers both "delivery" and the combined "delivery+reservation".
+        if self.order.order_type.startswith("delivery") and self.order.delivery_address:
             try:
                 from delivery_utils import validate_delivery_distance
                 validation = await validate_delivery_distance(
@@ -1798,8 +1806,9 @@ async def create_call_pipeline(
                                 # instructs the AI to decline the table.
                                 logger.info(f"[{call_sid}] Table mention but reservations disabled — not engaging reservation logic")
                             elif _plan == "PRO" and _rest_has_reservations:
-                                session._detected_order_type = "reservation"
-                                logger.info(f"[{call_sid}] Order type locked: reservation (from customer)")
+                                _prior = session._detected_order_type if session._detected_order_type in ("pickup", "delivery") else None
+                                session._detected_order_type = f"{_prior}+reservation" if _prior else "reservation"
+                                logger.info(f"[{call_sid}] Order type locked: {session._detected_order_type} (from customer)")
                             elif _rest_has_reservations:
                                 # STARTER — restaurant has reservations, AI will offer escalation via prompt
                                 logger.info(f"[{call_sid}] Reservation requested on STARTER — AI will offer escalation to team")
@@ -1983,9 +1992,10 @@ async def create_call_pipeline(
                             extracted.restaurant_id = restaurant_id
                             extracted.call_sid      = call_sid
                             extracted.caller_number = session.caller_number
-                            # Override with detected order type from conversation
-                            if session._detected_order_type and session._detected_order_type in ("pickup", "delivery"):
-                                extracted.order_type = session._detected_order_type
+                            # Set correct order_type (same logic as dispatch_order_if_ready)
+                            _ot = session._detected_order_type or extracted.order_type or "pickup"
+                            _food = "delivery" if ("delivery" in _ot or extracted.order_type == "delivery") else "pickup"
+                            extracted.order_type = f"{_food}+reservation" if ("reservation" in _ot or extracted.order_type == "reservation") else _food
                             session.order = extracted
                             result = await send_order_to_kitchen(extracted, session.restaurant)
                             if result["success"]:
