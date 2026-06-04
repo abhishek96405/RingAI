@@ -1160,9 +1160,29 @@ async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depen
         if detected_tz:
             restaurant_data["timezone"] = detected_tz
 
+    business_type = restaurant_data.get("business_type", "restaurant")
+
+    # Resume an in-progress onboarding instead of creating a parallel record.
+    # If this owner already has a not-yet-activated (draft) restaurant of this
+    # business_type, return it — so leaving onboarding and later continuing OR
+    # restarting reuses the same restaurant instead of spawning duplicates.
+    # Keyed on server state (not the browser), so it holds across cleared
+    # storage and device switches. Only resumes drafts (is_active != True),
+    # so an already-activated restaurant is never affected.
+    existing_memberships = await db.memberships.find(
+        {"user_id": user["id"], "role": "owner", "business_type": business_type}, {"_id": 0}
+    ).to_list(100)
+    existing_ids = [m["restaurant_id"] for m in existing_memberships]
+    if existing_ids:
+        drafts = await get_business_collection(business_type).find(
+            {"id": {"$in": existing_ids}, "is_active": {"$ne": True}}, {"_id": 0}
+        ).to_list(100)
+        if drafts:
+            drafts.sort(key=lambda r: r.get("created_at") or "")
+            return strip_sensitive_fields(drafts[-1])   # resume the existing draft
+
     restaurant = Restaurant(**restaurant_data)
     doc = restaurant.model_dump()
-    business_type = doc.get("business_type", "restaurant")
     await get_business_collection(business_type).insert_one(doc)
     membership = Membership(user_id=user["id"], restaurant_id=restaurant.id, role="owner", business_type=business_type)
     await db.memberships.insert_one(membership.model_dump())

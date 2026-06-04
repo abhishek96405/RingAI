@@ -50,6 +50,42 @@ async def test_create_restaurant_persists_doc_and_creates_owner_membership(
     assert membership["role"] == "owner"
 
 
+async def test_create_restaurant_twice_resumes_draft_no_duplicate(
+    client, mock_clerk, patched_server_db
+):
+    """An interrupted/restarted onboarding must not spawn a duplicate.
+
+    Calling create_restaurant twice for the same owner + business_type, with the
+    first restaurant left as a draft (is_active: false), returns the same
+    restaurant id both times and leaves exactly one restaurants doc and one
+    membership.
+    """
+    first = client.post(
+        "/api/restaurants",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"name": "Draft Diner", "timezone": "America/New_York"},
+    )
+    assert first.status_code == 200
+    first_id = first.json()["id"]
+
+    second = client.post(
+        "/api/restaurants",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"name": "Draft Diner Again", "timezone": "America/New_York"},
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] == first_id, "second create should resume the draft"
+
+    restaurant_count = await patched_server_db.restaurants.count_documents(
+        {"id": first_id}
+    )
+    assert restaurant_count == 1
+    membership_count = await patched_server_db.memberships.count_documents(
+        {"user_id": "user_tenant_a", "restaurant_id": first_id}
+    )
+    assert membership_count == 1
+
+
 def test_create_restaurant_rejects_bad_payload(client, mock_clerk):
     """Missing required name → 422."""
     response = client.post(
