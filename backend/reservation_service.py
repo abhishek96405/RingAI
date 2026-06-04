@@ -307,7 +307,8 @@ async def check_reservation_availability(
     
     # Get slots for the date
     slots = await get_reservation_slots(
-        restaurant_id, date_str, config, operating_hours, db, restaurant_timezone
+        restaurant_id, date_str, config, operating_hours, db, restaurant_timezone,
+        restaurant=restaurant,
     )
     
     if not slots:
@@ -548,23 +549,18 @@ async def dispatch_reservation(
             f"({restaurant_id} {reservation_date} {reservation_time_24h} "
             f"party={party_size}): {reason}"
         )
-        # Apology SMS naming open alternatives — never blame "AI" in the copy.
-        customer_phone = reservation_data.get("customer_phone", "")
-        if config.get("sms_enabled", True) and customer_phone:
-            try:
-                await send_reservation_unavailable_sms(
-                    customer_phone=customer_phone,
-                    restaurant_name=restaurant.get("name", "the restaurant"),
-                    reservation_date=reservation_date,
-                    reservation_time=reservation_time_24h,
-                    suggested_times=suggested_times,
-                )
-            except Exception as e:
-                logger.error(f"Reservation apology SMS error: {e}")
+        # NOTE: the customer-facing "couldn't confirm your table" SMS is NOT sent
+        # here. It's sent once at end-of-call by the session
+        # (CallSession._notify_reservation_unavailable_if_pending), after every
+        # booking attempt — so a reservation that books on a later retry never
+        # also gets an apology, and a persistently unavailable one is apologized
+        # for exactly once.
         return {
             "success": False,
             "reason": reason,
             "suggested_times": suggested_times,
+            "reservation_date": reservation_date,
+            "reservation_time": reservation_time_24h,
         }
 
     # Create reservation document (store time in 24h for capacity counting)

@@ -683,6 +683,105 @@ async def test_handle_reservation_confirmed_swallows_exceptions(
 
 
 # ---------------------------------------------------------------------------
+# Single end-of-call reservation-unavailable apology SMS.
+# ---------------------------------------------------------------------------
+
+
+def _stub_reservation_module(monkeypatch, *, dispatch_results):
+    """Insert a fake reservation_service module.
+
+    dispatch_results is a list consumed one entry per dispatch call (the last
+    entry repeats once exhausted). Returns the sms_calls list recording every
+    send_reservation_unavailable_sms invocation.
+    """
+    import sys
+    import types
+
+    sms_calls: list = []
+    state = {"i": 0}
+
+    async def fake_extract(transcript, menu_index=None):
+        return {"customer_name": "Jane", "party_size": 4,
+                "reservation_date": "2030-06-15", "reservation_time": "7:00 PM"}
+
+    async def fake_dispatch(reservation_data, restaurant, config, db=None):
+        i = min(state["i"], len(dispatch_results) - 1)
+        state["i"] += 1
+        return dispatch_results[i]
+
+    async def fake_unavailable_sms(**kwargs):
+        sms_calls.append(kwargs)
+        return True
+
+    fake_module = types.ModuleType("reservation_service")
+    fake_module.extract_reservation_from_transcript = fake_extract
+    fake_module.dispatch_reservation = fake_dispatch
+    fake_module.send_reservation_unavailable_sms = fake_unavailable_sms
+    monkeypatch.setitem(sys.modules, "reservation_service", fake_module)
+    return sms_calls
+
+
+async def test_two_failed_dispatches_send_at_most_one_apology(make_call_session, monkeypatch):
+    """Two unavailable dispatch attempts → the end-of-call notifier sends the
+    apology exactly once, even if the notifier itself is invoked twice."""
+    sess = make_call_session()
+    sess.restaurant["reservations_enabled"] = True
+    sess.transcript = [{"role": "customer", "text": "book a table for 4 at 7"}]
+
+    unavailable = {
+        "success": False,
+        "reason": "This time slot is fully booked",
+        "suggested_times": ["6:30 PM", "8:00 PM"],
+        "reservation_date": "2030-06-15",
+        "reservation_time": "19:00",
+    }
+    sms_calls = _stub_reservation_module(monkeypatch, dispatch_results=[unavailable])
+
+    # Two booking attempts, both unavailable (mirrors order-confirmed + disconnect).
+    await sess._ensure_reservation_booked()
+    await sess._ensure_reservation_booked()
+    assert sess._reservation_booked is False
+    assert sess._reservation_unavailable is not None
+    assert len(sms_calls) == 0  # nothing sent until end-of-call
+
+    # End-of-call notifier — invoked twice, must still send exactly one apology.
+    await sess._notify_reservation_unavailable_if_pending()
+    await sess._notify_reservation_unavailable_if_pending()
+    assert len(sms_calls) == 1
+    assert sms_calls[0]["suggested_times"] == ["6:30 PM", "8:00 PM"]
+    assert sms_calls[0]["reservation_date"] == "2030-06-15"
+
+
+async def test_success_after_failure_sends_no_apology(make_call_session, monkeypatch):
+    """First attempt unavailable, a later attempt books → exactly one SMS, the
+    confirmation (sent by dispatch_reservation's success path), never an apology."""
+    sess = make_call_session()
+    sess.restaurant["reservations_enabled"] = True
+    sess.transcript = [{"role": "customer", "text": "book a table for 4 at 7"}]
+
+    unavailable = {
+        "success": False,
+        "reason": "This time slot is fully booked",
+        "suggested_times": ["6:30 PM"],
+        "reservation_date": "2030-06-15",
+        "reservation_time": "19:00",
+    }
+    booked = {"success": True, "reservation_id": "rsv_ok"}
+    sms_calls = _stub_reservation_module(
+        monkeypatch, dispatch_results=[unavailable, booked]
+    )
+
+    await sess._ensure_reservation_booked()   # fails — records pending apology
+    assert sess._reservation_unavailable is not None
+    await sess._ensure_reservation_booked()   # succeeds — clears it
+    assert sess._reservation_booked is True
+    assert sess._reservation_unavailable is None
+
+    await sess._notify_reservation_unavailable_if_pending()
+    assert len(sms_calls) == 0  # booked → no apology
+
+
+# ---------------------------------------------------------------------------
 # Appointment dispatch fuzzy-match revenue calculation.
 # ---------------------------------------------------------------------------
 

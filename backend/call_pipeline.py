@@ -418,6 +418,8 @@ class CallSession:
         # this flag does. It also prevents double-booking across both paths.
         self._reservation_booked = False
         self._reservation_lock = asyncio.Lock()  # serializes live + post-call reservation dispatch
+        self._reservation_unavailable: Optional[Dict[str, Any]] = None  # last availability failure, for a single end-of-call apology
+        self._reservation_notified = False  # guard: at most one reservation-outcome SMS per call
         self._appointment_total  = 0      # price_cents sum for booked services
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
@@ -608,11 +610,52 @@ class CallSession:
                 )
                 if _res_result.get("success"):
                     self._reservation_booked = True
+                    self._reservation_unavailable = None  # booked — cancel any pending apology
                     logger.info(f"[{self.call_sid}] Reservation booked: {_res_result.get('reservation_id')}")
-                else:
+                elif _res_result.get("reason") != "reservations_disabled":
+                    # Remember the failure so the single end-of-call notifier can
+                    # apologize once — but only if no later attempt books it.
+                    self._reservation_unavailable = {
+                        "suggested_times": _res_result.get("suggested_times", []),
+                        "reservation_date": _res_result.get("reservation_date", ""),
+                        "reservation_time": _res_result.get("reservation_time", ""),
+                    }
                     logger.info(f"[{self.call_sid}] Reservation not booked: {_res_result.get('reason')}")
             except Exception as e:
                 logger.error(f"[{self.call_sid}] _ensure_reservation_booked error: {e}", exc_info=True)
+
+    async def _notify_reservation_unavailable_if_pending(self) -> None:
+        """Send the customer-facing 'couldn't confirm your table' SMS at most ONCE
+        per call, and only if a reservation was requested but never booked.
+
+        Called once at the very end of the call (the disconnect handler), AFTER
+        every booking attempt — so a reservation that booked on a later retry
+        never also gets an apology (mutually exclusive with the confirmation via
+        _reservation_booked), and a persistently unavailable one is apologized for
+        exactly once, not once per dispatch attempt.
+        """
+        if self.business_type != "restaurant":
+            return
+        if self._reservation_booked or self._reservation_notified:
+            return
+        if not self._reservation_unavailable:
+            return
+        if not (self.config or {}).get("sms_enabled", True) or not self.caller_number:
+            return
+        self._reservation_notified = True
+        info = self._reservation_unavailable
+        try:
+            from reservation_service import send_reservation_unavailable_sms
+            await send_reservation_unavailable_sms(
+                customer_phone=self.caller_number,
+                restaurant_name=self.restaurant.get("name", "the restaurant"),
+                reservation_date=info.get("reservation_date", ""),
+                reservation_time=info.get("reservation_time", ""),
+                suggested_times=info.get("suggested_times", []),
+            )
+            logger.info(f"[{self.call_sid}] Reservation-unavailable SMS sent (single, end-of-call)")
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] Reservation-unavailable SMS error: {e}", exc_info=True)
 
     # ------------------------------------------------------------------
     # Schedule hangup — calls on_call_complete FIRST, then terminates
@@ -1959,6 +2002,11 @@ async def create_call_pipeline(
                 # etc.), this is a no-op.
                 if session is not None:
                     await session._fire_on_call_complete()
+                    # Single end-of-call reservation-outcome SMS: apologize once,
+                    # and only if no attempt (here or earlier) booked the table.
+                    # This handler is the last code to run per call, so it runs
+                    # after every booking attempt and never contradicts a confirmation.
+                    await session._notify_reservation_unavailable_if_pending()
                 elif on_call_complete:
                     # Defensive fallback: no session attached (pipeline failed
                     # to build past WS handshake) — invoke the callback
