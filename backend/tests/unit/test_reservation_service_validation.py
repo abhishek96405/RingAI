@@ -64,7 +64,7 @@ async def test_returns_unavailable_when_date_has_no_slots(async_db):
         date_str="2030-06-15",  # Saturday
         time_str="18:00",
         party_size=2,
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=closed_hours,
         db=async_db,
     )
@@ -79,7 +79,7 @@ async def test_returns_available_when_slot_free(async_db):
         date_str="2030-06-15",
         time_str="18:00",
         party_size=4,
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS,
         db=async_db,
     )
@@ -96,7 +96,7 @@ async def test_suggests_alternatives_when_requested_time_not_found(async_db):
         date_str="2030-06-15",
         time_str="03:00",
         party_size=2,
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS,
         db=async_db,
     )
@@ -121,7 +121,7 @@ async def test_suggests_nearby_when_slot_full(async_db):
         date_str="2030-06-15",
         time_str="18:00",
         party_size=2,
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS,
         db=async_db,
     )
@@ -148,7 +148,7 @@ async def test_dispatch_reservation_creates_and_sends_sms(async_db, monkeypatch)
             "reservation_time": "18:00",
         },
         restaurant={"id": "rest_a", "name": "Tasty Bistro", "address": "123 Main"},
-        config={"sms_enabled": True, "operating_hours": OPERATING_HOURS},
+        config={"reservations_enabled": True, "sms_enabled": True, "operating_hours": OPERATING_HOURS},
         db=async_db,
     )
     assert result["success"] is True
@@ -176,7 +176,7 @@ async def test_dispatch_reservation_skips_sms_when_disabled(async_db, monkeypatc
             "reservation_time": "18:00",
         },
         restaurant={"id": "rest_a", "name": "Tasty"},
-        config={"sms_enabled": False, "operating_hours": OPERATING_HOURS},
+        config={"reservations_enabled": True, "sms_enabled": False, "operating_hours": OPERATING_HOURS},
         db=async_db,
     )
     assert result["success"] is True
@@ -198,7 +198,7 @@ async def test_dispatch_reservation_marks_failure_silently_when_sms_fails(async_
             "reservation_time": "18:00",
         },
         restaurant={"id": "rest_a", "name": "Tasty"},
-        config={"sms_enabled": True, "operating_hours": OPERATING_HOURS},
+        config={"reservations_enabled": True, "sms_enabled": True, "operating_hours": OPERATING_HOURS},
         db=async_db,
     )
     # Reservation is still saved, only sms_sent flag is false

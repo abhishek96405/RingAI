@@ -28,7 +28,13 @@ def test_default_settings_present():
 def test_get_reservation_settings_returns_defaults_with_no_overrides():
     from reservation_service import get_reservation_settings, DEFAULT_RESERVATION_SETTINGS
     settings = get_reservation_settings(config={})
+    # Reservations are opt-in: with neither config nor restaurant setting it,
+    # get_reservation_settings forces reservations_enabled OFF — even though the
+    # constant still defaults it True (the constant is read verbatim elsewhere).
+    assert settings["reservations_enabled"] is False
     for key, value in DEFAULT_RESERVATION_SETTINGS.items():
+        if key == "reservations_enabled":
+            continue
         assert settings[key] == value
 
 
@@ -94,7 +100,7 @@ async def test_returns_empty_on_blackout_date(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={"blackout_dates": ["2030-06-15"]},
+        config={"reservations_enabled": True, "blackout_dates": ["2030-06-15"]},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -107,7 +113,7 @@ async def test_returns_empty_when_day_closed(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-01",  # Saturday
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=hours,
         db=async_db,
     )
@@ -119,7 +125,7 @@ async def test_returns_empty_on_invalid_date(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="not-a-date",
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -131,7 +137,7 @@ async def test_generates_slots_at_default_interval(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",  # Saturday in far future
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -148,7 +154,7 @@ async def test_uses_custom_slot_interval(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={"slot_interval_minutes": 60},
+        config={"reservations_enabled": True, "slot_interval_minutes": 60},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -176,7 +182,7 @@ async def test_existing_reservations_reduce_capacity(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={"capacity_per_slot": 5},
+        config={"reservations_enabled": True, "capacity_per_slot": 5},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -200,7 +206,7 @@ async def test_full_slot_is_unavailable(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={"capacity_per_slot": 10},
+        config={"reservations_enabled": True, "capacity_per_slot": 10},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -223,7 +229,7 @@ async def test_cancelled_reservations_do_not_consume_capacity(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={"capacity_per_slot": 5},
+        config={"reservations_enabled": True, "capacity_per_slot": 5},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -243,7 +249,7 @@ async def test_blocked_slots_are_marked_blocked(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -259,7 +265,7 @@ async def test_special_hours_override(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={"special_hours": {"2030-06-15": {"closed": True}}},
+        config={"reservations_enabled": True, "special_hours": {"2030-06-15": {"closed": True}}},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )
@@ -271,7 +277,7 @@ async def test_display_time_format(async_db):
     slots = await get_reservation_slots(
         restaurant_id="rest_a",
         date_str="2030-06-15",
-        config={},
+        config={"reservations_enabled": True},
         operating_hours=OPERATING_HOURS_5_TO_10,
         db=async_db,
     )

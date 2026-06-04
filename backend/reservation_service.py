@@ -86,6 +86,12 @@ DEFAULT_RESERVATION_SETTINGS = {
 def get_reservation_settings(config: Dict[str, Any], restaurant: Dict[str, Any] = None) -> Dict[str, Any]:
     """Get reservation settings from restaurant document and config with defaults."""
     settings = dict(DEFAULT_RESERVATION_SETTINGS)
+    # Reservations are opt-in and plan-gated: default OFF unless config or the
+    # restaurant doc explicitly turns them on. This aligns the booking path with
+    # build_system_prompt, which treats an absent reservations_enabled as False
+    # (server.py). The config/restaurant merges below still honor an explicit
+    # True or False from either source.
+    settings["reservations_enabled"] = False
     # Merge with config values first
     if config:
         for key in settings:
