@@ -19,6 +19,29 @@ import {
   Receipt,
 } from "lucide-react";
 
+// Pretty label for an order's fulfillment type. Food orders are "pickup"/"delivery";
+// a "+reservation" suffix marks a dual-intent call (food order placed alongside a table
+// reservation). Unknown/missing falls back to "Pickup" to preserve prior behavior.
+const orderTypeLabel = (t?: string): string => {
+  switch (t) {
+    case "delivery":
+      return "Delivery";
+    case "reservation":
+      return "Reservation";
+    case "pickup+reservation":
+      return "Pickup + Reservation";
+    case "delivery+reservation":
+      return "Delivery + Reservation";
+    default:
+      return "Pickup";
+  }
+};
+
+// Compact base label for the narrow list column; the "+ Reservation" part is rendered
+// on a separate sub-line so it can never overflow the column.
+const orderBaseLabel = (t?: string): string =>
+  t?.startsWith("delivery") ? "Delivery" : t === "reservation" ? "Reservation" : "Pickup";
+
 const OrdersPage = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
@@ -292,14 +315,20 @@ const OrdersPage = () => {
                       <span className="text-primary font-medium">{extra}</span>
                     )}
                   </div>
-                  <div className="col-span-1">
+                  <div className="col-span-1 flex flex-col items-start gap-0.5">
                     <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${
-                      order.order_json?.order_type === "delivery" 
-                        ? "bg-blue-500/10 text-blue-500" 
+                      order.order_json?.order_type?.startsWith("delivery")
+                        ? "bg-blue-500/10 text-blue-500"
                         : "bg-emerald-500/10 text-emerald-500"
                     }`}>
-                      {order.order_json?.order_type === "delivery" ? "Delivery" : "Pickup"}
+                      {orderBaseLabel(order.order_json?.order_type)}
                     </span>
+                    {order.order_json?.order_type?.includes("reservation") &&
+                      order.order_json?.order_type !== "reservation" && (
+                        <span className="text-[10px] leading-tight text-primary font-medium">
+                          + Reservation
+                        </span>
+                      )}
                   </div>
                   <div className="col-span-1 font-semibold text-success">
                     ${((order.order_total || 0) / 100).toFixed(2)}
@@ -382,9 +411,7 @@ const OrdersPage = () => {
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-muted-foreground" />
                     <span className="text-sm">
-                      {selectedOrder.order_json?.order_type === "delivery"
-                        ? "Delivery"
-                        : "Pickup"}
+                      {orderTypeLabel(selectedOrder.order_json?.order_type)}
                     </span>
                   </div>
                   {selectedOrder.order_json?.delivery_address && (

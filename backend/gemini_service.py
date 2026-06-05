@@ -384,6 +384,10 @@ Required JSON format:
 
 RULES:
 - order_confirmed must be true or false — never omit this field
+- order_type must be exactly one of: "pickup", "delivery", "reservation", "pickup+reservation", "delivery+reservation"
+  • "pickup" / "delivery": a food order with no table reservation
+  • "pickup+reservation" / "delivery+reservation": the SAME call has BOTH a food order AND a table reservation — combine them, never drop the food part
+  • "reservation": ONLY when the call is a table reservation with no food items
 - Focus on the FINAL order only — ignore any cancelled or restarted earlier attempts
 - If the customer said "cancel", "start over", "from the beginning" — ignore everything before that and extract only what came after
 - CRITICAL: If the SIGNAL above shows order_confirmed_signal detected=True, you MUST set order_confirmed=true — no exceptions
