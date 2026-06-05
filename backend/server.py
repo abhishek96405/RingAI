@@ -207,6 +207,22 @@ def get_cors_origins() -> List[str]:
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
+# --- Error monitoring (Sentry) ---
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+            release=os.environ.get("RENDER_GIT_COMMIT"),
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+            send_default_pii=False,
+        )
+        logging.getLogger(__name__).info("Sentry initialized (env=%s)", os.environ.get("SENTRY_ENVIRONMENT", "production"))
+    except Exception as _sentry_err:
+        logging.getLogger(__name__).warning("Sentry init skipped: %s", _sentry_err)
+
 # MongoDB connection
 mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(mongo_url)
