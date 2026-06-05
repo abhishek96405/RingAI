@@ -25,6 +25,23 @@ const statusIcons: Record<string, any> = {
   IN_PROGRESS: Phone,
 };
 
+// Pretty label for an order's fulfillment type. "+reservation" marks a dual-intent
+// call (food order placed alongside a table reservation). Unknown/missing → Pickup.
+const orderTypeLabel = (t?: string): string => {
+  switch (t) {
+    case "delivery":
+      return "Delivery";
+    case "reservation":
+      return "Reservation";
+    case "pickup+reservation":
+      return "Pickup + Reservation";
+    case "delivery+reservation":
+      return "Delivery + Reservation";
+    default:
+      return "Pickup";
+  }
+};
+
 const CallsPage = () => {
   const [calls, setCalls] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
@@ -335,7 +352,7 @@ const CallsPage = () => {
                         ))}
                         <Separator />
                         <div className="flex justify-between text-sm font-semibold"><span>Total</span><span>${(selectedCall.order_json.total / 100).toFixed(2)}</span></div>
-                        <Badge variant="secondary" className="text-xs">{selectedCall.order_json.type || "pickup"}</Badge>
+                        <Badge variant="secondary" className="text-xs">{orderTypeLabel(selectedCall.order_json.order_type)}</Badge>
                       </div>
                     </div>
                   </>
