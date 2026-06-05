@@ -41,6 +41,28 @@ function FullPageLoader() {
   );
 }
 
+function SessionErrorScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background px-6">
+      <div className="text-center space-y-4 max-w-sm">
+        <div>
+          <p className="text-sm font-medium text-foreground">Unable to load your workspace</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            We could not reach the server. This is usually temporary - please try again.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SessionReadyGate({ children }: { children: ReactNode }) {
   const { authLoaded, isSignedIn, bootstrapping } = useAppSession();
 
@@ -94,8 +116,15 @@ function PublicAuthRoute({ children }: { children: ReactNode }) {
 }
 
 function OnboardingGate() {
-  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } =
-    useAppSession();
+  const {
+    authLoaded,
+    isSignedIn,
+    bootstrapping,
+    bootstrapError,
+    activeRestaurant,
+    onboardingComplete,
+    refreshSession,
+  } = useAppSession();
 
   if (!authLoaded) {
     return <FullPageLoader />;
@@ -103,6 +132,13 @@ function OnboardingGate() {
 
   if (isSignedIn && bootstrapping) {
     return <FullPageLoader />;
+  }
+
+  // Bootstrap failed with no restaurant loaded: do NOT assume "new user" and drop
+  // them into onboarding (this is what showed working accounts the onboarding flow
+  // on a transient server error). Offer a retry instead.
+  if (bootstrapError && !activeRestaurant) {
+    return <SessionErrorScreen onRetry={() => void refreshSession()} />;
   }
 
   if (activeRestaurant && onboardingComplete) {
@@ -113,8 +149,15 @@ function OnboardingGate() {
 }
 
 function ProtectedAppRoute({ children }: { children: ReactNode }) {
-  const { authLoaded, isSignedIn, bootstrapping, activeRestaurant, onboardingComplete } =
-    useAppSession();
+  const {
+    authLoaded,
+    isSignedIn,
+    bootstrapping,
+    bootstrapError,
+    activeRestaurant,
+    onboardingComplete,
+    refreshSession,
+  } = useAppSession();
 
   if (!authLoaded) {
     return <FullPageLoader />;
@@ -122,6 +165,12 @@ function ProtectedAppRoute({ children }: { children: ReactNode }) {
 
   if (isSignedIn && bootstrapping) {
     return <FullPageLoader />;
+  }
+
+  // Bootstrap failed with no restaurant loaded: show a retry screen instead of
+  // bouncing a (possibly fully-onboarded) account to /onboarding.
+  if (bootstrapError && !activeRestaurant) {
+    return <SessionErrorScreen onRetry={() => void refreshSession()} />;
   }
 
   if (!activeRestaurant || !onboardingComplete) {

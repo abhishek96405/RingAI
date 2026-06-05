@@ -30,6 +30,7 @@ type SessionContextType = {
   isSignedIn: boolean | undefined;
   user: any;
   bootstrapping: boolean;
+  bootstrapError: boolean;
   bootstrapData: BootstrapPayload | null;
   activeRestaurant: any | null;
   memberships: any[];
@@ -68,6 +69,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const [tokenResolved, setTokenResolved] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState(false);
   const [bootstrapData, setBootstrapData] = useState<BootstrapPayload | null>(null);
 
   const bootstrapDataRef = useRef<BootstrapPayload | null>(null);
@@ -118,6 +120,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const resetSessionState = useCallback(() => {
     clearRestaurantId();
     setBootstrapData(null);
+    setBootstrapError(false);
     setBootstrapping(false);
   }, []);
 
@@ -148,9 +151,11 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         }
 
         setBootstrapData(payload);
+        setBootstrapError(false);
         return payload;
       } catch (error) {
         console.error("Failed to bootstrap session", error);
+        setBootstrapError(true);
         return bootstrapDataRef.current;
       } finally {
         setBootstrapping(false);
@@ -211,6 +216,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       isSignedIn,
       user,
       bootstrapping,
+      bootstrapError,
       bootstrapData,
       activeRestaurant,
       memberships,
@@ -224,6 +230,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       isSignedIn,
       user,
       bootstrapping,
+      bootstrapError,
       bootstrapData,
       activeRestaurant,
       memberships,
