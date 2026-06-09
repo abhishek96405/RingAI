@@ -218,6 +218,7 @@ export default function Onboarding() {
     setSubmitting(true);
     try {
       restaurantData.address = `${restaurantData._street}, ${restaurantData._city}, ${restaurantData._state} ${restaurantData._zip}`;
+      restaurantData.business_type = businessType;
       const res = await createRestaurantApi(restaurantData);
       const createdRestaurant = res.data;
 

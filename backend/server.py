@@ -480,6 +480,10 @@ class RestaurantBase(BaseModel):
     name: str
     cuisine_type: Optional[str] = None
 
+    # Business type for horizontal platform support
+    # "restaurant" | "clinic" | "salon" | "home_services" | "legal"
+    business_type: str = "restaurant"
+
     # owner / business contact
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
