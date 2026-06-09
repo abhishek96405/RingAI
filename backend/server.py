@@ -1836,7 +1836,7 @@ async def unblock_slot(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Blocked slot not found")
     return {"deleted": True}
-
+# ============================================================
 
 @api_router.get("/restaurants/{restaurant_id}/available-slots")
 async def get_available_slots_endpoint(
