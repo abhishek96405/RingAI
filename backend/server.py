@@ -1853,6 +1853,10 @@ async def get_available_slots_endpoint(
     config = await get_config_collection(business_type).find_one(
         {"restaurant_id": restaurant_id}, {"_id": 0}
     ) or {}
+    business = await get_business_collection(business_type).find_one(
+        {"id": restaurant_id}, {"_id": 0}
+    ) or {}
+    config["timezone"] = business.get("timezone", "America/Chicago")
     services = await db.services.find(
         {"restaurant_id": restaurant_id}, {"_id": 0}
     ).to_list(100)
