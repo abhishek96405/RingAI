@@ -203,6 +203,33 @@ async def notify_new_order(
     await manager.send_to_restaurant(restaurant_id, notification)
 
 
+async def notify_order_dispatch_failed(
+    restaurant_id: str,
+    call_sid: str,
+    caller_number: str,
+    attempted_pos: str,
+    error: str,
+    total: int = 0,
+):
+    """Notify the dashboard that an order could NOT be sent to the POS and must
+    be entered manually. Raised when a configured POS dispatch fails (A7-1)."""
+    notification = build_notification(
+        event_type="order_dispatch_failed",
+        title="Order needs attention",
+        message=f"An order could not be sent to {attempted_pos}. Enter it manually from the dashboard.",
+        data={
+            "call_sid": call_sid,
+            "caller_number": caller_number[-4:] if caller_number and len(caller_number) > 4 else "****",
+            "attempted_pos": attempted_pos,
+            "error": error,
+            "total": total,
+        },
+        priority="high",
+    )
+
+    await manager.send_to_restaurant(restaurant_id, notification)
+
+
 async def notify_new_appointment(
     restaurant_id: str,
     appointment_id: str,

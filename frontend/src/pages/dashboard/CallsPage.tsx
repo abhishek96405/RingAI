@@ -353,6 +353,15 @@ const CallsPage = () => {
                         <Separator />
                         <div className="flex justify-between text-sm font-semibold"><span>Total</span><span>${(selectedCall.order_json.total / 100).toFixed(2)}</span></div>
                         <Badge variant="secondary" className="text-xs">{orderTypeLabel(selectedCall.order_json.order_type)}</Badge>
+                        {selectedCall.order_json.state === "DISPATCH_FAILED" && (
+                          <Badge
+                            variant="secondary"
+                            className="text-xs border-0 bg-red-500/10 text-red-600 ml-2"
+                            title={selectedCall.order_json.dispatch_failure_reason || "POS dispatch failed"}
+                          >
+                            Failed — enter manually
+                          </Badge>
+                        )}
                       </div>
                     </div>
                   </>

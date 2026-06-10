@@ -62,18 +62,23 @@ async def test_routes_to_toast_when_pos_type_toast(monkeypatch):
     toast_mock.assert_awaited_once()
 
 
-async def test_falls_back_when_toast_fails(monkeypatch):
-    """When Toast fails, falls through to webhook or DB."""
+async def test_toast_failure_without_webhook_reports_failure(monkeypatch):
+    """A configured POS (Toast) that fails with no webhook fallback must NOT be
+    reported as a DB success — that is the A7-1 silent-order-loss bug. It must
+    surface as a failure so the operator gets alerted."""
     from gemini_service import send_order_to_kitchen
 
     monkeypatch.setattr("toast_integration.send_order_to_toast",
-                        AsyncMock(return_value={"success": False, "order_id": "", "method": "toast"}))
+                        AsyncMock(return_value={"success": False, "order_id": "", "method": "toast",
+                                                "error": "Toast 500"}))
     monkeypatch.delenv("KITCHEN_WEBHOOK_URL", raising=False)
 
     out = await send_order_to_kitchen(_make_order(), {"pos_type": "toast"})
-    # Should fall through to DB-only fallback
-    assert out["success"] is True
-    assert out["method"] == "database"
+    assert out["success"] is False
+    assert out["method"] == "toast"
+    assert out["attempted_pos"] == "toast"
+    assert out["fallback_saved"] is True
+    assert out["error"]
 
 
 async def test_routes_to_clover_when_credentials_present(monkeypatch):
@@ -320,3 +325,184 @@ async def test_queue_depth_legacy_fallback_to_clover_by_credentials(monkeypatch)
         "clover_merchant_id": "m",
     }, {})
     assert out == 1
+
+
+# ---------------------------------------------------------------------------
+# A7-1: failed POS dispatch must be visible (no silent order loss).
+# ---------------------------------------------------------------------------
+
+async def test_square_failure_no_webhook_returns_failure(monkeypatch):
+    """pos_type=square + Square HTTP failure + no webhook → success False,
+    attempted_pos 'square', fallback_saved True, error populated."""
+    from gemini_service import send_order_to_kitchen
+
+    async def fake_post(self, url, **kwargs):
+        return _resp(401, json={"errors": [{"code": "UNAUTHORIZED"}]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.delenv("KITCHEN_WEBHOOK_URL", raising=False)
+
+    out = await send_order_to_kitchen(_make_order(), {
+        "pos_type": "square",
+        "square_access_token": "t",
+        "square_location_id": "loc_1",
+    })
+    assert out["success"] is False
+    assert out["attempted_pos"] == "square"
+    assert out["method"] == "square"
+    assert out["fallback_saved"] is True
+    assert out["error"]  # non-empty, PII-free reason
+    assert out["order_id"].startswith("DTH-")
+
+
+async def test_square_failure_with_webhook_fallback_succeeds(monkeypatch):
+    """pos_type=square + Square failure + KITCHEN_WEBHOOK_URL success → an
+    explicitly configured webhook is a real fulfillment channel → success True."""
+    from gemini_service import send_order_to_kitchen
+
+    async def fake_post(self, url, **kwargs):
+        if "/v2/orders" in url:  # Square
+            return _resp(500, json={"errors": [{"code": "INTERNAL"}]})
+        return _resp(200, json={"order_id": "webhook_1"})  # webhook
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setenv("KITCHEN_WEBHOOK_URL", "https://kitchen.test/webhook")
+
+    out = await send_order_to_kitchen(_make_order(), {
+        "pos_type": "square",
+        "square_access_token": "t",
+        "square_location_id": "loc_1",
+    })
+    assert out["success"] is True
+    assert "webhook" in out["method"]
+    # attempted_pos is preserved through the webhook-rescued path.
+    assert out["attempted_pos"] == "square"
+    assert out["fallback_saved"] is False
+
+
+async def test_no_pos_configured_is_database_success(monkeypatch):
+    """No pos_type and no credentials → dashboard-only mode. DB-only success is
+    CORRECT here and must be regression-protected (attempted_pos None)."""
+    from gemini_service import send_order_to_kitchen
+
+    monkeypatch.delenv("KITCHEN_WEBHOOK_URL", raising=False)
+
+    out = await send_order_to_kitchen(_make_order(), {})
+    assert out["success"] is True
+    assert out["method"] == "database"
+    assert out["attempted_pos"] is None
+    assert out["fallback_saved"] is False
+
+
+# ---------------------------------------------------------------------------
+# A7-2: POS orders must produce real, visible tickets.
+# ---------------------------------------------------------------------------
+
+async def test_square_body_includes_state_open_and_pickup_fulfillment(monkeypatch):
+    from gemini_service import _send_to_square
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _resp(200, json={"order": {"id": "sq_1"}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    out = await _send_to_square(_make_order(order_type="pickup"), {
+        "square_access_token": "t", "square_location_id": "loc_1",
+    })
+    assert out["success"] is True
+    order_body = captured["json"]["order"]
+    assert order_body["state"] == "OPEN"
+    fulfillments = order_body["fulfillments"]
+    assert len(fulfillments) == 1
+    f = fulfillments[0]
+    assert f["type"] == "PICKUP"
+    assert f["state"] == "PROPOSED"
+    assert f["pickup_details"]["recipient"]["display_name"] == "Joe"
+    # None values are stripped (Square rejects nulls on fulfillment fields).
+    assert _no_none_values(f)
+
+
+async def test_square_body_includes_delivery_fulfillment_for_delivery_order(monkeypatch):
+    from gemini_service import _send_to_square
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _resp(200, json={"order": {"id": "sq_1"}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(order_type="delivery", delivery_address="1234 Elm St, Austin TX")
+    out = await _send_to_square(order, {
+        "square_access_token": "t", "square_location_id": "loc_1",
+    })
+    assert out["success"] is True
+    f = captured["json"]["order"]["fulfillments"][0]
+    assert f["type"] == "DELIVERY"
+    assert f["state"] == "PROPOSED"
+    assert f["delivery_details"]["recipient"]["address"]["address_line_1"] == "1234 Elm St, Austin TX"
+
+
+def _no_none_values(value) -> bool:
+    if isinstance(value, dict):
+        return all(v is not None and _no_none_values(v) for v in value.values())
+    if isinstance(value, list):
+        return all(_no_none_values(v) for v in value)
+    return True
+
+
+async def test_clover_create_payload_has_state_open_and_fires_print_event(monkeypatch):
+    """Clover order create must include state 'open' (else invisible in Register)
+    and a print_event must be POSTed after line items."""
+    from gemini_service import _send_to_clover
+
+    posts = []
+
+    async def fake_post(self, url, **kwargs):
+        posts.append({"url": url, "json": kwargs.get("json")})
+        if url.endswith("/orders"):
+            return _resp(201, json={"id": "clv_1"})
+        return _resp(201, json={"id": "x"})  # line_items + print_event
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    out = await _send_to_clover(_make_order(), {
+        "clover_api_token": "t", "clover_merchant_id": "m",
+    })
+    assert out["success"] is True
+    assert out["printed"] is True
+
+    create = next(p for p in posts if p["url"].endswith("/orders"))
+    assert create["json"]["state"] == "open"
+
+    # print_event POSTed, and it came AFTER the line items.
+    urls = [p["url"] for p in posts]
+    pe_idx = next(i for i, u in enumerate(urls) if u.endswith("/print_event"))
+    li_idx = max(i for i, u in enumerate(urls) if u.endswith("/line_items"))
+    assert pe_idx > li_idx
+
+
+async def test_clover_print_event_failure_still_succeeds_printed_false(monkeypatch):
+    """A print_event failure must NOT fail the dispatch — the order is already
+    visible in Register. Return success True with printed False."""
+    from gemini_service import _send_to_clover
+
+    async def fake_post(self, url, **kwargs):
+        if url.endswith("/print_event"):
+            return _resp(500, text="printer offline")
+        if url.endswith("/orders"):
+            return _resp(201, json={"id": "clv_1"})
+        return _resp(201, json={"id": "x"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    out = await _send_to_clover(_make_order(), {
+        "clover_api_token": "t", "clover_merchant_id": "m",
+    })
+    assert out["success"] is True
+    assert out["printed"] is False
+    assert out["order_id"] == "clv_1"

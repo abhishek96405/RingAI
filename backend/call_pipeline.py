@@ -918,7 +918,21 @@ class CallSession:
 
         self._order_dispatched = True
         result = await send_order_to_kitchen(self.order, self.restaurant)
-        if result["success"]:
+        self._apply_dispatch_result(result)
+        return True
+
+    def _apply_dispatch_result(self, result: Dict[str, Any]) -> None:
+        """Apply a send_order_to_kitchen() result to order state.
+
+        Success → COMPLETED with kitchen_order_id (unchanged behavior).
+        A configured-POS failure → DISPATCH_FAILED + a fire-and-forget operator
+        alert (A7-1). We deliberately do NOT collapse a real POS failure into a
+        COMPLETED/DB success — the customer was told the order was placed but the
+        kitchen never saw it, so the operator must be told to enter it manually.
+        `_order_dispatched` stays True so retry paths within the same call don't
+        double-fire tickets; the alert is the recovery mechanism.
+        """
+        if result.get("success"):
             self.order.kitchen_order_id = result["order_id"]
             self.order.transition(
                 OrderState.COMPLETED,
@@ -928,9 +942,70 @@ class CallSession:
                 f"[{self.call_sid}] Order sent: {result['order_id']} via {result['method']}"
             )
         else:
-            logger.error(f"[{self.call_sid}] Kitchen dispatch failed: {result}")
-            self.order.transition(OrderState.COMPLETED, "dispatch failed — logged to DB")
-        return True
+            self.order.dispatch_failure_reason = result.get("error", "POS dispatch failed")
+            self.order.transition(
+                OrderState.DISPATCH_FAILED,
+                f"{result.get('attempted_pos', 'pos')} dispatch failed",
+            )
+            logger.error(f"[{self.call_sid}] Kitchen dispatch FAILED: {result}")
+            asyncio.create_task(self._notify_dispatch_failure(result))
+
+    async def _notify_dispatch_failure(self, result: Dict[str, Any]) -> None:
+        """Alert the operator that a configured POS dispatch failed and the order
+        must be entered manually from the dashboard.
+
+        NEVER raises and NEVER blocks call teardown — every external call is
+        wrapped in try/except and the whole method is fire-and-forget.
+        """
+        attempted_pos = result.get("attempted_pos") or "POS"
+        error = result.get("error", "error")
+        try:
+            # (a) Real-time WebSocket push to any connected dashboard client.
+            try:
+                from websocket_notifications import notify_order_dispatch_failed
+                await notify_order_dispatch_failed(
+                    restaurant_id=self.restaurant_id,
+                    call_sid=self.call_sid,
+                    caller_number=self.caller_number,
+                    attempted_pos=attempted_pos,
+                    error=error,
+                    total=self.order.total,
+                )
+            except Exception as ws_err:
+                logger.error(f"[{self.call_sid}] dispatch-failure WS notify error: {ws_err}")
+
+            # (b) SMS to the operator. Resolve a destination number in priority order.
+            alert_phone = (
+                (self.config.get("dispatch_alert_phone") if self.config else None)
+                or (self.config.get("escalation_phone_number") if self.config else None)
+                or self.restaurant.get("owner_phone")
+            )
+            if not alert_phone:
+                logger.warning(
+                    f"[{self.call_sid}] Dispatch failed but no operator number configured "
+                    f"(dispatch_alert_phone/escalation_phone_number/owner_phone) — SMS skipped"
+                )
+                return
+            try:
+                import telnyx_service
+                await telnyx_service.send_sms(
+                    to=alert_phone,
+                    body=(
+                        f"Duuutah AI: an order from {self.caller_number} could not be sent to your "
+                        f"{attempted_pos} ({error}). The full order is saved in your dashboard — "
+                        f"please enter it manually."
+                    ),
+                    idempotency_key=f"dispatch_fail:{self.call_sid}",
+                    metadata={
+                        "purpose": "dispatch_failure_alert",
+                        "restaurant_id": self.restaurant_id,
+                        "call_sid": self.call_sid,
+                    },
+                )
+            except Exception as sms_err:
+                logger.error(f"[{self.call_sid}] dispatch-failure SMS error: {sms_err}")
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] _notify_dispatch_failure unexpected error: {e}")
 
     # ------------------------------------------------------------------
     # Final call record builder
@@ -1998,8 +2073,10 @@ async def create_call_pipeline(
                             extracted.order_type = f"{_food}+reservation" if ("reservation" in _ot or extracted.order_type == "reservation") else _food
                             session.order = extracted
                             result = await send_order_to_kitchen(extracted, session.restaurant)
-                            if result["success"]:
-                                session.order.kitchen_order_id = result["order_id"]
+                            # Same DISPATCH_FAILED handling as dispatch_order_if_ready:
+                            # a configured-POS failure must surface + alert, not be
+                            # silently swallowed on this last-chance path either (A7-1).
+                            session._apply_dispatch_result(result)
 
                     # Multi-intent / missed live signal: book any confirmed
                     # reservation now, awaited before the pipeline is cancelled

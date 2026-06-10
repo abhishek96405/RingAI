@@ -300,6 +300,15 @@ const OrdersPage = () => {
                     >
                       {getOrderNumber(order)}
                     </Badge>
+                    {order.order_json?.state === "DISPATCH_FAILED" && (
+                      <Badge
+                        variant="secondary"
+                        className="border-0 bg-red-500/10 text-red-600 text-[10px] mt-1 block w-fit"
+                        title={order.order_json?.dispatch_failure_reason || "POS dispatch failed"}
+                      >
+                        Failed — enter manually
+                      </Badge>
+                    )}
                   </div>
                   <div className="col-span-2 flex items-center gap-1.5 min-w-0">
                     <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -508,6 +517,18 @@ const OrdersPage = () => {
                         {selectedOrder.status}
                       </Badge>
                     </div>
+                    {selectedOrder.order_json?.state === "DISPATCH_FAILED" && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Dispatch</span>
+                        <Badge
+                          variant="secondary"
+                          className="border-0 bg-red-500/10 text-red-600 text-xs"
+                          title={selectedOrder.order_json?.dispatch_failure_reason || "POS dispatch failed"}
+                        >
+                          Failed — enter manually
+                        </Badge>
+                      </div>
+                    )}
                     {selectedOrder.payment_status && (
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Payment</span>

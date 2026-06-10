@@ -153,11 +153,14 @@ async def test_dispatch_retries_on_extraction_failure(
     assert len(stub_order_extraction["calls"]) == 3
 
 
-async def test_kitchen_dispatch_failure_still_transitions_state(
-    make_call_session, stub_order_extraction, monkeypatch
+async def test_kitchen_dispatch_failure_transitions_to_dispatch_failed(
+    make_call_session, stub_order_extraction, stub_send_sms, monkeypatch
 ):
-    """If send_order_to_kitchen returns success=False, the order still transitions
-    to COMPLETED (with a 'dispatch failed' reason) so the call doesn't hang."""
+    """A configured-POS dispatch failure must NOT be collapsed into a COMPLETED
+    DB success (A7-1). The order transitions to DISPATCH_FAILED, records the
+    reason, and a fire-and-forget operator alert is raised. ``dispatch_order_if_ready``
+    still returns True (the dispatch attempt concluded)."""
+    import asyncio
     from gemini_service import LiveOrder, OrderItem, OrderState
 
     sess = make_call_session()
@@ -179,12 +182,72 @@ async def test_kitchen_dispatch_failure_still_transitions_state(
     monkeypatch.setattr(
         "call_pipeline.send_order_to_kitchen",
         AsyncMock(
-            return_value={"success": False, "order_id": "", "method": "kitchen_webhook"}
+            return_value={
+                "success": False, "order_id": "DTH-X", "method": "square",
+                "attempted_pos": "square", "fallback_saved": True,
+                "error": "Square 401: unauthorized",
+            }
         ),
     )
     result = await sess.dispatch_order_if_ready()
     assert result is True
+    assert sess.order.state == OrderState.DISPATCH_FAILED
+    assert sess.order.dispatch_failure_reason == "Square 401: unauthorized"
+    # _order_dispatched stays True — the alert, not a retry, is the recovery path.
+    assert sess._order_dispatched is True
+
+    # The fire-and-forget operator alert runs as a background task.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert len(stub_send_sms) == 1
+    assert stub_send_sms[0]["idempotency_key"] == f"dispatch_fail:{sess.call_sid}"
+    assert stub_send_sms[0]["to"] == "+15555550199"  # escalation_phone_number
+
+
+async def test_dispatch_failure_alert_skips_sms_when_no_operator_number(
+    make_call_session, stub_send_sms
+):
+    """SMS resolution skips cleanly (logs, no raise, no send) when none of
+    dispatch_alert_phone / escalation_phone_number / owner_phone is configured."""
+    from gemini_service import OrderState
+
+    # Config + restaurant with NO operator number anywhere.
+    sess = make_call_session(config={"business_type": "restaurant"},
+                             restaurant={"id": "r", "name": "X"})
+    await sess._notify_dispatch_failure(
+        {"attempted_pos": "square", "error": "Square 500"}
+    )
+    assert len(stub_send_sms) == 0
+
+
+async def test_dispatch_success_path_unchanged(
+    make_call_session, stub_order_extraction, monkeypatch
+):
+    """Byte-identical success behavior: COMPLETED + kitchen_order_id set."""
+    from gemini_service import LiveOrder, OrderItem, OrderState
+
+    sess = make_call_session()
+    extracted = LiveOrder(
+        restaurant_id="r", call_sid="c", caller_number="+1", state=OrderState.CONFIRMED
+    )
+    extracted.items.append(
+        OrderItem(name="Pizza", menu_item_id="m_pizza", category="P",
+                  unit_price=1499, quantity=1)
+    )
+    stub_order_extraction["return_value"] = extracted
+    sess.order.transition(OrderState.CONFIRMED, "test")
+
+    monkeypatch.setattr(
+        "call_pipeline.send_order_to_kitchen",
+        AsyncMock(return_value={
+            "success": True, "order_id": "sq_1", "method": "square",
+            "attempted_pos": "square", "fallback_saved": False,
+        }),
+    )
+    result = await sess.dispatch_order_if_ready()
+    assert result is True
     assert sess.order.state == OrderState.COMPLETED
+    assert sess.order.kitchen_order_id == "sq_1"
 
 
 # ---------------------------------------------------------------------------

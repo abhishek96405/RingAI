@@ -274,6 +274,7 @@ class OrderState(str, Enum):
     CONFIRMING   = "CONFIRMING"
     CONFIRMED    = "CONFIRMED"
     COMPLETED    = "COMPLETED"
+    DISPATCH_FAILED = "DISPATCH_FAILED"
     ESCALATED    = "ESCALATED"
     ABANDONED    = "ABANDONED"
 
@@ -317,6 +318,7 @@ class LiveOrder:
     special_instructions: str = ""
     confirmed_at: Optional[str] = None
     kitchen_order_id: str = ""
+    dispatch_failure_reason: str = ""
     state_history: List[Dict] = field(default_factory=list)
     dropped_items: List[str] = field(default_factory=list)
 
@@ -341,6 +343,7 @@ class LiveOrder:
             "special_instructions": self.special_instructions,
             "total": self.total, "confirmed_at": self.confirmed_at,
             "kitchen_order_id": self.kitchen_order_id,
+            "dispatch_failure_reason": self.dispatch_failure_reason,
         }
 
 
@@ -532,56 +535,101 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
     Routes: pos_type → specific POS → webhook fallback → DB fallback
     """
     pos_type = restaurant.get("pos_type", "").lower()
-    
+
+    # Tracks whether a *real* POS was actually attempted, and why it failed.
+    # A restaurant with no POS configured deliberately runs dashboard-only —
+    # for it `attempted_pos` stays None and a DB-only success is correct.
+    # The bug this guards against (A7-1): a POS is configured, its call fails,
+    # and we still tell the caller "order confirmed" while the kitchen never
+    # sees it. When attempted_pos is set and nothing fulfilled it, we MUST
+    # report failure so the operator gets alerted.
+    attempted_pos: Optional[str] = None
+    pos_error: str = ""
+
     # Route by pos_type FIRST (not by credential presence)
     if pos_type == "toast":
+        attempted_pos = "toast"
         from toast_integration import send_order_to_toast
         result = await send_order_to_toast(order, restaurant)
         if result["success"]:
-            return result
-        logger.warning(f"Toast dispatch failed, falling back")
-    
+            return {**result, "attempted_pos": "toast", "fallback_saved": False}
+        pos_error = result.get("error", "Toast dispatch failed")
+        logger.warning("Toast dispatch failed, falling back")
+
     elif pos_type == "clover":
         clover_token = restaurant.get("clover_api_token", "")
         clover_mid = restaurant.get("clover_merchant_id", "")
         if clover_token and clover_mid:
+            attempted_pos = "clover"
             result = await _send_to_clover(order, restaurant)
             if result["success"]:
-                return result
-            logger.warning(f"Clover dispatch failed, falling back")
-    
+                return {**result, "attempted_pos": "clover", "fallback_saved": False}
+            pos_error = result.get("error", "Clover dispatch failed")
+            logger.warning("Clover dispatch failed, falling back")
+
     elif pos_type == "square":
         if restaurant.get("square_access_token"):
+            attempted_pos = "square"
             result = await _send_to_square(order, restaurant)
             if result["success"]:
-                return result
-            logger.warning(f"Square dispatch failed, falling back")
-    
+                return {**result, "attempted_pos": "square", "fallback_saved": False}
+            pos_error = result.get("error", "Square dispatch failed")
+            logger.warning("Square dispatch failed, falling back")
+
     # Legacy fallback: try by credential presence if pos_type not set
     if not pos_type:
         clover_token = restaurant.get("clover_api_token", "")
         clover_mid = restaurant.get("clover_merchant_id", "")
         if clover_token and clover_mid:
+            attempted_pos = "clover"
             result = await _send_to_clover(order, restaurant)
             if result["success"]:
-                return result
+                return {**result, "attempted_pos": "clover", "fallback_saved": False}
+            pos_error = result.get("error", "Clover dispatch failed")
 
         if restaurant.get("square_connected") or restaurant.get("square_access_token"):
+            attempted_pos = "square"
             result = await _send_to_square(order, restaurant)
             if result["success"]:
-                return result
+                return {**result, "attempted_pos": "square", "fallback_saved": False}
+            pos_error = result.get("error", "Square dispatch failed")
 
-    # Webhook fallback
+    # Webhook fallback — an explicitly configured KITCHEN_WEBHOOK_URL is a real
+    # fulfillment channel. Success here is success, even after a POS attempt failed.
     webhook_url = os.environ.get("KITCHEN_WEBHOOK_URL", "")
     if webhook_url:
         result = await _send_to_kitchen_webhook(order, webhook_url)
         if result["success"]:
-            return result
+            return {**result, "attempted_pos": attempted_pos, "fallback_saved": False}
 
-    # DB-only fallback
     order_id = f"DTH-{order.call_sid[-8:].upper()}"
+
+    # A POS was attempted and nothing fulfilled the order. Do NOT report success.
+    # The call record already persists the full order; the operator alert
+    # (raised by the caller) is the recovery path.
+    if attempted_pos:
+        logger.error(
+            f"Order {order_id} dispatch to {attempted_pos} FAILED and no webhook "
+            f"fallback succeeded: {pos_error or 'POS dispatch failed'}"
+        )
+        return {
+            "success": False,
+            "order_id": order_id,
+            "method": attempted_pos,
+            "attempted_pos": attempted_pos,
+            "fallback_saved": True,
+            "error": pos_error or "POS dispatch failed",
+        }
+
+    # No POS configured — dashboard-only mode. DB-only success is CORRECT here.
     logger.info(f"Order {order_id} saved to DB only (pos_type={pos_type})")
-    return {"success": True, "order_id": order_id, "method": "database"}
+    return {
+        "success": True,
+        "order_id": order_id,
+        "method": "database",
+        "attempted_pos": None,
+        "fallback_saved": False,
+    }
 
 
 async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str, Any]:
@@ -604,8 +652,10 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
 
-            # Step 1 — Create empty order
+            # Step 1 — Create empty order. `state: "open"` is required — orders
+            # created via REST without it do not appear in Clover Register (A7-2).
             order_payload = {
+                "state": "open",
                 "title": f"Phone Order — {order.customer_name or 'Guest'}",
                 "note": f"RingAI | {order.order_type.upper()} | {order.special_instructions or ''}".strip(" |"),
             }
@@ -616,7 +666,8 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
             )
             if resp.status_code not in (200, 201):
                 logger.error(f"Clover create order failed: {resp.status_code} {resp.text}")
-                return {"success": False, "order_id": "", "method": "clover"}
+                return {"success": False, "order_id": "", "method": "clover",
+                        "error": f"Clover create order {resp.status_code}"}
 
             clover_order = resp.json()
             clover_order_id = clover_order.get("id")
@@ -641,11 +692,34 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
                     logger.warning(f"Clover line item failed for {item.name}: {li_resp.text}")
 
             logger.info(f"Clover order {clover_order_id} created with {len(order.items)} items")
-            return {"success": True, "order_id": clover_order_id, "method": "clover"}
+
+            # Step 3 — Fire a print event so the order physically prints in the
+            # kitchen. The order is already visible in Register, so a print
+            # failure must NOT fail the dispatch — log it and report printed=False.
+            printed = False
+            try:
+                pe_resp = await client.post(
+                    f"{base_url}/v3/merchants/{merchant_id}/print_event",
+                    headers=headers,
+                    json={"orderRef": {"id": clover_order_id}},
+                )
+                if pe_resp.status_code in (200, 201):
+                    printed = True
+                else:
+                    logger.warning(
+                        f"Clover print_event failed (order still visible in Register): "
+                        f"{pe_resp.status_code} {pe_resp.text}"
+                    )
+            except Exception as pe_err:
+                logger.warning(f"Clover print_event error (non-fatal): {pe_err}")
+
+            return {"success": True, "order_id": clover_order_id, "method": "clover",
+                    "printed": printed, "error": ""}
 
     except Exception as e:
         logger.error(f"Clover dispatch error: {e}", exc_info=True)
-        return {"success": False, "order_id": "", "method": "clover"}
+        return {"success": False, "order_id": "", "method": "clover",
+                "error": f"Clover request error: {type(e).__name__}"}
 
 
 async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[int]:
@@ -749,11 +823,54 @@ async def _send_to_kitchen_webhook(order: LiveOrder, url: str) -> Dict[str, Any]
     return {"success": False, "order_id": "", "method": "kitchen_webhook"}
 
 
+def _strip_none(value: Any) -> Any:
+    """Recursively drop keys whose value is None (Square rejects nulls on some
+    fulfillment fields). Lists are filtered of None entries too."""
+    if isinstance(value, dict):
+        return {k: _strip_none(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_strip_none(v) for v in value if v is not None]
+    return value
+
+
+def _build_square_fulfillment(order: LiveOrder) -> Dict[str, Any]:
+    """Build the Square `fulfillments` entry so the order is visible in the
+    Square dashboard/KDS and prints. Without this, REST-created orders never
+    surface (A7-2). None values are stripped before returning."""
+    recipient = {
+        "display_name": order.customer_name or "Phone Customer",
+        "phone_number": order.caller_number or None,
+    }
+    if order.order_type.startswith("delivery") and order.delivery_address:
+        recipient["address"] = {"address_line_1": order.delivery_address}
+        fulfillment = {
+            "type": "DELIVERY",
+            "state": "PROPOSED",
+            "delivery_details": {
+                "schedule_type": "ASAP",
+                "recipient": recipient,
+                "note": order.special_instructions or None,
+            },
+        }
+    else:
+        fulfillment = {
+            "type": "PICKUP",
+            "state": "PROPOSED",
+            "pickup_details": {
+                "schedule_type": "ASAP",
+                "recipient": recipient,
+                "note": order.special_instructions or None,
+            },
+        }
+    return _strip_none(fulfillment)
+
+
 async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
     token = restaurant.get("square_access_token")
     location = restaurant.get("square_location_id")
     if not token or not location:
-        return {"success": False, "order_id": "", "method": "square"}
+        return {"success": False, "order_id": "", "method": "square",
+                "error": "missing Square credentials"}
     env = restaurant.get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
     base = "https://connect.squareupsandbox.com" if env == "sandbox" else "https://connect.squareup.com"
     body = {
@@ -761,6 +878,9 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[
         "order": {
             "location_id": location,
             "source": {"name": "RingAI Phone"},
+            # state OPEN + a fulfillments array are required for the order to
+            # appear in the Square Orders dashboard/KDS and print (A7-2).
+            "state": "OPEN",
             "line_items": [
                 {
                     "name": i.name, "quantity": str(i.quantity),
@@ -769,6 +889,7 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[
                 }
                 for i in order.items
             ],
+            "fulfillments": [_build_square_fulfillment(order)],
         },
     }
     try:
@@ -780,11 +901,23 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[
             data = resp.json()
             if resp.status_code == 200:
                 oid = data.get("order", {}).get("id", "")
-                return {"success": True, "order_id": oid, "method": "square"}
+                return {"success": True, "order_id": oid, "method": "square",
+                        "error": ""}
+            # Short, PII-free error reason (Square error codes/categories only).
+            detail = ""
+            try:
+                errs = data.get("errors") or []
+                if errs and isinstance(errs[0], dict):
+                    detail = f": {errs[0].get('code') or errs[0].get('category') or ''}".rstrip(": ")
+            except Exception:
+                detail = ""
             logger.error(f"Square error {resp.status_code}: {data}")
+            return {"success": False, "order_id": "", "method": "square",
+                    "error": f"Square {resp.status_code}{detail}"}
     except Exception as e:
         logger.error(f"Square API error: {e}")
-    return {"success": False, "order_id": "", "method": "square"}
+        return {"success": False, "order_id": "", "method": "square",
+                "error": f"Square request error: {type(e).__name__}"}
 
 
 # ---------------------------------------------------------------------------
