@@ -135,35 +135,6 @@ async def test_billing_invoices_with_customer(
     assert response.json() == {"invoices": []}
 
 
-async def test_plan_features_raises_nameerror_due_to_payload_typo(
-    app, two_tenant_with_memberships
-):
-    """Captures current behavior. See FINDINGS:
-
-    GET /api/restaurants/{restaurant_id}/plan-features at server.py:4695
-    references ``payload.restaurant_id`` even though the route signature
-    only declares the path parameter ``restaurant_id`` (there is no
-    ``payload``). The route raises NameError → 500.
-    """
-    from fastapi.testclient import TestClient
-
-    with TestClient(app, raise_server_exceptions=False) as c:
-        response = c.get(
-            f"/api/restaurants/{TENANT_A_ID}/plan-features",
-            headers={"Authorization": "Bearer tenant_a"},
-        )
-    assert response.status_code == 500
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: GET /api/restaurants/{restaurant_id}/plan-features (server.py:4695) "
-        "uses ``payload.restaurant_id`` but the route has no ``payload`` parameter — "
-        "it has the path parameter ``restaurant_id``. The route raises NameError. "
-        "Fix: replace ``payload.restaurant_id`` with ``restaurant_id``."
-    ),
-)
 async def test_plan_features_should_return_plan_block(
     client, two_tenant_with_memberships
 ):

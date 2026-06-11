@@ -2053,30 +2053,35 @@ async def create_call_pipeline(
                 if session and hasattr(session, '_gemini_llm') and session._gemini_llm:
                     await session._gemini_llm._flush_ai_buffer()
                 if session:
-                    # Ensure order dispatched if not already
-                    if session.order.state == OrderState.CONFIRMED and not session._order_dispatched and not session._hangup_scheduled:
-                        await session.dispatch_order_if_ready()
+                    # Restaurant order dispatch + last-chance extraction is a
+                    # restaurant-only path. Running it for salon/clinic/etc. wastes
+                    # a Gemini extraction and hits the pos_type crash (A8-1) on docs
+                    # with `pos_type: null`. Guard by business_type (A8-2).
+                    if session.business_type == "restaurant":
+                        # Ensure order dispatched if not already
+                        if session.order.state == OrderState.CONFIRMED and not session._order_dispatched and not session._hangup_scheduled:
+                            await session.dispatch_order_if_ready()
 
-                    # Last-chance extraction if still no items
-                    if not session.order.items and session.transcript:
-                        extracted = await extract_order_from_transcript(
-                            session.transcript, session.menu_index,
-                            detected_order_type=session._detected_order_type,
-                        )
-                        if extracted:
-                            extracted.restaurant_id = restaurant_id
-                            extracted.call_sid      = call_sid
-                            extracted.caller_number = session.caller_number
-                            # Set correct order_type (same logic as dispatch_order_if_ready)
-                            _ot = session._detected_order_type or extracted.order_type or "pickup"
-                            _food = "delivery" if ("delivery" in _ot or extracted.order_type == "delivery") else "pickup"
-                            extracted.order_type = f"{_food}+reservation" if ("reservation" in _ot or extracted.order_type == "reservation") else _food
-                            session.order = extracted
-                            result = await send_order_to_kitchen(extracted, session.restaurant)
-                            # Same DISPATCH_FAILED handling as dispatch_order_if_ready:
-                            # a configured-POS failure must surface + alert, not be
-                            # silently swallowed on this last-chance path either (A7-1).
-                            session._apply_dispatch_result(result)
+                        # Last-chance extraction if still no items
+                        if not session.order.items and session.transcript:
+                            extracted = await extract_order_from_transcript(
+                                session.transcript, session.menu_index,
+                                detected_order_type=session._detected_order_type,
+                            )
+                            if extracted:
+                                extracted.restaurant_id = restaurant_id
+                                extracted.call_sid      = call_sid
+                                extracted.caller_number = session.caller_number
+                                # Set correct order_type (same logic as dispatch_order_if_ready)
+                                _ot = session._detected_order_type or extracted.order_type or "pickup"
+                                _food = "delivery" if ("delivery" in _ot or extracted.order_type == "delivery") else "pickup"
+                                extracted.order_type = f"{_food}+reservation" if ("reservation" in _ot or extracted.order_type == "reservation") else _food
+                                session.order = extracted
+                                result = await send_order_to_kitchen(extracted, session.restaurant)
+                                # Same DISPATCH_FAILED handling as dispatch_order_if_ready:
+                                # a configured-POS failure must surface + alert, not be
+                                # silently swallowed on this last-chance path either (A7-1).
+                                session._apply_dispatch_result(result)
 
                     # Multi-intent / missed live signal: book any confirmed
                     # reservation now, awaited before the pipeline is cancelled

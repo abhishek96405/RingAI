@@ -13,6 +13,7 @@ import hashlib
 import html
 import base64
 import json
+import httpx  # D3-4: module-level so Telnyx `except httpx.HTTPStatusError` paths resolve
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any, Set
@@ -136,12 +137,27 @@ async def graceful_shutdown_handler(sig, frame):
     logger.info("✅ Graceful shutdown complete")
 
 def setup_signal_handlers():
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(
-            sig,
-            lambda s=sig: asyncio.create_task(graceful_shutdown_handler(s, None))
+    # D3-10: add_signal_handler only works on the main thread of the main
+    # interpreter. When the lifespan is driven from a worker thread (TestClient,
+    # some ASGI runtimes), registration raises and crashes startup — skip/degrade.
+    import threading
+    if threading.current_thread() is not threading.main_thread():
+        logging.getLogger(__name__).warning(
+            "setup_signal_handlers: skipping — not on main thread"
         )
+        return
+    loop = asyncio.get_event_loop()
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(
+                sig,
+                lambda s=sig: asyncio.create_task(graceful_shutdown_handler(s, None))
+            )
+    except (NotImplementedError, RuntimeError, ValueError) as exc:
+        logging.getLogger(__name__).warning(
+            "setup_signal_handlers: skipping (%s)", exc
+        )
+        return
     logging.getLogger(__name__).info("✅ Graceful shutdown handlers registered")
 
 
@@ -1472,7 +1488,6 @@ async def public_menu_page(restaurant_id: str):
 </body>
 </html>"""
 
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(content=page_html)
 
 
@@ -2052,7 +2067,8 @@ async def create_reservation(
     )
     
     await db.reservations.insert_one(doc)
-    
+    doc.pop("_id", None)  # D3-6: insert_one mutates doc with a raw ObjectId → 500 on JSON encode
+
     return {"reservation": doc, "message": "Reservation created successfully"}
 
 
@@ -3167,7 +3183,9 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
             # Get next 7 days of available slots
             try:
                 from reservation_service import get_reservation_slots
-                from datetime import date, timedelta
+                # D3-5: no local `from datetime import ...` — it would shadow the
+                # module-level `timedelta` and UnboundLocalError on the
+                # reservations-disabled path (line ~3265).
                 import pytz
                 tz = pytz.timezone(restaurant.get("timezone", "America/Chicago"))
                 local_today = datetime.now(tz).date()
@@ -4882,7 +4900,8 @@ async def list_invoices(restaurant_id: str = Query(...), user: Dict[str, Any] = 
 @api_router.get("/restaurants/{restaurant_id}/plan-features")
 async def get_plan_features_endpoint(restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Return the plan config for the authenticated restaurant."""
-    restaurant = await ensure_restaurant_access(payload.restaurant_id, user)
+    # D3-3: use the `restaurant_id` path param — there is no `payload` arg here.
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
     plan = restaurant.get("plan", "STARTER")
     return {"plan": plan, "features": get_plan_features(plan)}
 
@@ -4902,7 +4921,11 @@ async def stripe_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid Stripe webhook") from exc
 
     event_type = event["type"]
-    data = event["data"]["object"]
+    # D3-12: ping/malformed events may omit data.object — treat as malformed (400)
+    # rather than KeyError → 500 (which Stripe would retry with backoff).
+    data = (event.get("data") or {}).get("object")
+    if data is None:
+        raise HTTPException(status_code=400, detail="Malformed Stripe event: missing data.object")
     all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
 
     if event_type == "checkout.session.completed":
@@ -5363,6 +5386,11 @@ async def square_webhook(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
+    # D3-15: a correctly-signed body can still decode to a non-dict JSON value
+    # (`null`, `[]`, a bare string/number) — `.get(...)` would AttributeError → 500.
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Square payload must be a JSON object")
+
     event_id = event.get("event_id") or event.get("id")
     event_type = event.get("type", "")
     if not event_id:
@@ -5499,6 +5527,9 @@ async def run_test_scenario(
     await ensure_restaurant_access(restaurant_id, user)
     membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
     business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    # D3-9: this route has no WS-assigned call_sid; mint a placeholder so the
+    # availability pre-fetch log lines below don't NameError.
+    call_sid = f"test_{uuid.uuid4().hex[:8]}"
     restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -5566,12 +5597,12 @@ async def run_test_scenario(
         offers_delivery=restaurant.get("offers_delivery", True),
         offers_reservations=restaurant.get("offers_reservations", True),
         delivery_enabled=restaurant.get("delivery_enabled", config.get("delivery_enabled", True) if config else True),
-        delivery_minimum=config.get("delivery_minimum", 1500),
+        delivery_minimum=config.get("delivery_minimum", 1500) if config else 1500,  # D3-9: guard None config
         delivery_fee=restaurant.get("delivery_fee", 0),
         delivery_zip_codes=restaurant.get("delivery_zip_codes", []),
         delivery_radius_miles=restaurant.get("delivery_radius_miles", 5.0),
         delivery_eta_offset_minutes=restaurant.get("delivery_eta_offset_minutes", 15),
-        operating_hours=config.get("operating_hours"),
+        operating_hours=config.get("operating_hours") if config else None,  # D3-9: guard None config
         restaurant_timezone=restaurant.get("timezone", "UTC"),
         restaurant_address=restaurant.get("address"),
         services=services,  # For appointment businesses

@@ -605,43 +605,6 @@ def test_telnyx_search(client, mock_clerk, telnyx_sdk_mock):
     assert body["available"][0]["phone_number"] == "+15555550100"
 
 
-def test_telnyx_search_propagates_telnyx_error_as_500_due_to_missing_httpx_import(
-    app, mock_clerk, monkeypatch
-):
-    """Captures current behavior. See FINDINGS:
-
-    GET /api/telnyx/numbers/search wraps the search call in
-    ``except httpx.HTTPStatusError`` but ``httpx`` is NOT imported at module
-    scope in server.py — that breaks the except clause and lets the original
-    exception propagate as a 500. Same bug at server.py:3552 (provision) and
-    3649 (assign).
-    """
-    from fastapi.testclient import TestClient
-    import telnyx_service
-
-    async def _broken(country_code="US", area_code=None, limit=10):
-        raise RuntimeError("telnyx down")
-
-    monkeypatch.setattr(telnyx_service, "search_available_numbers", _broken)
-
-    with TestClient(app, raise_server_exceptions=False) as c:
-        response = c.get(
-            "/api/telnyx/numbers/search",
-            headers={"Authorization": "Bearer tenant_a"},
-        )
-    # 500 instead of the route's intended 502.
-    assert response.status_code == 500
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: server.py references httpx in except clauses (lines 3478, 3552, 3649) "
-        "but does not import httpx at module scope. The except handler fails with "
-        "NameError → original exception is not converted to the documented 502. "
-        "Fix: add `import httpx` at the top of server.py."
-    ),
-)
 def test_telnyx_search_should_return_502_on_error(client, mock_clerk, monkeypatch):
     import telnyx_service
 

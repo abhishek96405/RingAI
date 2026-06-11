@@ -216,33 +216,6 @@ async def test_public_menu_returns_html_when_restaurant_exists(
     assert "Tenant A Diner" in response.text
 
 
-def test_public_menu_unknown_restaurant_raises_unboundlocalerror(app):
-    """Captures current (buggy) behavior. See FINDINGS:
-
-    public_menu_page at server.py:1264 does `from fastapi.responses import HTMLResponse`
-    at line 1359, AFTER it references HTMLResponse at line 1276. Python treats the
-    name as a local because of the later `from ... import`, so the not-found branch
-    raises UnboundLocalError instead of returning a 404 HTML page.
-
-    With Starlette's default ``raise_server_exceptions=True``, the test client
-    re-raises the exception; with ``raise_server_exceptions=False`` the client
-    returns 500. We exercise the former here.
-    """
-    from fastapi.testclient import TestClient
-
-    with TestClient(app, raise_server_exceptions=False) as c:
-        response = c.get("/menu/does-not-exist")
-    assert response.status_code == 500
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: public_menu_page references HTMLResponse on the not-found branch "
-        "before importing it again later in the function, raising UnboundLocalError. "
-        "Expected: 404 with 'Menu not found' HTML body."
-    ),
-)
 def test_public_menu_returns_404_for_unknown_restaurant_expected(client):
     response = client.get("/menu/does-not-exist")
     assert response.status_code == 404

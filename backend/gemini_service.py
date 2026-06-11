@@ -534,7 +534,9 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
     Dispatch order to POS based on pos_type configuration.
     Routes: pos_type → specific POS → webhook fallback → DB fallback
     """
-    pos_type = restaurant.get("pos_type", "").lower()
+    # `pos_type` may be present-but-None on non-restaurant docs (e.g. a salon
+    # with `pos_type: null`); `or ""` guards against AttributeError on .lower() (A8-1).
+    pos_type = (restaurant.get("pos_type") or "").lower()
 
     # Tracks whether a *real* POS was actually attempted, and why it failed.
     # A restaurant with no POS configured deliberately runs dashboard-only —
@@ -731,7 +733,9 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
 
 async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[int]:
     """Get number of active open orders from POS. Routes by pos_type."""
-    pos_type = restaurant.get("pos_type", "").lower()
+    # `pos_type` may be present-but-None (salon doc with `pos_type: null`);
+    # `or ""` guards against AttributeError on .lower() (A8-1).
+    pos_type = (restaurant.get("pos_type") or "").lower()
     
     try:
         # Route by pos_type

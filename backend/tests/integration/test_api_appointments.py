@@ -467,48 +467,20 @@ def test_get_reservation_slots_missing_date_422(client, mock_clerk):
 # ---------------------------------------------------------------------------
 
 
-async def test_create_reservation_returns_500_due_to_objectid_leak(
-    app, two_tenant_with_memberships, patched_server_db
-):
-    """Captures current behavior. See FINDINGS:
-
-    POST /api/restaurants/{id}/reservations returns the inserted doc as-is.
-    Motor mutates the dict in place during ``insert_one`` to add ``_id`` (an
-    ObjectId), and FastAPI's jsonable_encoder cannot serialise ObjectId →
-    500 instead of the expected 200 with a serialised reservation body.
-    """
-    from fastapi.testclient import TestClient
-
-    with TestClient(app, raise_server_exceptions=False) as c:
-        response = c.post(
-            f"/api/restaurants/{TENANT_A_ID}/reservations",
-            headers={"Authorization": "Bearer tenant_a"},
-            json={
-                "customer_name": "Alice",
-                "customer_phone": "+15555550100",
-                "party_size": 4,
-                "reservation_date": "2026-06-15",
-                "reservation_time": "19:00",
-            },
-        )
-    # 500 on success path (ObjectId serialisation) OR 400 from the availability
-    # check rejecting the slot. Either way, the happy path is not returning 200.
-    assert response.status_code in (400, 500)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: POST /api/restaurants/{id}/reservations returns the inserted "
-        "reservation doc that motor mutated with an ObjectId in `_id`, causing "
-        "FastAPI jsonable_encoder to crash → 500. Expected: 200 with a "
-        "serialised reservation body. Fix: project ``{_id: 0}`` on insert "
-        "or strip _id before returning."
-    ),
-)
 async def test_create_reservation_should_return_200_with_doc(
     client, two_tenant_with_memberships, patched_server_db
 ):
+    # Seed reservations-enabled config with operating hours so the slot is
+    # available — this exercises the successful-insert path where the D3-6
+    # ObjectId leak used to 500 (2026-06-15 is a Monday).
+    await patched_server_db.restaurant_configs.insert_one({
+        "restaurant_id": TENANT_A_ID,
+        "reservations_enabled": True,
+        "operating_hours": {
+            day: {"open": "09:00", "close": "22:00"}
+            for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        },
+    })
     response = client.post(
         f"/api/restaurants/{TENANT_A_ID}/reservations",
         headers={"Authorization": "Bearer tenant_a"},

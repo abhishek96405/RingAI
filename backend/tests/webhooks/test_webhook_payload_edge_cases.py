@@ -18,36 +18,6 @@ pytestmark = [pytest.mark.webhook, pytest.mark.integration]
 # ---------------------------------------------------------------------------
 
 
-def test_stripe_event_with_missing_data_object_raises_keyerror_captures_bug(
-    app, stripe_sdk_mock
-):
-    """Captures current bug: the Stripe webhook crashes with KeyError when
-    ``event["data"]`` is missing — instead of treating it as a malformed
-    event and returning 400. See FINDINGS."""
-    from fastapi.testclient import TestClient
-
-    body = json.dumps({"id": "evt_no_data", "type": "ping"}).encode()
-    with TestClient(app, raise_server_exceptions=False) as c:
-        r = c.post(
-            "/api/webhooks/stripe",
-            content=body,
-            headers={
-                "Stripe-Signature": "t=0,v1=x",
-                "Content-Type": "application/json",
-            },
-        )
-    # Server-side exception, no clean 4xx — body never makes it past the
-    # `event["data"]["object"]` lookup at server.py:4704.
-    assert r.status_code == 500
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LOW: Stripe webhook should treat events with no data.object as malformed "
-        "(400) instead of crashing with KeyError → 500."
-    ),
-)
 def test_stripe_event_with_missing_data_object_should_400_expected(
     app, stripe_sdk_mock
 ):
@@ -168,14 +138,6 @@ def test_square_webhook_rejects_signed_object_without_event_id(client, square_si
     assert r.status_code == 400
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MEDIUM: Square webhook 500s on signed non-dict JSON bodies (`null`, `[]`). "
-        "After hotfix 12a15e8 the handler calls event.get(...) without first "
-        "validating that event is a dict. See FINDINGS 2026-05-23."
-    ),
-)
 @pytest.mark.parametrize("body", [b"null", b"[]"])
 def test_square_webhook_handles_signed_non_dict_bodies_expected(
     client, square_signer, body
