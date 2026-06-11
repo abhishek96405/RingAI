@@ -599,3 +599,34 @@ async def test_clover_quantity_zero_guard_posts_exactly_once(monkeypatch):
     ])
     await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
     assert len(posts) == 1
+
+
+# ---------------------------------------------------------------------------
+# A7-3: a Clover line-item POST failure leaves a partial order — must surface
+# as a failure (not silent success) so the operator gets alerted.
+# ---------------------------------------------------------------------------
+
+async def test_clover_line_item_failure_surfaces_as_failure(monkeypatch):
+    """The order create succeeds but a line-item POST returns 400. The function
+    must report success=False and name the failed item so the operator knows the
+    Register order is partial — never report a partial order as success."""
+    from gemini_service import _send_to_clover, OrderItem
+
+    async def fake_post(self, url, **kwargs):
+        if url.endswith("/orders"):
+            return _resp(201, json={"id": "clv_partial"})
+        if url.endswith("/line_items"):
+            return _resp(400, text="line item rejected")
+        return _resp(201, json={"id": "x"})  # print_event
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Samosa", menu_item_id="s1", category="Starters",
+                  unit_price=500, quantity=1),
+    ])
+    out = await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert out["success"] is False
+    assert out["order_id"] == "clv_partial"
+    assert out["printed"] is False
+    assert "Samosa" in out["error"]

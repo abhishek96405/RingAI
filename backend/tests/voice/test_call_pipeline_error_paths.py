@@ -91,36 +91,6 @@ async def test_telnyx_serializer_missing_short_circuits(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatch_with_no_items_and_extraction_returns_none_captures_bug(
-    make_call_session, stub_order_extraction, monkeypatch
-):
-    """Captures bug: after retries fail, the ``for/else`` branch returns False
-    WITHOUT resetting ``_order_dispatched`` to False (call_pipeline.py:569-573).
-    This permanently blocks any future retry attempt within the same call, even
-    if a later transcript update would have allowed extraction to succeed. See
-    FINDINGS.md 2026-05-23.
-    """
-    from gemini_service import OrderState
-
-    sess = make_call_session()
-    sess.order.transition(OrderState.CONFIRMED, "test")
-    stub_order_extraction["return_value"] = None
-    # Replace asyncio.sleep so retries don't actually wait.
-    monkeypatch.setattr("call_pipeline.asyncio.sleep", AsyncMock())
-
-    result = await sess.dispatch_order_if_ready(max_retries=2)
-    assert result is False
-    # Current (buggy) behavior: flag stays True, blocking future retries.
-    assert sess._order_dispatched is True
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "When extraction fails after max_retries, _order_dispatched should be "
-        "reset to False so a later attempt can succeed. See FINDINGS.md 2026-05-23."
-    ),
-)
 async def test_dispatch_failure_should_allow_future_retry_expected(
     make_call_session, stub_order_extraction, monkeypatch
 ):

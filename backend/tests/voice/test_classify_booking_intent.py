@@ -202,31 +202,6 @@ def test_relative_tomorrow():
 
 
 @freeze_time("2026-04-10T12:00:00+00:00")
-def test_day_after_tomorrow_phrase_currently_matches_tomorrow_first_captures_bug():
-    """Captures bug: ``"tomorrow" in "day after tomorrow"`` is True (substring),
-    so the ``tomorrow`` branch fires before ``day after tomorrow`` is checked.
-    See FINDINGS.md 2026-05-23 — classify_booking_intent ordering bug.
-    """
-    from call_pipeline import classify_booking_intent
-
-    intent = classify_booking_intent(
-        transcript=_t("day after tomorrow"),
-        services=_SERVICES,
-        order_state_confirmed=False,
-    )
-    # Current (buggy) behavior: returns tomorrow's date, not two days out.
-    assert intent.date_str == "2026-04-11"
-    assert intent.trigger.startswith("relative_tomorrow")
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "classify_booking_intent orders 'tomorrow' before 'day after tomorrow', "
-        "so 'day after tomorrow' is shadowed. See FINDINGS.md 2026-05-23."
-    ),
-)
-@freeze_time("2026-04-10T12:00:00+00:00")
 def test_day_after_tomorrow_should_resolve_two_days_out_expected():
     from call_pipeline import classify_booking_intent
 

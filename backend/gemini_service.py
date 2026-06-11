@@ -32,6 +32,49 @@ logger = logging.getLogger(__name__)
 # JSON Repair Utilities
 # ---------------------------------------------------------------------------
 
+def _head_tail(text: str, head_chars: int = 1500, tail_chars: int = 2500) -> str:
+    """Truncate a long transcript keeping BOTH ends (A7-8).
+
+    The confirmed readback lives at the END of the call, so head-only
+    truncation would cut it off. Tail-weighted so the confirmation survives.
+    """
+    if len(text) <= head_chars + tail_chars:
+        return text
+    return text[:head_chars] + "\n...[middle of call omitted]...\n" + text[-tail_chars:]
+
+
+def _safe_int(value, default: int = 1) -> int:
+    """int() that never raises on non-numeric input (A7-11).
+
+    e.g. a spoken quantity extracted as "two" must not crash extraction.
+    """
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _sanitize_crm_name(s) -> str:
+    """Strip control chars and cap length on a CRM-stored name before it is
+    interpolated into the system prompt / greeting (A7-14 — stored
+    prompt-injection guard). The last_name is a prior caller's spoken name."""
+    s = str(s or "")
+    s = re.sub(r"[\r\n\t]+", " ", s)          # no newlines/control chars into the prompt
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:40]                             # names are short; cap length
+
+
+def _phrase_in(haystack_words: list, needle_words: list) -> bool:
+    """True if ``needle_words`` appears as a contiguous run within
+    ``haystack_words`` (A7-9 — whole-word/phrase match, not raw substring)."""
+    if not needle_words or len(needle_words) > len(haystack_words):
+        return False
+    for i in range(len(haystack_words) - len(needle_words) + 1):
+        if haystack_words[i:i + len(needle_words)] == needle_words:
+            return True
+    return False
+
+
 def _repair_json(text: str) -> str:
     """Attempt to repair common JSON issues from LLM output."""
     if not text:
@@ -217,15 +260,28 @@ class MenuIndex:
         if key in self.alias_index:
             return self.items.get(self.alias_index[key])
         
-        # 3. Partial name match
+        key_words = key.split()
+
+        # 3. Partial name match — whole-word/phrase + UNIQUE match only (A7-9).
+        # Raw substring ("water" in "watermelon juice") + first-dict-order match
+        # returned the wrong item. Require a contiguous word run AND a single
+        # unambiguous hit; 0 or >1 matches fall through (don't guess, let the AI re-ask).
+        matches = set()
         for item_name, item_id in self.name_index.items():
-            if key in item_name or item_name in key:
-                return self.items.get(item_id)
-        
-        # 4. Partial alias match
+            name_words = item_name.split()
+            if _phrase_in(name_words, key_words) or _phrase_in(key_words, name_words):
+                matches.add(item_id)
+        if len(matches) == 1:
+            return self.items.get(next(iter(matches)))
+
+        # 4. Partial alias match — same whole-word/unique logic over the alias index.
+        alias_matches = set()
         for alias, item_id in self.alias_index.items():
-            if key in alias or alias in key:
-                return self.items.get(item_id)
+            alias_words = alias.split()
+            if _phrase_in(alias_words, key_words) or _phrase_in(key_words, alias_words):
+                alias_matches.add(item_id)
+        if len(alias_matches) == 1:
+            return self.items.get(next(iter(alias_matches)))
         
         # 5. Word-based fuzzy match
         words = [w for w in key.split() if len(w) > 3]
@@ -405,7 +461,7 @@ RULES:
 {f"ORDER TYPE OVERRIDE: This call was identified as a {detected_order_type.upper()} order. You MUST set order_type to '{detected_order_type}'." if detected_order_type else ""}
 SIGNAL: order_confirmed_detected={order_confirmed_signal}
 TRANSCRIPT:
-{transcript_text[:4000]}
+{_head_tail(transcript_text)}
 JSON:"""
 
     raw = None
@@ -472,7 +528,7 @@ JSON:"""
             menu_item_id=menu_item["id"],
             category=menu_item.get("category", ""),
             unit_price=menu_item["price"],
-            quantity=max(1, int(raw_item.get("quantity", 1))),
+            quantity=max(1, _safe_int(raw_item.get("quantity", 1), 1)),
             modifiers=raw_item.get("modifiers", []),
             special_instructions=raw_item.get("special_instructions", ""),
             allergens=menu_item.get("allergens", []),
@@ -681,6 +737,7 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
             # POST per unit. `unitQty` is only for measure/weight-priced catalog
             # items (sold by the pound, etc.); sending it on a custom countable
             # item mis-renders quantity and pricing on the ticket and total.
+            failed_items = []
             for item in order.items:
                 line_item = {
                     "name": item.name,
@@ -699,6 +756,17 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
                     )
                     if li_resp.status_code not in (200, 201):
                         logger.warning(f"Clover line item failed for {item.name}: {li_resp.text}")
+                        failed_items.append(item.name)
+
+            # A7-3: a line-item POST failure leaves a partial order in Register.
+            # Reporting success would let the kitchen ship an incomplete order with
+            # no operator alert. Fail the dispatch so _apply_dispatch_result marks
+            # it DISPATCH_FAILED and fires the operator alert (A7-1 machinery).
+            if failed_items:
+                return {"success": False, "order_id": clover_order_id, "method": "clover",
+                        "printed": False,
+                        "error": f"Clover line items failed ({', '.join(failed_items)}); "
+                                 f"order {clover_order_id} is partial in Register — verify manually"}
 
             logger.info(f"Clover order {clover_order_id} created with {len(order.items)} items")
 
@@ -1061,7 +1129,12 @@ def calculate_is_open(operating_hours: Optional[Dict], restaurant_timezone: str 
         current_minutes = local_now.hour * 60 + local_now.minute
         if not operating_hours:
             return True
-        day_hours = operating_hours.get(current_day, {})
+        # A7-12: configured hours that are missing/unparseable for today should
+        # fail CLOSED (don't take an order the kitchen can't fulfil), not open.
+        day_hours = operating_hours.get(current_day)
+        if not day_hours:
+            logger.warning(f"calculate_is_open: '{current_day}' missing from configured hours → closed")
+            return False
         if day_hours.get("closed"):
             return False
         def time_to_minutes(t):
@@ -1084,11 +1157,17 @@ def calculate_is_open(operating_hours: Optional[Dict], restaurant_timezone: str 
         open_min = time_to_minutes(day_hours.get("open", ""))
         close_min = time_to_minutes(day_hours.get("close", ""))
         if open_min is None or close_min is None:
-            return True
+            logger.warning(
+                f"calculate_is_open: unparseable open/close for '{current_day}' "
+                f"({day_hours.get('open')!r}/{day_hours.get('close')!r}) → closed"
+            )
+            return False
         if close_min <= open_min:
             return current_minutes >= open_min or current_minutes <= close_min
         return open_min <= current_minutes <= close_min
-    except Exception:
+    except Exception as e:
+        # A code bug must not take every restaurant offline — keep open, but log loudly.
+        logger.error(f"calculate_is_open failed ({e}) → defaulting open", exc_info=True)
         return True
 
 def build_system_prompt(
@@ -1143,6 +1222,12 @@ def build_system_prompt(
         upsell_enabled = False
     if not plan_features.get("customer_recognition"):
         customer_profile = None
+
+    # A7-14: sanitize the CRM last_name ONCE so every downstream prompt/greeting
+    # read is clean. Shallow-copy — do NOT mutate the shared profile dict in place.
+    if customer_profile and customer_profile.get("last_name"):
+        customer_profile = {**customer_profile,
+                            "last_name": _sanitize_crm_name(customer_profile["last_name"])}
 
     # STARTER-specific prompt overrides for features the restaurant has but AI can't handle
     _starter_restrictions = ""

@@ -113,6 +113,91 @@ def test_menu_index_word_index_fuzzy_match():
     assert found["id"] == "m3"
 
 
+# ---------------------------------------------------------------------------
+# A7-9: partial match must be whole-word + unique — a raw substring hit
+# ("water" in "watermelon juice") + first-dict-order match returned the wrong
+# item. 0 or >1 candidates fall through (don't guess; let the AI re-ask).
+# ---------------------------------------------------------------------------
+
+_WATER_MENU = [
+    {"id": "wj", "name": "Watermelon Juice", "category": "Drinks", "price": 500, "available": True},
+    {"id": "sw", "name": "Sparkling Water", "category": "Drinks", "price": 300, "available": True},
+]
+
+
+def test_menu_index_substring_does_not_match_wrong_item():
+    """find("water") must resolve to "Sparkling Water" (whole word), NOT
+    "Watermelon Juice" (the old raw-substring bug)."""
+    from gemini_service import MenuIndex
+    idx = MenuIndex(_WATER_MENU)
+    found = idx.find("water")
+    assert found is not None
+    assert found["id"] == "sw"
+
+
+def test_menu_index_ambiguous_partial_match_falls_through_to_none():
+    """A whole-word match with >1 candidate and no unique fuzzy resolution must
+    return None rather than guessing the first dict-order item.
+
+    (Note: a single *distinctive* >3-char word like "juice" is still resolved by
+    the unchanged step-5 word-fuzzy fallback — that is desired. The guard here is
+    for genuinely ambiguous tokens that the fuzzy step cannot disambiguate.)"""
+    from gemini_service import MenuIndex
+    idx = MenuIndex([
+        {"id": "h", "name": "Hot Tea", "category": "Drinks", "price": 200, "available": True},
+        {"id": "i", "name": "Ice Tea", "category": "Drinks", "price": 200, "available": True},
+    ])
+    assert idx.find("tea") is None
+
+
+def test_menu_index_exact_name_still_wins_over_partial_logic():
+    from gemini_service import MenuIndex
+    idx = MenuIndex(_WATER_MENU)
+    assert idx.find("Watermelon Juice")["id"] == "wj"
+
+
+# ---------------------------------------------------------------------------
+# A7-8: _head_tail keeps BOTH ends of a long transcript (the confirmed readback
+# lives at the END, so head-only truncation drops it).
+# ---------------------------------------------------------------------------
+
+def test_head_tail_short_string_unchanged():
+    from gemini_service import _head_tail
+    s = "short transcript"
+    assert _head_tail(s) == s
+
+
+def test_head_tail_long_string_keeps_head_and_tail():
+    from gemini_service import _head_tail
+    head = "HEAD_MARKER " + ("a" * 2000)
+    tail = ("b" * 3000) + " TAIL_CONFIRMED"
+    text = head + tail
+    out = _head_tail(text)
+    assert len(text) > 4000
+    assert "HEAD_MARKER" in out          # head preserved
+    assert "TAIL_CONFIRMED" in out       # the end-of-call confirmation preserved
+    assert "[middle of call omitted]" in out
+    assert len(out) < len(text)
+
+
+# ---------------------------------------------------------------------------
+# A7-11: _safe_int — a non-numeric spoken quantity ("two") must not crash
+# extraction; fall back to the default instead.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    ("two", 1),
+    ("3", 3),
+    (None, 1),
+    (2, 2),
+    ("", 1),
+    (["bad"], 1),
+])
+def test_safe_int(value, expected):
+    from gemini_service import _safe_int
+    assert _safe_int(value, 1) == expected
+
+
 def test_menu_index_as_prompt_text_includes_categories():
     from gemini_service import MenuIndex
     idx = MenuIndex(MENU)

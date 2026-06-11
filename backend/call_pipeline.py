@@ -872,6 +872,9 @@ class CallSession:
                 logger.warning(
                     f"[{self.call_sid}] Confirmed but no items extracted after {max_retries} attempts"
                 )
+                # D3-8: reset so a later retry in the same call can re-attempt —
+                # the other guard branches reset too; this one must as well.
+                self._order_dispatched = False
                 return False
 
         # Post-call delivery address validation (distance check)
@@ -1306,14 +1309,16 @@ def classify_booking_intent(
             date_str = today.strftime("%Y-%m-%d")
             date_confidence = 0.9
             date_trigger = "relative_today"
-        elif "tomorrow" in customer_text:
-            date_str = (today + _td(days=1)).strftime("%Y-%m-%d")
-            date_confidence = 0.9
-            date_trigger = "relative_tomorrow"
+        # D3-7: check "day after tomorrow" BEFORE "tomorrow" — the latter is a
+        # substring of the former, so the tomorrow branch would otherwise shadow it.
         elif "day after tomorrow" in customer_text:
             date_str = (today + _td(days=2)).strftime("%Y-%m-%d")
             date_confidence = 0.85
             date_trigger = "relative_day_after"
+        elif "tomorrow" in customer_text:
+            date_str = (today + _td(days=1)).strftime("%Y-%m-%d")
+            date_confidence = 0.9
+            date_trigger = "relative_tomorrow"
 
     # ── 4. Named weekdays ("this friday", "next monday") ──────────────
     if not date_str:
