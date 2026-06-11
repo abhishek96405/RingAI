@@ -363,7 +363,10 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # CORS middleware MUST be added FIRST (Starlette LIFO means it runs LAST in request, FIRST in response)
 # This ensures preflight OPTIONS requests are handled before other middleware
-cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",") if os.environ.get("CORS_ORIGINS") else ["*"]
+# CORS (A1-1): fail safe to an explicit allowlist — never wildcard with
+# credentials. get_cors_origins() = dev defaults + CORS_ORIGINS/FRONTEND_URL
+# env, normalized; it never returns ["*"].
+cors_origins = get_cors_origins()
 cors_origin_regex = os.environ.get("CORS_ORIGIN_REGEX")
 
 app.add_middleware(
@@ -1108,6 +1111,12 @@ async def get_bootstrap_payload(user: Dict[str, Any], preferred_restaurant_id: O
 # ============================================================
 # ROOT ENDPOINT
 # ============================================================
+
+@app.get("/health")
+async def health_check():
+    """Liveness probe for Render + uptime monitors. 200 = app process is up."""
+    return {"status": "ok"}
+
 
 @api_router.get("/")
 async def root():

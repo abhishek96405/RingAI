@@ -41,6 +41,8 @@ _NON_BEARER_ROUTES = {
     ("GET", "/api/voice-preview/{voice_name}"),
     # Static / heartbeat — not under /api/ namespace.
     ("GET", "/menu/{restaurant_id}"),
+    # Liveness probe (A1-2) — public by design, matches CF_BYPASS_PREFIXES.
+    ("GET", "/health"),
     ("GET", "/healthz"),
     ("GET", "/docs"),
     ("GET", "/redoc"),

@@ -31,6 +31,25 @@ def test_root_returns_banner(client):
 
 
 # ---------------------------------------------------------------------------
+# GET /health  (liveness probe — A1-2)
+# ---------------------------------------------------------------------------
+
+
+def test_health_returns_ok(client):
+    """Liveness probe for Render + uptime monitors. App-level route at root
+    (not /api/health) so it matches the CF_BYPASS_PREFIXES '/health' entry."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_health_does_not_require_auth(client):
+    """No Authorization header — the liveness probe must still answer 200."""
+    response = client.get("/health")
+    assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # GET /api/me/bootstrap
 # ---------------------------------------------------------------------------
 

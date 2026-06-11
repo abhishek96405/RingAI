@@ -80,6 +80,37 @@ def test_cors_actual_get_includes_allow_origin(client):
     assert "access-control-allow-origin" in headers_lower
 
 
+def test_cors_origins_never_wildcard_when_env_unset(monkeypatch):
+    """A1-1: with CORS_ORIGINS and FRONTEND_URL unset, the resolved allowlist
+    must NOT contain '*'. The old default (["*"]) reflected any Origin back
+    with allow_credentials=True. get_cors_origins() now fails safe to the
+    explicit dev-localhost allowlist instead."""
+    import server
+
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+
+    origins = server.get_cors_origins()
+    assert "*" not in origins
+    assert origins, "allowlist should fall back to the dev defaults, not be empty"
+    assert all(o != "*" for o in origins)
+
+
+def test_cors_disallowed_origin_not_reflected(client):
+    """A credentialed request from an origin NOT in the allowlist must not have
+    that origin echoed back in access-control-allow-origin. The middleware was
+    built from get_cors_origins() (CORS_ORIGINS=http://localhost:3000 in the
+    test env), so an attacker origin is never reflected."""
+    response = client.get(
+        "/api/",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    assert response.status_code == 200
+    acao = response.headers.get("access-control-allow-origin")
+    assert acao != "https://evil.example.com"
+    assert acao != "*"
+
+
 # ---------------------------------------------------------------------------
 # Security headers middleware
 # ---------------------------------------------------------------------------

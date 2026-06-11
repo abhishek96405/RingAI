@@ -15,7 +15,18 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **PR #5** — OAuth `state` for Square + Stripe Connect → crypto-random single-use (`oauth_state_service.py`); Square webhook → HMAC-SHA256 + dedup + revocation.
 - **auth/access-control batch** (`fix/auth-access-control-batch`) — `ensure_restaurant_access` 403→404; `/api/admin/process-reminders` admin-gate; public-menu stored-XSS `html.escape()`. *(PRs #4/#5 confirmed merged; confirm this batch's merge.)*
 
-**The 6 launch-blockers still stand:** A1-1, A1-2, A3-1, A6-2, A7-1, A7-2 — plus the newly-surfaced near-blocker **D3-1 (escalation transfer broken)**.
+**All 6 launch-blockers are now resolved**, and the former near-blocker **D3-1 is verified resolved**:
+- **A7-1, A7-2** ✔️ — PR-A (commits `0dca8671` + `89aed334`): visible dispatch-failure path + real POS kitchen tickets (Clover per-unit line items).
+- **A6-2** ✔️ + **C5-1** ✔️ — PR-B (commit `5629634e`): `/ws/notifications` now requires a valid Clerk token + tenant membership before `accept()`; the frontend sends a fresh token per (re)connect.
+- **A3-1 (CSRF half)** ✔️ — PR-B: calendar OAuth `state` is now opaque, single-use, validated; trusted `restaurant_id` derived from the stored record.
+- **A1-1, A1-2** ✔️ — THIS PR: CORS wired to the `get_cors_origins()` allowlist (no wildcard+credentials default); `/health` liveness route added.
+- **D3-1** ✔️ — re-verified resolved; escalation transfer is robust at `call_pipeline.py:812`.
+
+**Remaining open items are all non-blockers** — called out explicitly so nothing reads as "done" that isn't:
+- **B3-7** ⬜ — Google Calendar tokens still stored **plaintext** at rest (`encryption_utils` unused for them). This is the still-open half of A3-1 (token-at-rest encryption).
+- The **§A medium/low items** (A1-3 perf, A2-x rate-limit/info-leak, A4-x, A5-x billing, A6-x, the §A 🟢 polish cluster).
+- The **C31-x marketing-claims cluster** (fabricated integration/feature advertising — legal/content lane).
+- The **D3 latent-500 batch** (D3-12/13/14/15 webhook resilience + the remaining D3-2…D3-10 latent NameError/edge branches).
 
 ---
 
@@ -23,10 +34,10 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 
 | ID | Sev | Area | Issue | Status |
 |---|---|---|---|---|
-| A1-1 | 🔴 | CORS | Wildcard `["*"]` + credentials fallback; secure helper unused | ⬜ |
-| A3-1 | 🔴 | OAuth | Google callback uses raw `restaurant_id` as `state` — no validation (CSRF) + unauth callback + plaintext tokens. CONFIRMED open | ⬜ |
-| A6-2 | 🔴 | WebSocket | `/ws/notifications` unauth + unauthorized → live cross-tenant data leak | ⬜ |
-| A1-2 | 🔴 | Ops | No `/health` endpoint (Render health check + readiness probe) | ⬜ |
+| A1-1 | 🔴 | CORS | Wildcard `["*"]` + credentials fallback; secure helper unused | ✔️ |
+| A3-1 | 🔴 | OAuth | Google callback uses raw `restaurant_id` as `state` — no validation (CSRF) + unauth callback + plaintext tokens | 🔧 |
+| A6-2 | 🔴 | WebSocket | `/ws/notifications` unauth + unauthorized → live cross-tenant data leak | ✔️ |
+| A1-2 | 🔴 | Ops | No `/health` endpoint (Render health check + readiness probe) | ✔️ |
 | A1-3 | 🟡 | Perf | `get_current_user` does Mongo read+write every request | ⬜ |
 | A2-1 | 🟡 | Security | Rate limiting applied to 6 of 95 routes | ⬜ |
 | A2-2 | 🟡 | Security/Perf | Public menu page unthrottled + 6 DB queries/hit | ⬜ |
@@ -58,14 +69,15 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 
 ## Detail — High (launch-blockers)
 
-### 🔴 A1-1 — CORS wildcard + credentials; secure helper is dead code
+### ✔️ A1-1 — CORS wildcard + credentials; secure helper is dead code (✔️ THIS PR)
 **Where:** `server.py:369–377`; `get_secure_cors_origins()` imported `:281`, `get_cors_origins()` `:178` — unused.
-**Problem:** Live config is `allow_origins = CORS_ORIGINS or ["*"]` with `allow_credentials=True`.
+**Problem:** Live config was `allow_origins = CORS_ORIGINS or ["*"]` with `allow_credentials=True`.
 **Risk:** If `CORS_ORIGINS` unset on Render, the API accepts any origin. (Bearer-token auth lowers severity but fails review.)
-**Fix:** Wire `get_secure_cors_origins()`; drop the `"*"` default + dead functions. Confirm `CORS_ORIGINS` set on prod.
-**Test:** `security/test_cors_allowed_and_blocked_origins.py` (acceptance ready).
+**Resolved (THIS PR):** the `cors_origins` assignment now calls `get_cors_origins()` (dev-localhost defaults + `CORS_ORIGINS`/`FRONTEND_URL`, normalized — **never** `["*"]`); the wildcard default is gone. The `add_middleware` call is unchanged (`allow_credentials=True`, `allow_origins=cors_origins`, env regex). `get_secure_cors_origins`/`get_cors_origins` left in place; confirm `CORS_ORIGINS` set on prod for the exact frontend origin.
+**Test:** `integration/test_middleware_and_lifespan.py` — `get_cors_origins()` never returns `"*"` with env unset; a disallowed Origin is not reflected back.
 
-### 🔴 A3-1 — Google Calendar OAuth callback: no state validation + unauth token write — CONFIRMED OPEN
+### 🔧 A3-1 — Google Calendar OAuth callback: no state validation + unauth token write — CSRF half ✔️ PR-B, token-at-rest encryption ⬜ (B3-7)
+**Status (THIS update):** the **CSRF half is ✔️ resolved (PR-B, commit `5629634e`)** — the `state` is now opaque, single-use, and validated, and the trusted `restaurant_id` is derived from the stored state record rather than the attacker-supplied query param. **The other half — B3-7 (Calendar tokens stored plaintext at rest, `encryption_utils` unused) — remains ⬜ OPEN.** Token-at-rest encryption is still outstanding; keep B3-7 open.
 **Where:** connect `:2237`, callback `:2264`; `get_google_auth_url` in `calendar_service.py:33` (`"state": restaurant_id` at `:47`). Contrast Square `:5048` / Stripe Connect `:5127` (both call `consume_oauth_state`).
 **Problem:** The connect passes the raw `restaurant_id` as the OAuth `state` (plain, **not** a signed JWT). The callback (`google_calendar_callback`) takes `state`, does `restaurant_id = state` (`:2282`) with **no `consume_oauth_state`, no signature/JWT verify, and no `Depends(get_current_user)`**, then upserts `google_calendar_tokens` into that tenant.
 **Risk:** An attacker completes Google OAuth on their own account (valid `code`), then calls `GET /api/calendar/google/callback?code=<their_code>&state=<victim_restaurant_id>` (restaurant_id is semi-public — it appears in `/menu/{restaurant_id}` URLs). The callback writes the **attacker's** Google tokens into the **victim's** config → the victim's AI books its customers' appointments into the **attacker's** calendar (attacker sees customer names/times/phones; or sabotages bookings). Tokens (incl. `refresh_token`) are stored **plaintext** at rest (B3-7).
@@ -73,26 +85,26 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 **Fix:** Mirror Square/Stripe — `issue_oauth_state(restaurant_id, user["id"], provider="google")` in connect (carry the minted token as `state`), `consume_oauth_state(state=..., provider="google")` in the callback, reject on invalid/expired. Encrypt tokens at rest (reuse `encryption_utils`; B3-7). Both halves in one PR.
 **Test:** `integration/test_api_oauth_integrations.py`, `unit/test_calendar_service_unit.py`.
 
-### 🔴 A6-2 — `/ws/notifications` unauthenticated + unauthorized
+### ✔️ A6-2 — `/ws/notifications` unauthenticated + unauthorized (✔️ PR-B `5629634e`)
 **Where:** `server.py:5674`.
-**Problem:** `manager.connect(websocket, restaurant_id)` with no token check, no membership check. Any client may subscribe with `?restaurant_id=<id>`.
-**Risk:** Streams real-time new-order (with totals), new-call, and appointment events. `restaurant_id` is public (in `/menu/{restaurant_id}`), so anyone with a menu link can watch live activity. Cross-tenant live-data leak.
-**Fix:** Authenticate the WS (Clerk token via query/subprotocol) + verify membership before connect. Shares one auth pattern with A4-2; two-sided with frontend C5-1.
-**Test:** `integration/test_websocket_endpoints.py`, `unit/test_websocket_notifications_unit.py` (🔍 verify the auth assertion exists).
+**Problem:** `manager.connect(websocket, restaurant_id)` with no token check, no membership check. Any client could subscribe with `?restaurant_id=<id>`.
+**Risk:** Streams real-time new-order (with totals), new-call, and appointment events. `restaurant_id` is public (in `/menu/{restaurant_id}`), so anyone with a menu link could watch live activity. Cross-tenant live-data leak.
+**Resolved (PR-B, commit `5629634e`):** the WS now requires a valid Clerk token **and** tenant membership before `accept()`; otherwise it rejects with close code 1008. Two-sided with frontend C5-1.
+**Test:** `integration/test_websocket_endpoints.py`, `unit/test_websocket_notifications_unit.py`.
 
-### 🔴 A1-2 — No `/health` endpoint
-**Where:** referenced in `CF_BYPASS_PREFIXES:5647` + Render health checks, never defined. Only `/api/` (`:1108`) returns 200.
+### ✔️ A1-2 — No `/health` endpoint (✔️ THIS PR)
+**Where:** referenced in `CF_BYPASS_PREFIXES:5647` + Render health checks, never defined. Only `/api/` (`:1108`) returned 200.
 **Risk:** Render health check on `/health` 404s → restart loop; no real readiness probe.
-**Fix:** Immediate: set Render Health Check Path to `/api/`. Better: add `/health` with a Mongo ping.
+**Resolved (THIS PR):** added an **app-level** `@app.get("/health")` returning `{"status": "ok"}`, matching the `CF_BYPASS_PREFIXES` `/health` entry. Kept a pure **liveness** check (no DB call) on purpose so a transient Mongo blip can't make Render cycle the instance.
 
-### 🔴 A7-1 — Silent order loss
+### ✔️ A7-1 — Silent order loss (✔️ PR-A `0dca8671`+`89aed334`)
 **Where:** `gemini_service.py` `send_order_to_kitchen:529`, DB-only fallback `:583`; `call_pipeline.py` `dispatch_order_if_ready:828`.
 **Problem:** When no POS path works, the fallback returns `{"success":True,"method":"database"}` though nothing was dispatched (and it doesn't even persist — that's `on_call_complete`). `dispatch_order_if_ready` marks the order COMPLETED on `success:True`; the failure `else` branch is effectively dead (fallback always "succeeds"). No restaurant alert/SMS/alarm, no real retry. The AI verbally confirms the order to the customer *before* dispatch.
 **Risk:** For every demo account (no live POS), each order is silently lost while the customer is told it's confirmed. Same shape will bite any restaurant whose POS call fails.
 **Fix:** Distinguish the fallback from a real dispatch; fire a loud restaurant alert (SMS to escalation # + dashboard) on non-dispatch; qualify the AI confirmation when there's no working dispatch path; add real retry/backoff; reconsider auto-COMPLETED. Mirror the reservation-unavailable SMS pattern that already exists in `call_pipeline.py`.
 **Test:** `unit/test_gemini_service_pos_dispatch.py`, `voice/test_post_call_extraction_e2e.py` (🔴 xfail-strict).
 
-### 🔴 A7-2 — POS "success" ≠ kitchen ticket fired
+### ✔️ A7-2 — POS "success" ≠ kitchen ticket fired (✔️ PR-A `0dca8671`+`89aed334`)
 **Where:** `gemini_service.py` `_send_to_clover:587`, `_send_to_square:752`.
 **Problem:** Both create an order + line items and return success, but **Clover never fires the order** (it sits as an unfired draft) and **Square has no `fulfillment` object** (won't route to the KDS / kitchen printer).
 **Risk:** Even with a "working" POS integration, the kitchen may never see the ticket — order silently not made.
@@ -176,7 +188,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | B2-1 | 🔴* | `appointment_service.py` | Silent appointment dispatch failure — `dispatch_appointment` returns success on partial/failure; calendar-write + SMS not surfaced | ⬜ | `unit/test_appointment_service_validation.py`, `integration/test_api_appointments.py` |
 | B2-7 | 🟡 | `appointment_service.py` | Google Calendar free/busy not wired (manual block/unblock is the workaround) | ⬜ | `unit/test_calendar_service_unit.py` |
 | B2-x | 🟢 | `appointment_service.py` | Dead `function_call` path (appointment-todo #2) | ⬜ | — |
-| B3-7 | 🔴 | `encryption_utils.py` | Google Calendar tokens stored plaintext (util exists + POS creds use it; calendar tokens don't) — the firm half of A3-1 | ⬜ | `unit/test_encryption_utils.py`, `security/test_encryption_roundtrip_property.py` |
+| B3-7 | 🔴 | `encryption_utils.py` | Google Calendar tokens stored plaintext (util exists + POS creds use it; calendar tokens don't) — the still-OPEN half of A3-1 (its CSRF half is ✔️ PR-B; token-at-rest encryption outstanding) | ⬜ | `unit/test_encryption_utils.py`, `security/test_encryption_roundtrip_property.py` |
 | B4-10 | 🟡 | `server.py`/middleware | No request body-size limit → oversize-payload DoS | ⬜ | `security/test_input_validation_oversize_payloads.py` |
 | B5-26 | 🟡 | `delivery_utils.py` | `validate_delivery_distance` fail-open (delivery allowed when distance check errors); verify zip allowlist enforced | ⬜ | `unit/test_delivery_utils.py` |
 | B5-38 | 🟡 | `auto_learning_service.py` | Auto-learned aliases auto-apply with no human approve/reject gate (ties C24-1; endpoints exist, UI not wired) | ⬜ | `unit/test_auto_learning_service_unit.py` |
@@ -197,7 +209,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **C6-3 🟢** — dashboard surfaces env-var **names** (not values) — minor info disclosure. Remove from the UI.
 
 ### Auth / access control
-- **C5-1 🔴** — `useWebSocketNotifications.ts`: the WS connects with no auth (frontend half of **A6-2**). Send the Clerk token via `Sec-WebSocket-Protocol` (or a short-lived signed query token) so the server can authenticate + authorize before subscribe.
+- **C5-1 ✔️** (PR-B `5629634e`) — `useWebSocketNotifications.ts` now sends a fresh Clerk token per (re)connect and won't open an unauthenticated socket; the server authenticates + authorizes before subscribe (frontend half of **A6-2**).
 - **C1-5 ✔️** — `AdminPage` is server-side 403-gated (corrected to RESOLVED).
 - **C8-1 ✔️** — `VITE_ADMIN_CLERK_ID` *is* used (gates the Admin nav link in `DashboardLayout`); corrected to RESOLVED.
 - **C14-1 🟡** — `DashboardLayout.tsx:83`: `console.log("Admin debug", {ADMIN_CLERK_ID, userId, match})` runs every render → leaks the admin Clerk ID + current user's Clerk ID to the browser console. Delete the line (independently logged in `tests/FINDINGS.md`).
@@ -223,7 +235,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **C12-2 🟡** — multilingual (te/hi) is advertised but parked/unreliable (VAD wedge, code-mixed trigger mismatches, non-English STT). Keep clearly beta until reliable.
 - **C22-1 🟡** — `RulesTab` free-text `business_rules` / `escalation_rules` are injected into the system prompt **unvalidated** → an owner could override safety guardrails. Ensure hardcoded safety rules take precedence in prompt ordering; validate/escape owner text. (Pairs with `unit/test_gemini_service_prompt_assembly.py` — verify the safety-ordering assertion.)
 - **C24-1 🟡** — `AILearningWidget` shows auto-learned/pending aliases **read-only** — no approve/reject/remove despite `approveLearningAlias` / `rejectLearningAlias` existing in `api.ts` (B5-38). Wire the approve/reject buttons (data + endpoints already exist).
-- **C11 🟡** — `PhoneForwardingTab` escalation-number config feeds a transfer that is **broken** (D3-1). Fix D3-1 so escalation actually transfers.
+- **C11 ✔️** — `PhoneForwardingTab` escalation-number config feeds the human-escalation transfer, which is now ✔️ resolved (D3-1). Escalation actually transfers.
 
 ### Appointment vertical
 - **C17-1 🟡** — `AppointmentsPage` surfaces conflict status (better than Orders) but total-failure dispatch (B2-1) is invisible. Surface total-failure.
@@ -263,7 +275,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 ### D3 — Backend bugs the tests found that static review missed (exact lines from `tests/FINDINGS.md`; mostly ⬜ open, each has an xfail-strict capture)
 | ID | Sev | File:line | Bug | Fix |
 |---|---|---|---|---|
-| D3-1 | 🔴 | `call_pipeline.py:519` | `_transfer_call` references undefined `settings` → **every human-escalation transfer silently fails** (caller hung up, not transferred) | `os.environ.get("TELNYX_API_KEY","")`; re-raise NameError/AttributeError in dev |
+| D3-1 | ✔️ | `call_pipeline.py:812` | **RESOLVED / re-verified** — `_transfer_call` no longer references undefined `settings`; escalation transfer is robust (was: undefined `settings` → every human-escalation transfer silently failed, caller hung up not transferred) | ✔️ resolved — `os.environ.get("TELNYX_API_KEY","")` in place; transfer path verified |
 | D3-2 | 🔴 | `server.py:1359` | `public_menu_page` `HTMLResponse` UnboundLocalError on not-found → 500 not 404 (separate from the XSS `html`→`page_html` rename) | Remove the redundant local `from fastapi.responses import HTMLResponse` |
 | D3-3 | 🔴 | `server.py:4695` | `plan-features` uses undefined `payload.restaurant_id` → always 500 (explains C7-1) | Use the `restaurant_id` path param |
 | D3-4 | 🔴 | `server.py:3478/3552/3649` | `httpx` not module-imported → Telnyx error paths NameError → 500 not 502 | Add top-level `import httpx` |
@@ -287,7 +299,7 @@ repair-membership takeover (PR #4) · OAuth state Square/Stripe + Square webhook
 # §E — Coverage map (findings ↔ tests ↔ status)
 Legend: ✅ acceptance test passing · 🔴xf xfail-strict capture (flips green when fixed) · 🟡 path tested, risk not asserted · ⛔ gap
 
-**Blockers:** A1-1 → `security/test_cors_*` 🔴xf · A1-2 → `integration/test_api_root_and_bootstrap` (`/api/`) 🟡 · A3-1 → `integration/test_api_oauth_integrations` + `unit/test_calendar_service_unit` 🟡/🔍 (encryption primitive ✅) · A6-2 → `integration/test_websocket_endpoints` + `unit/test_websocket_notifications_unit` 🟡/🔍 · A7-1 → `unit/test_gemini_service_pos_dispatch` + `voice/test_post_call_extraction_e2e` 🔴xf · A7-2 → `unit/test_gemini_service_pos_dispatch` + `unit/test_pos_sync_unit` + `unit/test_toast_integration_unit` 🔴xf.
+**Blockers (all ✔️ resolved):** A1-1 ✔️ → `integration/test_middleware_and_lifespan` (no-wildcard + disallowed-origin) · A1-2 ✔️ → `integration/test_api_root_and_bootstrap` (`/health`) · A3-1 CSRF ✔️ → `integration/test_api_oauth_integrations` + `unit/test_calendar_service_unit` (token-at-rest encryption still ⬜ B3-7) · A6-2 ✔️ → `integration/test_websocket_endpoints` + `unit/test_websocket_notifications_unit` · A7-1 ✔️ → `unit/test_gemini_service_pos_dispatch` + `voice/test_post_call_extraction_e2e` · A7-2 ✔️ → `unit/test_gemini_service_pos_dispatch` + `unit/test_pos_sync_unit` + `unit/test_toast_integration_unit`.
 **All D3 bugs:** each has its named xfail-strict capture (🔴xf) — see §D table for file mapping.
 **Frontend:** C12-1 `VoiceAndAITab.test` · C24-1 `AILearningWidget.test` 🟡 · C22 `RulesTab.test` + `unit/test_gemini_service_prompt_assembly` 🔍 · C4-4 (bootstrap race) `AppSessionContext.test` 🟡 · C1-x `ProtectedRoute.test` ✅ · C9-3/C14-1/C23-3 tests exist but render-only 🟡.
 **Gaps (⛔):** marketing-claims cluster (C28–C35, not unit-testable — legal/content lane) · C12-6 plan-casing (no case-insensitivity assertion) · front-end info-leak console asserts · failure-visibility UX · infra (branch protection D1-1, deploy-gating D1-2, M0 backups, scheduler lock, Vercel limits).
@@ -309,7 +321,7 @@ Legend: ✅ acceptance test passing · 🔴xf xfail-strict capture (flips green 
 ### `call_pipeline.py` (best-engineered file)
 - **Silent-reservation-drop VERIFIED FIXED** — `_ensure_reservation_booked` uses double-checked locking, called idempotently from all 4 paths, runs early in the teardown-protected window.
 - **`_fire_on_call_complete` is fire-once** (flag before the await) — mitigates A5-1 double-billing.
-- **Warm-transfer state machine**: backgrounds slow analytics, stops streaming (no idle billing), fallback watchdog, idempotent bridge/timeout handlers, **refuses to transfer to the restaurant's own AI DID** (prevents an infinite forwarding loop). *(NB: the Telnyx call itself is broken — see D3-1.)*
+- **Warm-transfer state machine**: backgrounds slow analytics, stops streaming (no idle billing), fallback watchdog, idempotent bridge/timeout handlers, **refuses to transfer to the restaurant's own AI DID** (prevents an infinite forwarding loop). *(NB: the former Telnyx-call break is now ✔️ resolved — see D3-1.)*
 - **Minimal AI tool surface** (only `check_availability` + `compute_order_total`, both read/compute) — all side-effects gated by `CallSession`. `_fn_in_progress` 3-layer guard prevents VAD from interrupting an in-flight tool call; Gemini-stuck recovery.
 ### Tests / CI
 - Mature, well-structured, mapped to the risk surface; xfail-strict harness ready to verify fixes.
@@ -332,6 +344,11 @@ Legend: ✅ acceptance test passing · 🔴xf xfail-strict capture (flips green 
 ---
 
 ## POS — Deferred / Tracked
+
+**Launch decisions:** customer **prepayment is intentionally disabled for launch**
+(commit `3b9c3436` — UI removed, the underlying code is kept **dormant**, not
+deleted, so it can be re-enabled later). The three deferred POS items below —
+**SQUARE-PRINT-1, SQUARE-PREPAY-1, TOAST-REBUILD-1** — remain **parked**.
 
 Items intentionally NOT built yet. Each has a concrete trigger and a test/verify
 method so they can be picked up without re-discovery.
