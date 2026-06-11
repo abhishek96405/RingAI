@@ -328,3 +328,48 @@ Legend: ✅ acceptance test passing · 🔴xf xfail-strict capture (flips green 
 - **Natural-language signal fragility** → A7-10 (systemic across `gemini_service` `detect_call_signals` + `call_pipeline` `on_ai_transcript`).
 - **Webhook resilience/idempotency** → D3-12/13/14/15 + A5-4.
 - **Latent NameError/shadowing class** → D3-1/2/3/4/5/6/9 (rarely-hit error/edge branches; add lint/type-check D2-2 to catch the class).
+
+---
+
+## POS — Deferred / Tracked
+
+Items intentionally NOT built yet. Each has a concrete trigger and a test/verify
+method so they can be picked up without re-discovery.
+
+- **SQUARE-PRINT-1** — *Verify OPEN+PROPOSED orders fire Square KDS / kitchen printer.*
+  We create the Square order as `state: OPEN` with a `PICKUP`/`DELIVERY`
+  fulfillment in state `PROPOSED` and no payment (A7-2). It is unverified whether
+  that combination actually fires a Square KDS ticket or a Square-connected
+  kitchen printer.
+  - **Trigger:** first real Square restaurant onboarded (need their hardware /
+    KDS-routing setup).
+  - **Test method:** Square sandbox seller with Square for Restaurants + KDS
+    routing enabled; create an OPEN order with a PROPOSED pickup fulfillment and
+    no payment, observe whether the KDS/printer fires.
+  - **Until verified:** Square relies on Duuutah dispatch (dashboard + operator
+    SMS) as the kitchen ticket — the order is visible but the print/KDS path is
+    not guaranteed.
+
+- **SQUARE-PREPAY-1** — *Optional Square prepayment via Checkout API payment link.*
+  Send a `CreatePaymentLink` (Checkout API) link over SMS. A paid link flips the
+  order `DRAFT → OPEN` and routes to Square KDS natively with NO 1%
+  external-tender fee.
+  - **Design:** per-restaurant onboarding setting — prepay `REQUIRED` /
+    `OPTIONAL` / `OFF`.
+  - **Needs:** a paid-order webhook handler + a "pending payment" order state.
+  - **Trigger:** post-launch (revenue/UX optimization, not a launch blocker).
+
+- **TOAST-REBUILD-1** — *`toast_integration.py` is currently non-functional; rebuild.*
+  Known bugs in the current implementation:
+  - Order payload is missing the `checks[]` wrapper (selections must live inside
+    a check).
+  - `diningOption` uses literal `"TAKEOUT"`/`"DELIVERY"` instead of real
+    per-restaurant Toast GUIDs.
+  - `itemGroup.guid` assumes `menu_item_id` is the Toast MenuGroup GUID (it isn't
+    — needs a real Toast menu-sync mapping).
+  - The `customer` object is on the Order; Toast expects it on the Check.
+  - `deliveryInfo` is too thin (needs city/state/zip).
+  - Open-price items need `openPriceAmount`.
+  - **Blocked on:** Toast partner-program access (a business gate, not code).
+  - **Trigger:** Toast partner access granted → rebuild against the checks-based
+    structure + genuine menu-GUID sync, then certify via Toast review.

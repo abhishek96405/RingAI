@@ -506,3 +506,96 @@ async def test_clover_print_event_failure_still_succeeds_printed_false(monkeypat
     assert out["success"] is True
     assert out["printed"] is False
     assert out["order_id"] == "clv_1"
+
+
+# ---------------------------------------------------------------------------
+# PR-A.1: Clover countable quantity — one line-item POST per unit, no unitQty.
+# ---------------------------------------------------------------------------
+
+def _clover_line_item_recorder():
+    """Return (fake_post, posts) where posts captures every line-item payload."""
+    posts: list = []
+
+    async def fake_post(self, url, **kwargs):
+        if url.endswith("/line_items"):
+            posts.append(kwargs.get("json"))
+            return _resp(201, json={"id": "li"})
+        if url.endswith("/orders"):
+            return _resp(201, json={"id": "clv_1"})
+        return _resp(201, json={"id": "x"})  # print_event
+
+    return fake_post, posts
+
+
+async def test_clover_posts_one_line_item_per_unit(monkeypatch):
+    """A countable item with quantity 3 is added as 3 separate line-item POSTs,
+    each carrying name/price + special_instructions. No unitQty is ever sent —
+    unitQty is for measure/weight-priced catalog items and mis-prices countables."""
+    from gemini_service import _send_to_clover, OrderItem
+
+    fake_post, posts = _clover_line_item_recorder()
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Taco", menu_item_id="t1", category="Tacos",
+                  unit_price=350, quantity=3, special_instructions="no cilantro"),
+    ])
+    out = await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert out["success"] is True
+    assert len(posts) == 3
+    for li in posts:
+        assert li["name"] == "Taco"
+        assert li["price"] == 350
+        assert li["note"] == "no cilantro"
+        assert "unitQty" not in li
+
+
+async def test_clover_multiple_items_post_counts_are_per_unit(monkeypatch):
+    """Two distinct items (qty 2 and qty 1) produce 2 + 1 = 3 line-item POSTs."""
+    from gemini_service import _send_to_clover, OrderItem
+
+    fake_post, posts = _clover_line_item_recorder()
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Burrito", menu_item_id="b1", category="Mains",
+                  unit_price=900, quantity=2),
+        OrderItem(name="Coffee", menu_item_id="c1", category="Drinks",
+                  unit_price=200, quantity=1),
+    ])
+    out = await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert out["success"] is True
+    assert sum(1 for li in posts if li["name"] == "Burrito") == 2
+    assert sum(1 for li in posts if li["name"] == "Coffee") == 1
+    assert all("unitQty" not in li for li in posts)
+
+
+async def test_clover_quantity_one_posts_exactly_once(monkeypatch):
+    from gemini_service import _send_to_clover, OrderItem
+
+    fake_post, posts = _clover_line_item_recorder()
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Coffee", menu_item_id="c1", category="Drinks",
+                  unit_price=200, quantity=1),
+    ])
+    await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert len(posts) == 1
+    assert "unitQty" not in posts[0]
+
+
+async def test_clover_quantity_zero_guard_posts_exactly_once(monkeypatch):
+    """Guard: a non-positive quantity still posts exactly once — never zero,
+    never a negative loop."""
+    from gemini_service import _send_to_clover, OrderItem
+
+    fake_post, posts = _clover_line_item_recorder()
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Mint", menu_item_id="m1", category="Extras",
+                  unit_price=0, quantity=0),
+    ])
+    await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert len(posts) == 1

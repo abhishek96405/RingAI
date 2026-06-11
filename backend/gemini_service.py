@@ -673,23 +673,30 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
             clover_order_id = clover_order.get("id")
             logger.info(f"Clover order created: {clover_order_id}")
 
-            # Step 2 — Add line items
+            # Step 2 — Add line items. These are ad-hoc CUSTOM line items
+            # (name + price, no catalog binding). For countable items Clover
+            # represents quantity by adding the line item once PER UNIT — one
+            # POST per unit. `unitQty` is only for measure/weight-priced catalog
+            # items (sold by the pound, etc.); sending it on a custom countable
+            # item mis-renders quantity and pricing on the ticket and total.
             for item in order.items:
                 line_item = {
                     "name": item.name,
                     "price": item.unit_price,  # in cents
-                    "unitQty": item.quantity * 1000,  # Clover uses 1000 = 1 unit
                 }
                 if item.special_instructions:
                     line_item["note"] = item.special_instructions
 
-                li_resp = await client.post(
-                    f"{base_url}/v3/merchants/{merchant_id}/orders/{clover_order_id}/line_items",
-                    headers=headers,
-                    json=line_item,
-                )
-                if li_resp.status_code not in (200, 201):
-                    logger.warning(f"Clover line item failed for {item.name}: {li_resp.text}")
+                # Guard: post at least once even if quantity is missing/0/negative.
+                units = item.quantity if (item.quantity and item.quantity > 0) else 1
+                for _ in range(units):
+                    li_resp = await client.post(
+                        f"{base_url}/v3/merchants/{merchant_id}/orders/{clover_order_id}/line_items",
+                        headers=headers,
+                        json=line_item,
+                    )
+                    if li_resp.status_code not in (200, 201):
+                        logger.warning(f"Clover line item failed for {item.name}: {li_resp.text}")
 
             logger.info(f"Clover order {clover_order_id} created with {len(order.items)} items")
 
