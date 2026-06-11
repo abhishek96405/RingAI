@@ -43,8 +43,9 @@ def test_get_google_auth_url_constructs_expected_params(monkeypatch):
     import importlib, calendar_service
     importlib.reload(calendar_service)
 
+    # A3-1: state is now an opaque single-use CSRF token, not the restaurant_id.
     url = calendar_service.get_google_auth_url(
-        restaurant_id="rest_a",
+        state="opaque-state-token-abc",
         redirect_uri="https://app.test/callback",
     )
 
@@ -53,7 +54,7 @@ def test_get_google_auth_url_constructs_expected_params(monkeypatch):
     qs = urllib.parse.parse_qs(parsed.query)
     assert qs["client_id"] == ["client-abc"]
     assert qs["redirect_uri"] == ["https://app.test/callback"]
-    assert qs["state"] == ["rest_a"]
+    assert qs["state"] == ["opaque-state-token-abc"]
     assert qs["scope"] == ["https://www.googleapis.com/auth/calendar"]
     assert qs["access_type"] == ["offline"]
     assert qs["prompt"] == ["consent"]

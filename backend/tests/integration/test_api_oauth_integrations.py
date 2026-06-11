@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from tests._constants import TENANT_A_ID, TENANT_B_ID
+from tests._constants import TENANT_A_ID, TENANT_A_USER_ID, TENANT_B_ID
 
 pytestmark = pytest.mark.integration
 
@@ -43,6 +43,7 @@ def test_calendar_connect_requires_auth(client):
     )
 
 
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
 async def test_calendar_connect_returns_auth_url(
     client, two_tenant_with_memberships, monkeypatch
 ):
@@ -97,10 +98,12 @@ async def test_calendar_connect_wrong_tenant_404(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
 async def test_calendar_callback_exchanges_code_and_redirects(
     client, two_tenant_setup, patched_server_db, monkeypatch
 ):
     import calendar_service
+    from oauth_state_service import issue_oauth_state
 
     async def _fake_exchange(code, redirect_uri):
         return {
@@ -111,8 +114,16 @@ async def test_calendar_callback_exchanges_code_and_redirects(
 
     monkeypatch.setattr(calendar_service, "exchange_code_for_tokens", _fake_exchange)
 
+    # A3-1: state is now an opaque single-use token, not the bare restaurant_id.
+    # The trusted restaurant_id is derived from the stored state record.
+    state = await issue_oauth_state(
+        restaurant_id=TENANT_A_ID,
+        user_id=TENANT_A_USER_ID,
+        provider="google_calendar",
+    )
+
     response = client.get(
-        f"/api/calendar/google/callback?code=AUTH_CODE&state={TENANT_A_ID}",
+        f"/api/calendar/google/callback?code=AUTH_CODE&state={state}",
         follow_redirects=False,
     )
     assert response.status_code in (302, 307)
@@ -124,18 +135,138 @@ async def test_calendar_callback_exchanges_code_and_redirects(
     assert saved["google_calendar_tokens"]["access_token"] == "at_test"
 
 
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
 async def test_calendar_callback_redirects_on_exchange_error(
-    client, two_tenant_setup, monkeypatch
+    client, two_tenant_setup, patched_server_db, monkeypatch
 ):
     import calendar_service
+    from oauth_state_service import issue_oauth_state
 
     async def _broken(code, redirect_uri):
         raise RuntimeError("invalid_grant")
 
     monkeypatch.setattr(calendar_service, "exchange_code_for_tokens", _broken)
 
+    # Issue a valid state so the failure under test is the token exchange,
+    # not state validation.
+    state = await issue_oauth_state(
+        restaurant_id=TENANT_A_ID,
+        user_id=TENANT_A_USER_ID,
+        provider="google_calendar",
+    )
+
     response = client.get(
-        f"/api/calendar/google/callback?code=BAD&state={TENANT_A_ID}",
+        f"/api/calendar/google/callback?code=BAD&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 307)
+    assert "calendar_error=true" in response.headers["location"]
+
+
+# --- A3-1: calendar OAuth state is opaque, single-use, and CSRF-proof --------
+
+
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
+async def test_calendar_connect_issues_opaque_state(
+    client, two_tenant_with_memberships, patched_server_db, monkeypatch
+):
+    """connect must persist a google_calendar state row whose token is NOT the
+    bare restaurant_id."""
+    import calendar_service
+
+    monkeypatch.setattr(calendar_service, "is_google_calendar_configured", lambda: True)
+
+    response = client.get(
+        f"/api/calendar/google/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert response.status_code == 200
+    state = _extract_state(response.json()["authorization_url"])
+    assert state != TENANT_A_ID
+    assert len(state) >= 32
+
+    row = await patched_server_db.oauth_states.find_one(
+        {"state": state, "provider": "google_calendar"}, {"_id": 0}
+    )
+    assert row is not None
+    assert row["restaurant_id"] == TENANT_A_ID
+    assert row["consumed"] is False
+
+
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
+async def test_calendar_callback_forged_state_redirects_without_exchange(
+    client, two_tenant_setup, monkeypatch
+):
+    """A forged/unknown state must redirect to the error page and must NOT
+    trigger a token exchange."""
+    import calendar_service
+
+    async def _must_not_run(code, redirect_uri):
+        raise AssertionError("token exchange must not run for a forged state")
+
+    monkeypatch.setattr(calendar_service, "exchange_code_for_tokens", _must_not_run)
+
+    response = client.get(
+        "/api/calendar/google/callback?code=AUTH&state=does-not-exist",
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 307)
+    assert "calendar_error=true" in response.headers["location"]
+
+
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
+async def test_calendar_callback_state_is_single_use(
+    client, two_tenant_setup, patched_server_db, monkeypatch
+):
+    """Replaying a consumed state must fail (redirect to error)."""
+    import calendar_service
+    from oauth_state_service import issue_oauth_state
+
+    async def _fake_exchange(code, redirect_uri):
+        return {"access_token": "at_test", "refresh_token": "rt", "expires_in": 3600}
+
+    monkeypatch.setattr(calendar_service, "exchange_code_for_tokens", _fake_exchange)
+
+    state = await issue_oauth_state(
+        restaurant_id=TENANT_A_ID,
+        user_id=TENANT_A_USER_ID,
+        provider="google_calendar",
+    )
+
+    first = client.get(
+        f"/api/calendar/google/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert "calendar_connected=true" in first.headers["location"]
+
+    second = client.get(
+        f"/api/calendar/google/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert "calendar_error=true" in second.headers["location"]
+
+
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")
+async def test_calendar_callback_rejects_state_from_other_provider(
+    client, two_tenant_with_memberships, patched_server_db, monkeypatch
+):
+    """A state issued for Square must not be redeemable on the calendar callback."""
+    import calendar_service
+    from oauth_state_service import issue_oauth_state
+
+    async def _must_not_run(code, redirect_uri):
+        raise AssertionError("token exchange must not run for a cross-provider state")
+
+    monkeypatch.setattr(calendar_service, "exchange_code_for_tokens", _must_not_run)
+
+    state = await issue_oauth_state(
+        restaurant_id=TENANT_A_ID,
+        user_id=TENANT_A_USER_ID,
+        provider="square",
+    )
+
+    response = client.get(
+        f"/api/calendar/google/callback?code=AUTH&state={state}",
         follow_redirects=False,
     )
     assert response.status_code in (302, 307)

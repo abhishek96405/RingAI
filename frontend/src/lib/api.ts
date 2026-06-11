@@ -12,6 +12,16 @@ export const setAuthTokenGetter = (getter: (() => Promise<string | null | undefi
   authTokenGetter = getter;
 };
 
+export const getAuthToken = async (): Promise<string | null> => {
+  if (!authTokenGetter) return null;
+  try {
+    const t = await authTokenGetter();
+    return t ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export const api = axios.create({
   baseURL: API,
   headers: {

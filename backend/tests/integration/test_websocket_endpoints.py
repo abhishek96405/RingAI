@@ -10,36 +10,70 @@ from __future__ import annotations
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from tests._constants import TENANT_A_ID
+from tests._constants import TENANT_A_ID, TENANT_A_USER_ID
 
 pytestmark = pytest.mark.integration
 
 
 # ---------------------------------------------------------------------------
 # /ws/notifications
+#
+# A6-2: the notifications socket now requires a valid Clerk token + a
+# membership tying that user to the restaurant. ``authed_notifications`` patches
+# verify_clerk_token (server.py binds it at import) and seeds the membership so
+# the handshake / ping-pong assertions below exercise the post-auth path.
+# Comprehensive auth-rejection coverage lives in
+# tests/security/test_ws_notifications_auth.py.
 # ---------------------------------------------------------------------------
 
 
-def test_ws_notifications_connect_sends_handshake(client):
-    """Connect with no restaurant_id → server still accepts and sends 'connected' frame."""
-    with client.websocket_connect("/ws/notifications") as ws:
-        msg = ws.receive_json()
-        assert msg["type"] == "connected"
-        assert msg["restaurant_id"] is None
+@pytest.fixture
+async def authed_notifications(monkeypatch, patched_server_db):
+    import server
+
+    async def _verify(token: str):
+        if token == "good":
+            return {"sub": TENANT_A_USER_ID}
+        raise ValueError("bad token")
+
+    monkeypatch.setattr(server, "verify_clerk_token", _verify, raising=True)
+    await patched_server_db.memberships.insert_one(
+        {
+            "id": "membership_ws_endpoints",
+            "user_id": TENANT_A_USER_ID,
+            "restaurant_id": TENANT_A_ID,
+            "role": "owner",
+            "business_type": "restaurant",
+        }
+    )
 
 
-def test_ws_notifications_connect_with_restaurant_id(client):
+def test_ws_notifications_requires_token(client):
+    """Connect with no token → server rejects with close code 1008, no handshake."""
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(
+            f"/ws/notifications?restaurant_id={TENANT_A_ID}"
+        ) as ws:
+            ws.receive_json()
+    assert exc.value.code == 1008
+
+
+async def test_ws_notifications_connect_with_restaurant_id(
+    client, authed_notifications
+):
     with client.websocket_connect(
-        f"/ws/notifications?restaurant_id={TENANT_A_ID}"
+        f"/ws/notifications?restaurant_id={TENANT_A_ID}&token=good"
     ) as ws:
         msg = ws.receive_json()
         assert msg["type"] == "connected"
         assert msg["restaurant_id"] == TENANT_A_ID
 
 
-def test_ws_notifications_ping_pong(client):
+async def test_ws_notifications_ping_pong(client, authed_notifications):
     """Sending 'ping' must receive 'pong' back."""
-    with client.websocket_connect("/ws/notifications") as ws:
+    with client.websocket_connect(
+        f"/ws/notifications?restaurant_id={TENANT_A_ID}&token=good"
+    ) as ws:
         ws.receive_json()  # discard handshake
         ws.send_text("ping")
         reply = ws.receive_text()

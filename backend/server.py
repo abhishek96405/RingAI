@@ -2261,10 +2261,16 @@ async def google_calendar_connect(
         
         backend_url = get_backend_public_url()
         redirect_uri = f"{backend_url}/api/calendar/google/callback"
-        
-        auth_url = get_google_auth_url(restaurant_id, redirect_uri)
+
+        from oauth_state_service import issue_oauth_state
+        state = await issue_oauth_state(
+            restaurant_id=restaurant_id,
+            user_id=user["id"],
+            provider="google_calendar",
+        )
+        auth_url = get_google_auth_url(state, redirect_uri)
         return {"authorization_url": auth_url}
-        
+
     except ImportError:
         raise HTTPException(status_code=500, detail="Calendar service not available")
 
@@ -2277,17 +2283,21 @@ async def google_calendar_callback(
     """Handle Google Calendar OAuth callback."""
     try:
         from calendar_service import exchange_code_for_tokens
-        
+        from oauth_state_service import consume_oauth_state
+
+        # CSRF (A3-1): validate + consume the state BEFORE doing anything else.
+        # Trusted restaurant_id comes from the stored record, not the param.
+        record = await consume_oauth_state(state=state, provider="google_calendar")
+        restaurant_id = record["restaurant_id"]
+
         backend_url = get_backend_public_url()
         redirect_uri = f"{backend_url}/api/calendar/google/callback"
-        
+
         tokens = await exchange_code_for_tokens(code, redirect_uri)
-        
+
         expires_in = tokens.get("expires_in", 3600)
         expires_at = datetime.now(timezone.utc).timestamp() + expires_in
         tokens["expires_at"] = expires_at
-        
-        restaurant_id = state
         _biz = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0, "business_type": 1})
         if not _biz:
             import asyncio as _asyncio
@@ -5680,8 +5690,35 @@ app.include_router(api_router)
 # ============================================================
 
 @app.websocket("/ws/notifications")
-async def websocket_notifications(websocket: WebSocket, restaurant_id: Optional[str] = None):
+async def websocket_notifications(
+    websocket: WebSocket,
+    restaurant_id: Optional[str] = None,
+    token: Optional[str] = None,
+):
     from websocket_notifications import manager
+
+    # --- AUTH (A6-2): require valid Clerk token + tenant membership ---
+    # Reject BEFORE manager.connect() (which calls websocket.accept()).
+    if not restaurant_id or not token:
+        await websocket.close(code=1008)
+        return
+    try:
+        claims = await verify_clerk_token(token)
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    user_id = claims.get("sub") if claims else None
+    if not user_id:
+        await websocket.close(code=1008)
+        return
+    membership = await db.memberships.find_one(
+        {"restaurant_id": restaurant_id, "user_id": user_id}, {"_id": 0}
+    )
+    if not membership:
+        await websocket.close(code=1008)
+        return
+    # --- end auth ---
+
     await manager.connect(websocket, restaurant_id)
     try:
         await websocket.send_json({

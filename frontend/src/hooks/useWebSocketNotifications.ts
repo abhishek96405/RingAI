@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { getAuthToken } from "../lib/api";
 
 interface WebSocketNotification {
   type: string;
@@ -50,20 +51,34 @@ export function useWebSocketNotifications(
     }
   }, []);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!mountedRef.current) return;
-    
+
     // Build WebSocket URL
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const backendUrl = import.meta.env.VITE_BACKEND_WS_URL || 
+    const backendUrl = import.meta.env.VITE_BACKEND_WS_URL ||
       `${protocol}//${window.location.host}`;
-    
-    let wsUrl = `${backendUrl}/ws/notifications`;
-    if (restaurantId) {
-      wsUrl += `?restaurant_id=${encodeURIComponent(restaurantId)}`;
+
+    // Auth: fetch a fresh Clerk token for THIS connection attempt.
+    const token = await getAuthToken();
+
+    // Don't open an unauthenticated socket. If we have no restaurant or no
+    // token yet (e.g. Clerk still loading), retry shortly instead.
+    if (!restaurantId || !token) {
+      if (autoReconnect && mountedRef.current) {
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (mountedRef.current) connect();
+        }, reconnectDelay);
+      }
+      return;
     }
 
-    console.log("[WS] Connecting to:", wsUrl);
+    const wsUrl =
+      `${backendUrl}/ws/notifications` +
+      `?restaurant_id=${encodeURIComponent(restaurantId)}` +
+      `&token=${encodeURIComponent(token)}`;
+
+    console.log("[WS] Connecting to:", `${backendUrl}/ws/notifications`);
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

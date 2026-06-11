@@ -30,13 +30,17 @@ def is_google_calendar_configured() -> bool:
     return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 
-def get_google_auth_url(restaurant_id: str, redirect_uri: str) -> str:
-    """Generate Google OAuth authorization URL."""
+def get_google_auth_url(state: str, redirect_uri: str) -> str:
+    """Generate Google OAuth authorization URL.
+
+    `state` is an opaque single-use CSRF token from oauth_state_service,
+    echoed back by Google to the callback. It is NOT the restaurant_id.
+    """
     if not is_google_calendar_configured():
         raise ValueError("Google Calendar OAuth not configured")
-    
+
     import urllib.parse
-    
+
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,
@@ -44,9 +48,9 @@ def get_google_auth_url(restaurant_id: str, redirect_uri: str) -> str:
         "scope": " ".join(SCOPES),
         "access_type": "offline",
         "prompt": "consent",
-        "state": restaurant_id,  # Pass restaurant_id through state
+        "state": state,
     }
-    
+
     base_url = "https://accounts.google.com/o/oauth2/auth"
     return f"{base_url}?{urllib.parse.urlencode(params)}"
 

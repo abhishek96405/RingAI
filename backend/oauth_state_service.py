@@ -45,7 +45,7 @@ async def issue_oauth_state(
     Caller passes restaurant_id and user_id derived from the authenticated
     request. The token is stored alongside these so the callback can verify.
     """
-    if provider not in ("square", "stripe", "stripe_connect"):
+    if provider not in ("square", "stripe", "stripe_connect", "google_calendar"):
         raise ValueError(f"unsupported provider: {provider}")
 
     state = secrets.token_urlsafe(32)
