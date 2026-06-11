@@ -144,23 +144,6 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
         </div>
       )}
 
-      {/* Prepayment */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-        <div>
-          <p className="text-sm font-medium">Prepayment</p>
-          <p className="text-xs text-muted-foreground">
-            {restaurant?.stripe_connect_status === "active"
-              ? "Send payment link via SMS after order confirmation"
-              : "Connect Stripe in Integrations to enable"}
-          </p>
-        </div>
-        <Switch
-          checked={config?.sms_payment_enabled || false}
-          disabled={restaurant?.stripe_connect_status !== "active"}
-          onCheckedChange={(v) => setConfig({ ...config, sms_payment_enabled: v })}
-        />
-      </div>
-
       <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Fulfillment"}
       </Button>

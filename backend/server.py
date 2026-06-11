@@ -4667,7 +4667,8 @@ async def telnyx_media_stream(websocket: WebSocket):
 
                 # SMS confirmation
                 sms_enabled = config.get("sms_enabled", True) if config else True
-                sms_payment_enabled = config.get("sms_payment_enabled", False) if config else False
+                # Order prepayment disabled for launch (kept in code for future use).
+                sms_payment_enabled = False  # was: config.get("sms_payment_enabled", False)
 
                 if sms_enabled and session and session.order.items:
                     payment_link = None

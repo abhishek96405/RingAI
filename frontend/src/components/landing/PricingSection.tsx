@@ -15,7 +15,6 @@ const plans = [
       "1 phone number",
       "POS integration (Clover, Square, Toast)",
       "SMS order confirmations",
-      "Prepayment via SMS (1% customer fee)",
       "Full analytics dashboard",
       "Call history & transcripts",
       "Email support",
