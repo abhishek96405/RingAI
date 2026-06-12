@@ -83,6 +83,19 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
     `db.restaurant_configs` while the callback uses `get_config_collection(business_type)` —
     if those collections differ for appointment businesses, refreshed tokens persist to the
     wrong collection. Verify get_config_collection's mapping; track for PR-I.
+- **G3 (A5-3) — DONE:** the Square OAuth callback now EXCHANGES the authorization code for an
+  access token (previously it stored the raw code and set square_connected=True without ever
+  obtaining a token — the integration was non-functional). New `exchange_square_code` in
+  pos_sync.py POSTs to Square's /oauth2/token; the callback stores `square_access_token`
+  ENCRYPTED (matching the POS-credential pattern; decrypted before sync use) plus the
+  merchant_id, marks connected only on a successful exchange, and on failure records
+  status="error" + returns 502. The raw auth_code is no longer stored. 3 new exchange unit
+  tests; 2 existing square-callback tests updated to the encrypted-token contract.
+  - REQUIRES new env var SQUARE_APPLICATION_SECRET on Render (the Square app's OAuth secret),
+    alongside SQUARE_APPLICATION_ID / SQUARE_REDIRECT_URI.
+  - Square endpoints are hardcoded to production (connect.squareup.com), consistent with the
+    existing authorize + catalog URLs. Real verification needs a live Square OAuth round-trip
+    with a production Square app; unit tests cover only the mocked exchange.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

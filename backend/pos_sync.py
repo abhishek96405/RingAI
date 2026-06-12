@@ -13,6 +13,41 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+# Square OAuth token endpoint — production base, matching the hardcoded authorize +
+# catalog URLs elsewhere in the codebase. (If sandbox testing is ever needed, make the
+# Square base URL env-switchable in one place.)
+SQUARE_API_BASE = "https://connect.squareup.com"
+
+
+async def exchange_square_code(code: str, redirect_uri: str) -> Dict[str, Any]:
+    """Exchange a Square OAuth authorization code for an access token (A5-3).
+
+    Returns Square's token payload (access_token, refresh_token, merchant_id, ...).
+    Raises ValueError if Square credentials are unset or the exchange fails.
+    """
+    import os
+    application_id = os.environ.get("SQUARE_APPLICATION_ID", "")
+    application_secret = os.environ.get("SQUARE_APPLICATION_SECRET", "")
+    if not application_id or not application_secret:
+        raise ValueError("Square credentials not configured")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{SQUARE_API_BASE}/oauth2/token",
+            headers={"Content-Type": "application/json"},
+            json={
+                "client_id": application_id,
+                "client_secret": application_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+            },
+        )
+    if resp.status_code != 200:
+        raise ValueError(f"Square token exchange failed: {resp.status_code}")
+    return resp.json()
+
+
 def _map_clover_item(item: Dict, restaurant_id: str) -> Dict:
     """Map a Clover inventory item to Duuutah AI MenuItem format."""
     price_elements = item.get("price", 0)

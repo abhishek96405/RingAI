@@ -5125,19 +5125,52 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
     record = await consume_oauth_state(state=state, provider="square")
     restaurant_id = record["restaurant_id"]
 
+    # A5-3: exchange the authorization code for an access token. Without this the
+    # integration is non-functional — sync_menu_from_square needs square_access_token.
+    from pos_sync import exchange_square_code
+    from encryption_utils import encrypt_value
+    redirect_uri = os.environ.get("SQUARE_REDIRECT_URI", "")
+    try:
+        token_data = await exchange_square_code(code, redirect_uri)
+    except Exception as e:
+        logger.error(
+            f"[Square OAuth] token exchange failed for {restaurant_id}: {e}",
+            exc_info=True,
+        )
+        await db.integrations.update_one(
+            {"provider": "square", "restaurant_id": restaurant_id},
+            {"$set": {
+                "provider": "square",
+                "restaurant_id": restaurant_id,
+                "status": "error",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        raise HTTPException(status_code=502, detail="Square token exchange failed")
+
+    access_token = token_data.get("access_token", "")
+    merchant_id = token_data.get("merchant_id", "")
+
     await db.integrations.update_one(
         {"provider": "square", "restaurant_id": restaurant_id},
         {"$set": {
             "provider": "square",
             "restaurant_id": restaurant_id,
             "status": "connected",
-            "auth_code": code,
+            "merchant_id": merchant_id,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }},
         upsert=True,
     )
     for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
-        await _coll.update_one({"id": restaurant_id}, {"$set": {"square_connected": True}})
+        await _coll.update_one(
+            {"id": restaurant_id},
+            {"$set": {
+                "square_connected": True,
+                "square_access_token": encrypt_value(access_token),
+            }},
+        )
     return {"connected": True, "restaurant_id": restaurant_id}
 
 

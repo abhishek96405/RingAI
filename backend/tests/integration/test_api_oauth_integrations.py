@@ -873,16 +873,31 @@ async def test_square_callback_persists_integration(
     assert connect_resp.status_code == 200
     state = _extract_state(connect_resp.json()["connect_url"])
 
+    # A5-3: the callback now exchanges the code for a token. Mock the exchange.
+    import pos_sync
+
+    async def _fake_exchange(code, redirect_uri):
+        return {"access_token": "sq_at_test", "merchant_id": "M123"}
+
+    monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
+
     response = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
     assert response.status_code == 200
     body = response.json()
     assert body["connected"] is True
     assert body["restaurant_id"] == TENANT_A_ID
 
+    # Access token exchanged + stored ENCRYPTED; raw auth code is no longer kept.
+    from encryption_utils import decrypt_value
+    saved = await patched_server_db.restaurants.find_one({"id": TENANT_A_ID}, {"_id": 0})
+    assert saved["square_connected"] is True
+    assert decrypt_value(saved["square_access_token"]) == "sq_at_test"
+
     integ = await patched_server_db.integrations.find_one(
         {"provider": "square", "restaurant_id": TENANT_A_ID}, {"_id": 0}
     )
-    assert integ["auth_code"] == "AUTH"
+    assert "auth_code" not in integ
+    assert integ["status"] == "connected"
 
 
 def test_square_callback_missing_code_400(client):
@@ -914,6 +929,14 @@ async def test_square_callback_state_is_single_use(
         headers={"Authorization": "Bearer tenant_a"},
     )
     state = _extract_state(connect_resp.json()["connect_url"])
+
+    # A5-3: mock the token exchange so the first (valid) callback succeeds.
+    import pos_sync
+
+    async def _fake_exchange(code, redirect_uri):
+        return {"access_token": "sq_at_test", "merchant_id": "M123"}
+
+    monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
 
     first = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
     assert first.status_code == 200
