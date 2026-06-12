@@ -106,6 +106,12 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
   test_square_callback_rejects_replayed_state (tests/security/) never mocked exchange_square_code,
   so post-G3 its first callback 502'd — added the same monkeypatch mock the other two G3
   square-callback tests use.
+- **Square environment switching (connect + sync) — DONE:** OAuth authorize (server.py),
+  token exchange + catalog sync (pos_sync.py) now select sandbox vs production via
+  SQUARE_ENVIRONMENT (default sandbox), matching _send_to_square and the Clover switch.
+  Unblocks sandbox connect testing. FOLLOW-UP (Slice B, call-path): gemini_service.py queue-depth
+  orders/search calls (lines ~872, ~903) still hardcode production — non-fatal (try/except → None),
+  fix next with a live sandbox call to verify.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

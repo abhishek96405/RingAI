@@ -244,6 +244,43 @@ async def test_square_sync_handles_non_200(async_db, monkeypatch):
     assert result["success"] is False
 
 
+async def test_square_sync_uses_sandbox_url_when_env_is_sandbox(async_db, monkeypatch):
+    from pos_sync import sync_menu_from_square
+
+    monkeypatch.setenv("SQUARE_ENVIRONMENT", "sandbox")
+    captured = {}
+
+    async def fake_get(self, url, **kwargs):
+        captured["url"] = url
+        return httpx.Response(200, json={"objects": []})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await sync_menu_from_square(
+        "rest_a", async_db,
+        restaurant={"square_access_token": "tok"},
+    )
+    assert "connect.squareupsandbox.com" in captured["url"]
+
+
+async def test_square_sync_uses_production_url_when_env_is_production(async_db, monkeypatch):
+    from pos_sync import sync_menu_from_square
+
+    monkeypatch.setenv("SQUARE_ENVIRONMENT", "production")
+    captured = {}
+
+    async def fake_get(self, url, **kwargs):
+        captured["url"] = url
+        return httpx.Response(200, json={"objects": []})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await sync_menu_from_square(
+        "rest_a", async_db,
+        restaurant={"square_access_token": "tok"},
+    )
+    assert "squareupsandbox" not in captured["url"]
+    assert "connect.squareup.com" in captured["url"]
+
+
 # ---------------------------------------------------------------------------
 # sync_menu_from_pos — routing
 # ---------------------------------------------------------------------------

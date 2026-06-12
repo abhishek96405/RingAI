@@ -13,12 +13,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-# Square OAuth token endpoint — production base, matching the hardcoded authorize +
-# catalog URLs elsewhere in the codebase. (If sandbox testing is ever needed, make the
-# Square base URL env-switchable in one place.)
-SQUARE_API_BASE = "https://connect.squareup.com"
-
-
 async def exchange_square_code(code: str, redirect_uri: str) -> Dict[str, Any]:
     """Exchange a Square OAuth authorization code for an access token (A5-3).
 
@@ -31,9 +25,14 @@ async def exchange_square_code(code: str, redirect_uri: str) -> Dict[str, Any]:
     if not application_id or not application_secret:
         raise ValueError("Square credentials not configured")
 
+    # Sandbox vs production base — mirrors _send_to_square (gemini_service.py) and the
+    # Clover env-switch. OAuth uses the global app environment (no per-restaurant override).
+    square_env = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    square_base = "https://connect.squareupsandbox.com" if square_env == "sandbox" else "https://connect.squareup.com"
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
-            f"{SQUARE_API_BASE}/oauth2/token",
+            f"{square_base}/oauth2/token",
             headers={"Content-Type": "application/json"},
             json={
                 "client_id": application_id,
@@ -160,10 +159,15 @@ async def sync_menu_from_square(restaurant_id: str, db, restaurant: Dict = None)
     if not access_token:
         return {"success": False, "error": "Square credentials not configured"}
 
+    # Sandbox vs production base — mirrors _send_to_square / the Clover env-switch.
+    # Per-restaurant pos_env wins, else the global SQUARE_ENVIRONMENT.
+    square_env = (restaurant or {}).get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    square_base = "https://connect.squareupsandbox.com" if square_env == "sandbox" else "https://connect.squareup.com"
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                "https://connect.squareup.com/v2/catalog/list",
+                f"{square_base}/v2/catalog/list",
                 headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
                 params={"types": "ITEM"},
             )

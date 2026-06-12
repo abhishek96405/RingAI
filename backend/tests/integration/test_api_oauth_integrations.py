@@ -847,6 +847,21 @@ async def test_square_connect(client, two_tenant_with_memberships, monkeypatch):
     assert len(state) >= 32
 
 
+async def test_square_connect_uses_sandbox_base_when_env_is_sandbox(
+    client, two_tenant_with_memberships, monkeypatch
+):
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
+    monkeypatch.setenv("SQUARE_ENVIRONMENT", "sandbox")
+
+    response = client.get(
+        f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert response.status_code == 200
+    assert "connect.squareupsandbox.com" in response.json()["connect_url"]
+
+
 async def test_square_connect_wrong_tenant_404(
     client, two_tenant_with_memberships, monkeypatch
 ):

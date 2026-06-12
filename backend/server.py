@@ -5109,8 +5109,10 @@ async def square_connect(restaurant_id: str = Query(...), user: Dict[str, Any] =
         user_id=user["id"],
         provider="square",
     )
+    square_env = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    square_base = "https://connect.squareupsandbox.com" if square_env == "sandbox" else "https://connect.squareup.com"
     connect_url = (
-        "https://connect.squareup.com/oauth2/authorize"
+        f"{square_base}/oauth2/authorize"
         f"?client_id={application_id}&scope=ITEMS_READ+ORDERS_READ+PAYMENTS_READ"
         f"&session=false&state={state}&redirect_uri={redirect_uri}"
     )

@@ -43,3 +43,20 @@ async def test_exchange_square_code_raises_when_unconfigured(monkeypatch):
     import pos_sync
     with pytest.raises(ValueError):
         await pos_sync.exchange_square_code("c", "https://x")
+
+
+async def test_exchange_square_code_uses_sandbox_base_when_env_is_sandbox(monkeypatch):
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app")
+    monkeypatch.setenv("SQUARE_APPLICATION_SECRET", "secret")
+    monkeypatch.setenv("SQUARE_ENVIRONMENT", "sandbox")
+    import pos_sync
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        captured["url"] = url
+        return httpx.Response(200, json={"access_token": "sq_AT", "merchant_id": "M1"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    await pos_sync.exchange_square_code("the-code", "https://app.test/cb")
+    assert "connect.squareupsandbox.com" in captured["url"]
