@@ -177,6 +177,15 @@ try:
                                         type=_genai_types.Type.INTEGER,
                                         description="Number of this item ordered (>=1)",
                                     ),
+                                    "modifiers": _genai_types.Schema(
+                                        type=_genai_types.Type.ARRAY,
+                                        items=_genai_types.Schema(type=_genai_types.Type.STRING),
+                                        description=(
+                                            "Confirmed modifier option names for THIS item, e.g. "
+                                            "['Large','Extra Cheese']. Use exact names from the menu's "
+                                            "[Group: ...] brackets. Empty list if none."
+                                        ),
+                                    ),
                                 },
                                 required=["name", "quantity"],
                             ),
@@ -1661,13 +1670,23 @@ async def create_call_pipeline(
                             if session.menu_index else None
                         )
                         if menu_item:
+                            from gemini_service import resolve_modifier_deltas
                             unit_cents = int(menu_item.get("price", 0))
-                            subtotal_cents = unit_cents * qty
+                            _mod_delta, _unmatched = resolve_modifier_deltas(
+                                menu_item, it.get("modifiers", []) or []
+                            )
+                            if _unmatched:
+                                logger.warning(
+                                    f"[{call_sid}] compute_order_total unmatched "
+                                    f"modifiers {_unmatched} on {raw_name} → $0"
+                                )
+                            eff_unit = max(0, unit_cents + _mod_delta)
+                            subtotal_cents = eff_unit * qty
                             total_cents += subtotal_cents
                             resolved.append({
                                 "name": menu_item.get("name", raw_name),
                                 "quantity": qty,
-                                "unit_price_dollars": f"${unit_cents / 100:.2f}",
+                                "unit_price_dollars": f"${eff_unit / 100:.2f}",
                                 "subtotal_dollars": f"${subtotal_cents / 100:.2f}",
                             })
                         else:

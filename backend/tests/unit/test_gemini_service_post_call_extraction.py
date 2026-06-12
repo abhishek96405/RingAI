@@ -262,6 +262,150 @@ def test_live_order_transition_records_history():
 
 
 # ---------------------------------------------------------------------------
+# A7-6: resolve_modifier_deltas — chosen modifier names → total price_delta.
+# Matches by option name AND ai_aliases, case-insensitive. Unmatched names add
+# $0 but are returned so the caller can log them — never invent a price.
+# ---------------------------------------------------------------------------
+
+_MODIFIER_ITEM = {
+    "id": "pizza",
+    "name": "Pizza",
+    "price": 1200,
+    "resolved_modifiers": [
+        {
+            "name": "Size",
+            "options": [
+                {"name": "Small", "price_delta": 0},
+                {"name": "Large", "price_delta": 300, "ai_aliases": ["big", "XL"]},
+            ],
+        },
+        {
+            "name": "Toppings",
+            "options": [
+                {"name": "Extra Cheese", "price_delta": 150},
+                {"name": "Light Cheese", "price_delta": -100},
+            ],
+        },
+    ],
+}
+
+
+def test_resolve_modifier_deltas_matches_by_option_name():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["Large"])
+    assert total == 300
+    assert unmatched == []
+
+
+def test_resolve_modifier_deltas_matches_by_ai_alias():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["big"])
+    assert total == 300
+    assert unmatched == []
+
+
+def test_resolve_modifier_deltas_case_insensitive():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["lArGe", "EXTRA cheese"])
+    assert total == 450
+    assert unmatched == []
+
+
+def test_resolve_modifier_deltas_sums_multiple():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["Large", "Extra Cheese"])
+    assert total == 450
+    assert unmatched == []
+
+
+def test_resolve_modifier_deltas_positive_delta():
+    from gemini_service import resolve_modifier_deltas
+    total, _ = resolve_modifier_deltas(_MODIFIER_ITEM, ["Extra Cheese"])
+    assert total == 150
+
+
+def test_resolve_modifier_deltas_negative_delta():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["Light Cheese"])
+    assert total == -100
+    assert unmatched == []
+
+
+def test_resolve_modifier_deltas_unmatched_name_returns_zero_and_name():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["Gold Leaf"])
+    assert total == 0
+    assert unmatched == ["Gold Leaf"]
+
+
+def test_resolve_modifier_deltas_mixed_matched_and_unmatched():
+    from gemini_service import resolve_modifier_deltas
+    total, unmatched = resolve_modifier_deltas(_MODIFIER_ITEM, ["Large", "Gold Leaf"])
+    assert total == 300
+    assert unmatched == ["Gold Leaf"]
+
+
+def test_resolve_modifier_deltas_empty_list():
+    from gemini_service import resolve_modifier_deltas
+    assert resolve_modifier_deltas(_MODIFIER_ITEM, []) == (0, [])
+
+
+# ---------------------------------------------------------------------------
+# A7-6: OrderItem.subtotal folds in modifier_total (per-unit), floored at $0.
+# ---------------------------------------------------------------------------
+
+def test_order_item_subtotal_modifier_total_zero():
+    from gemini_service import OrderItem
+    item = OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                     unit_price=1200, quantity=2, modifier_total=0)
+    assert item.subtotal == 2400
+
+
+def test_order_item_subtotal_positive_modifier():
+    from gemini_service import OrderItem
+    item = OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                     unit_price=1200, quantity=2, modifier_total=300)
+    # (1200 + 300) * 2
+    assert item.subtotal == 3000
+
+
+def test_order_item_subtotal_negative_modifier():
+    from gemini_service import OrderItem
+    item = OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                     unit_price=1200, quantity=1, modifier_total=-100)
+    assert item.subtotal == 1100
+
+
+def test_order_item_subtotal_floors_at_zero():
+    """A modifier_total more negative than unit_price floors the per-unit
+    effective price at 0 — a line can never cost less than nothing (A7-6)."""
+    from gemini_service import OrderItem
+    item = OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                     unit_price=500, quantity=3, modifier_total=-900)
+    assert item.subtotal == 0
+
+
+def test_order_item_subtotal_multiplies_by_quantity():
+    from gemini_service import OrderItem
+    item = OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                     unit_price=1000, quantity=4, modifier_total=250)
+    assert item.subtotal == 5000
+
+
+def test_live_order_total_includes_modifier_delta():
+    """A 2-item order where one item carries a modifier_total → the order total
+    includes the delta (A7-6)."""
+    from gemini_service import LiveOrder, OrderItem
+    order = LiveOrder(restaurant_id="r", call_sid="c", caller_number="+1")
+    order.items.append(OrderItem(name="Pizza", menu_item_id="p1", category="x",
+                                 unit_price=1200, quantity=1, modifier_total=300))
+    order.items.append(OrderItem(name="Soda", menu_item_id="s1", category="y",
+                                 unit_price=200, quantity=2))
+    # (1200 + 300) + (200 * 2) = 1500 + 400
+    assert order.total == 1900
+
+
+# ---------------------------------------------------------------------------
 # format_order_readback
 # ---------------------------------------------------------------------------
 

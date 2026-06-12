@@ -606,6 +606,73 @@ async def test_clover_quantity_zero_guard_posts_exactly_once(monkeypatch):
 # as a failure (not silent success) so the operator gets alerted.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# A7-6: modifier upcharges are baked into the POS line item — the price equals
+# unit_price + modifier_total and the modifier names ride on the item name.
+# ---------------------------------------------------------------------------
+
+async def test_clover_line_item_bakes_modifier_price_and_names(monkeypatch):
+    from gemini_service import _send_to_clover, OrderItem
+
+    fake_post, posts = _clover_line_item_recorder()
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                  unit_price=1200, quantity=1,
+                  modifiers=["Large", "Extra Cheese"], modifier_total=450),
+    ])
+    out = await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert out["success"] is True
+    assert len(posts) == 1
+    li = posts[0]
+    assert li["price"] == 1650  # 1200 + 450
+    assert "Large" in li["name"] and "Extra Cheese" in li["name"]
+    assert li["name"].startswith("Pizza")
+
+
+async def test_clover_line_item_floors_negative_modifier_at_zero(monkeypatch):
+    from gemini_service import _send_to_clover, OrderItem
+
+    fake_post, posts = _clover_line_item_recorder()
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Combo", menu_item_id="c1", category="Combos",
+                  unit_price=500, quantity=1,
+                  modifiers=["Big Discount"], modifier_total=-900),
+    ])
+    await _send_to_clover(order, {"clover_api_token": "t", "clover_merchant_id": "m"})
+    assert posts[0]["price"] == 0  # floored, not negative
+
+
+async def test_square_line_item_bakes_modifier_price_and_names(monkeypatch):
+    from gemini_service import _send_to_square, OrderItem
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _resp(200, json={"order": {"id": "sq_1"}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    order = _make_order(items=[
+        OrderItem(name="Pizza", menu_item_id="p1", category="Pizza",
+                  unit_price=1200, quantity=2,
+                  modifiers=["Large", "Extra Cheese"], modifier_total=450),
+    ])
+    out = await _send_to_square(order, {
+        "square_access_token": "t", "square_location_id": "loc_1",
+    })
+    assert out["success"] is True
+    li = captured["json"]["order"]["line_items"][0]
+    assert li["base_price_money"]["amount"] == 1650  # 1200 + 450, per-unit
+    assert li["quantity"] == "2"  # Square multiplies per-unit by quantity
+    assert "Large" in li["name"] and "Extra Cheese" in li["name"]
+    assert li["name"].startswith("Pizza")
+
+
 async def test_clover_line_item_failure_surfaces_as_failure(monkeypatch):
     """The order create succeeds but a line-item POST returns 400. The function
     must report success=False and name the failed item so the operator knows the

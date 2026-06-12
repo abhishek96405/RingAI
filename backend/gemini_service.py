@@ -225,6 +225,32 @@ def _format_modifiers_compact(resolved_modifiers: List[Dict]) -> str:
         parts.append(f"[{name}: {opts_str}{required_marker}]")
     return " " + "".join(parts) if parts else ""
 
+
+def resolve_modifier_deltas(menu_item: Dict, modifier_names: list) -> tuple:
+    """Resolve chosen modifier option names → total price_delta (cents) for an
+    item. Returns (total_delta_cents, unmatched_names). Case-insensitive match
+    against each option's name AND ai_aliases across the item's
+    resolved_modifiers groups (A7-6). Unmatched names add $0 but are returned
+    so the caller can log them — never invent a price."""
+    if not modifier_names:
+        return 0, []
+    lookup = {}
+    for group in menu_item.get("resolved_modifiers", []):
+        for opt in group.get("options", []):
+            delta = int(opt.get("price_delta", 0) or 0)
+            for k in [opt.get("name", "")] + list(opt.get("ai_aliases", []) or []):
+                if k:
+                    lookup[k.strip().lower()] = delta
+    total, unmatched = 0, []
+    for name in modifier_names:
+        key = (name or "").strip().lower()
+        if key in lookup:
+            total += lookup[key]
+        else:
+            unmatched.append(name)
+    return total, unmatched
+
+
 class MenuIndex:
     """Pre-built lookup for a restaurant's menu. All item validation runs here."""
 
@@ -343,18 +369,20 @@ class OrderItem:
     unit_price: int       # cents
     quantity: int
     modifiers: List[str] = field(default_factory=list)
+    modifier_total: int = 0  # per-unit sum of matched modifier price_deltas, cents (A7-6)
     special_instructions: str = ""
     allergens: List[str] = field(default_factory=list)
 
     @property
     def subtotal(self) -> int:
-        return self.unit_price * self.quantity
+        return max(0, self.unit_price + self.modifier_total) * self.quantity
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name, "menu_item_id": self.menu_item_id,
             "category": self.category, "unit_price": self.unit_price,
             "quantity": self.quantity, "modifiers": self.modifiers,
+            "modifier_total": self.modifier_total,
             "special_instructions": self.special_instructions,
             "allergens": self.allergens, "subtotal": self.subtotal,
         }
@@ -523,13 +551,18 @@ JSON:"""
             logger.warning(f"[MENU_DROP] Item '{name}' not on menu — dropped from order")
             order.dropped_items.append(name)
             continue
+        _mod_names = raw_item.get("modifiers", []) or []
+        _mod_delta, _unmatched = resolve_modifier_deltas(menu_item, _mod_names)
+        if _unmatched:
+            logger.warning(f"[MOD_UNMATCHED] {menu_item['name']}: {_unmatched} not configured → $0 (A7-6)")
         order.items.append(OrderItem(
             name=menu_item["name"],
             menu_item_id=menu_item["id"],
             category=menu_item.get("category", ""),
             unit_price=menu_item["price"],
             quantity=max(1, _safe_int(raw_item.get("quantity", 1), 1)),
-            modifiers=raw_item.get("modifiers", []),
+            modifiers=_mod_names,
+            modifier_total=_mod_delta,
             special_instructions=raw_item.get("special_instructions", ""),
             allergens=menu_item.get("allergens", []),
         ))
@@ -739,9 +772,10 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str
             # item mis-renders quantity and pricing on the ticket and total.
             failed_items = []
             for item in order.items:
+                _mods = f" ({', '.join(item.modifiers)})" if item.modifiers else ""
                 line_item = {
-                    "name": item.name,
-                    "price": item.unit_price,  # in cents
+                    "name": item.name + _mods,
+                    "price": max(0, item.unit_price + item.modifier_total),  # per-unit effective (A7-6)
                 }
                 if item.special_instructions:
                     line_item["note"] = item.special_instructions
@@ -962,8 +996,9 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[
             "state": "OPEN",
             "line_items": [
                 {
-                    "name": i.name, "quantity": str(i.quantity),
-                    "base_price_money": {"amount": i.unit_price, "currency": "USD"},
+                    "name": i.name + (f" ({', '.join(i.modifiers)})" if i.modifiers else ""),
+                    "quantity": str(i.quantity),
+                    "base_price_money": {"amount": max(0, i.unit_price + i.modifier_total), "currency": "USD"},
                     "note": i.special_instructions or None,
                 }
                 for i in order.items

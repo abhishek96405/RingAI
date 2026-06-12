@@ -319,6 +319,81 @@ async def test_tool_uses_menu_index_fuzzy_matching(
 
 
 # ---------------------------------------------------------------------------
+# A7-6: compute_order_total folds modifier price_deltas into the per-unit price
+# so the spoken quote charges for paid modifiers.
+# ---------------------------------------------------------------------------
+
+MODIFIER_MENU = [
+    {
+        "id": "1", "name": "Chicken Biryani", "category": "Mains",
+        "price": 1499, "available": True, "allergens": [],
+        "resolved_modifiers": [
+            {
+                "name": "Size",
+                "options": [
+                    {"name": "Regular", "price_delta": 0},
+                    {"name": "Large", "price_delta": 200, "ai_aliases": ["big"]},
+                ],
+            },
+        ],
+    },
+]
+
+
+async def test_tool_adds_modifier_upcharge_to_total(
+    pipecat_mocks, fake_gemini_live, make_call_session
+):
+    """A +$2.00 modifier folds into the per-unit price: 1 Chicken Biryani (Large)
+    → $14.99 + $2.00 = $16.99, and unit_price_dollars reflects the effective unit."""
+    await _get_handler(make_call_session, menu_items=MODIFIER_MENU)
+    inst = fake_gemini_live.instances[0]
+    handler = inst.registered_functions["compute_order_total"]
+
+    params = FakeParams(arguments={
+        "items": [{"name": "Chicken Biryani", "quantity": 1, "modifiers": ["Large"]}]
+    })
+    await handler(params)
+    result = params.results[0]
+    assert result["total_dollars"] == "$16.99"
+    assert result["items_resolved"][0]["unit_price_dollars"] == "$16.99"
+    assert result["items_resolved"][0]["subtotal_dollars"] == "$16.99"
+
+
+async def test_tool_modifier_upcharge_multiplies_by_quantity(
+    pipecat_mocks, fake_gemini_live, make_call_session
+):
+    """2 Chicken Biryani (Large) → (14.99 + 2.00) * 2 = $33.98."""
+    await _get_handler(make_call_session, menu_items=MODIFIER_MENU)
+    inst = fake_gemini_live.instances[0]
+    handler = inst.registered_functions["compute_order_total"]
+
+    params = FakeParams(arguments={
+        "items": [{"name": "Chicken Biryani", "quantity": 2, "modifiers": ["big"]}]
+    })
+    await handler(params)
+    result = params.results[0]
+    assert result["total_dollars"] == "$33.98"
+    assert result["items_resolved"][0]["unit_price_dollars"] == "$16.99"
+
+
+async def test_tool_unmatched_modifier_does_not_change_total(
+    pipecat_mocks, fake_gemini_live, make_call_session
+):
+    """A modifier name not configured on the item contributes $0 (never invents
+    a price) — the total stays the base price."""
+    await _get_handler(make_call_session, menu_items=MODIFIER_MENU)
+    inst = fake_gemini_live.instances[0]
+    handler = inst.registered_functions["compute_order_total"]
+
+    params = FakeParams(arguments={
+        "items": [{"name": "Chicken Biryani", "quantity": 1, "modifiers": ["Gold Leaf"]}]
+    })
+    await handler(params)
+    result = params.results[0]
+    assert result["total_dollars"] == "$14.99"
+
+
+# ---------------------------------------------------------------------------
 # _tools_list wiring tests.
 # ---------------------------------------------------------------------------
 
