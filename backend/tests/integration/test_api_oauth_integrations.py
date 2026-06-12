@@ -132,7 +132,11 @@ async def test_calendar_callback_exchanges_code_and_redirects(
     saved = await patched_server_db.restaurant_configs.find_one(
         {"restaurant_id": TENANT_A_ID}, {"_id": 0}
     )
-    assert saved["google_calendar_tokens"]["access_token"] == "at_test"
+    # B3-7: calendar tokens are now encrypted at rest.
+    from encryption_utils import decrypt_value
+    assert saved["google_calendar_tokens"]["access_token"].startswith("enc:")
+    assert decrypt_value(saved["google_calendar_tokens"]["access_token"]) == "at_test"
+    assert decrypt_value(saved["google_calendar_tokens"]["refresh_token"]) == "rt_test"
 
 
 @pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow")

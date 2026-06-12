@@ -71,6 +71,18 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
   `logger.error(..., exc_info=True)` — visible in Render logs and forwarded to Sentry when
   configured. Behavior unchanged (still continues past a decrypt failure rather than
   crashing). Observability only; no new test.
+- **G2 (A3-1 token-at-rest / B3-7) — DONE:** Google Calendar OAuth tokens are now encrypted
+  at rest. New `encrypt_calendar_tokens`/`decrypt_calendar_tokens` helpers encrypt the
+  access_token + refresh_token values inside the tokens dict (the flat
+  ENCRYPTED_CREDENTIAL_FIELDS path can't handle a dict). Encrypted at both write paths (OAuth
+  callback + the refresh write-back in get_valid_access_token) and decrypted at the sole
+  consumer (get_valid_access_token). The `enc:` prefix makes the helpers idempotent and lets
+  pre-existing plaintext tokens migrate for free. Two existing tests updated to assert the
+  encrypted-at-rest contract.
+  - POTENTIAL (separate, NOT fixed here): the refresh write-back hardcodes
+    `db.restaurant_configs` while the callback uses `get_config_collection(business_type)` —
+    if those collections differ for appointment businesses, refreshed tokens persist to the
+    wrong collection. Verify get_config_collection's mapping; track for PR-I.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

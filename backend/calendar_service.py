@@ -15,6 +15,8 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 import httpx
 
+from encryption_utils import encrypt_calendar_tokens, decrypt_calendar_tokens
+
 logger = logging.getLogger(__name__)
 
 # Google OAuth Configuration
@@ -104,6 +106,9 @@ async def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
 
 async def get_valid_access_token(tokens: Dict[str, Any], db, restaurant_id: str) -> str:
     """Get a valid access token, refreshing if necessary."""
+    # Tokens are encrypted at rest (B3-7). Decrypt the secret values before use;
+    # legacy plaintext tokens pass through decrypt unchanged.
+    tokens = decrypt_calendar_tokens(tokens)
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
     expires_at = tokens.get("expires_at", 0)
@@ -128,10 +133,10 @@ async def get_valid_access_token(tokens: Dict[str, Any], db, restaurant_id: str)
             "expires_at": new_expires_at,
         }
         
-        # Persist to database
+        # Persist to database (re-encrypt the refreshed secret values at rest)
         await db.restaurant_configs.update_one(
             {"restaurant_id": restaurant_id},
-            {"$set": {"google_calendar_tokens": updated_tokens}}
+            {"$set": {"google_calendar_tokens": encrypt_calendar_tokens(updated_tokens)}}
         )
         
         return new_tokens["access_token"]

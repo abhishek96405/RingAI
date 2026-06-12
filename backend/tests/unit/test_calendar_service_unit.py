@@ -184,9 +184,12 @@ async def test_get_valid_access_token_refreshes_when_expired(async_db, monkeypat
     token = await calendar_service.get_valid_access_token(tokens, async_db, "rest_a")
     assert token == "newAT"
 
-    # And the new token is persisted in DB
+    # And the new token is persisted in DB — now ENCRYPTED at rest (B3-7)
+    from encryption_utils import decrypt_value
     cfg = await async_db.restaurant_configs.find_one({"restaurant_id": "rest_a"})
-    assert cfg["google_calendar_tokens"]["access_token"] == "newAT"
+    stored_at = cfg["google_calendar_tokens"]["access_token"]
+    assert stored_at.startswith("enc:")
+    assert decrypt_value(stored_at) == "newAT"
 
 
 async def test_get_valid_access_token_raises_when_expired_without_refresh_token(async_db):

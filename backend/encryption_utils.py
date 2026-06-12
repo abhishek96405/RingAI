@@ -125,6 +125,36 @@ def decrypt_sensitive_fields(doc: dict, fields: set) -> dict:
     return result
 
 
+# Google Calendar tokens are stored as a dict (access_token, refresh_token, expires_at,
+# ...), so they can't go through the flat-string field helpers above. Encrypt only the two
+# secret string values in place; the 'enc:' prefix makes both functions idempotent and lets
+# legacy plaintext values pass through unchanged.
+CALENDAR_TOKEN_SECRET_KEYS = ("access_token", "refresh_token")
+
+
+def encrypt_calendar_tokens(tokens):
+    """Encrypt the secret values inside a Google Calendar tokens dict."""
+    if not tokens:
+        return tokens
+    result = dict(tokens)
+    for key in CALENDAR_TOKEN_SECRET_KEYS:
+        if result.get(key):
+            result[key] = encrypt_value(str(result[key]))
+    return result
+
+
+def decrypt_calendar_tokens(tokens):
+    """Inverse of encrypt_calendar_tokens. Prefix-aware: plaintext (legacy) values pass
+    through unchanged, so this is safe on un-migrated data."""
+    if not tokens:
+        return tokens
+    result = dict(tokens)
+    for key in CALENDAR_TOKEN_SECRET_KEYS:
+        if result.get(key):
+            result[key] = decrypt_value(str(result[key]))
+    return result
+
+
 # Fields that should be encrypted at rest
 ENCRYPTED_CREDENTIAL_FIELDS = {
     "clover_api_token",

@@ -311,6 +311,7 @@ from rate_limiting import (
 )
 from encryption_utils import (
     encrypt_sensitive_fields,
+    encrypt_calendar_tokens,
     decrypt_sensitive_fields,
     ENCRYPTED_CREDENTIAL_FIELDS,
     mask_for_display,
@@ -2338,7 +2339,7 @@ async def google_calendar_callback(
         await get_config_collection(_business_type).update_one(
             {"restaurant_id": restaurant_id},
             {"$set": {
-                "google_calendar_tokens": tokens,
+                "google_calendar_tokens": encrypt_calendar_tokens(tokens),
                 "google_calendar_id": "primary",
             }},
             upsert=True
