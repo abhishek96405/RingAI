@@ -462,7 +462,7 @@ const OrdersPage = () => {
                           </div>
                           {item.unit_price > 0 && (
                             <span className="text-sm shrink-0">
-                              ${((item.unit_price * item.quantity) / 100).toFixed(2)}
+                              ${(item.subtotal / 100).toFixed(2)}
                             </span>
                           )}
                         </div>

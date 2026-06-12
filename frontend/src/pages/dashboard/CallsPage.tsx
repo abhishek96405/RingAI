@@ -348,7 +348,15 @@ const CallsPage = () => {
                       <h4 className="text-sm font-display font-semibold mb-3">Order Summary</h4>
                       <div className="space-y-2 rounded-xl bg-muted/20 p-3">
                         {(selectedCall.order_json.items || []).map((item: any, i: number) => (
-                          <div key={i} className="flex justify-between text-sm"><span>{item.quantity}x {item.name}</span><span className="text-muted-foreground">${(item.subtotal / 100).toFixed(2)}</span></div>
+                          <div key={i} className="flex justify-between text-sm">
+                            <span>
+                              {item.quantity}x {item.name}
+                              {item.modifiers?.length > 0 && (
+                                <span className="text-muted-foreground"> ({item.modifiers.join(", ")})</span>
+                              )}
+                            </span>
+                            <span className="text-muted-foreground">${(item.subtotal / 100).toFixed(2)}</span>
+                          </div>
                         ))}
                         <Separator />
                         <div className="flex justify-between text-sm font-semibold"><span>Total</span><span>${(selectedCall.order_json.total / 100).toFixed(2)}</span></div>

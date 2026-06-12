@@ -2270,9 +2270,13 @@ async def send_order_sms(
 
     lines = []
     for item in order.items:
-        item_total = item.unit_price * item.quantity / 100
+        # A7-6 display: per-line price is the modifier-inclusive subtotal (not base
+        # unit_price), and chosen modifier names ride on the item name — so the SMS
+        # lines sum to order.total and match the Clover ticket / dashboard.
+        item_total = item.subtotal / 100
         qty_prefix = f"{item.quantity}x " if item.quantity > 1 else "1x "
-        lines.append(f"{qty_prefix}{item.name} — ${item_total:.2f}")
+        mods = f" ({', '.join(item.modifiers)})" if item.modifiers else ""
+        lines.append(f"{qty_prefix}{item.name}{mods} — ${item_total:.2f}")
 
     total = f"${order.total / 100:.2f}"
 
