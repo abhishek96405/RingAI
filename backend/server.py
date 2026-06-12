@@ -3871,13 +3871,19 @@ async def telnyx_get_order(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Check status of a number order (for orders that didn't complete synchronously)."""
+    # A6-3: scope to the caller's tenant. Look up the audit record FIRST and require
+    # membership on its restaurant before any Telnyx lookup, so a logged-in user
+    # can't read another tenant's number orders by order_id.
+    record = await db.phone_number_orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not record or not record.get("restaurant_id"):
+        raise HTTPException(status_code=404, detail="Order not found")
+    await ensure_restaurant_access(record["restaurant_id"], user)
     import telnyx_service
     try:
         order = await telnyx_service.get_number_order(order_id)
     except Exception as e:
         logger.error(f"[Telnyx Order Status] {e}")
         raise HTTPException(status_code=502, detail="Telnyx order lookup failed")
-    record = await db.phone_number_orders.find_one({"order_id": order_id}, {"_id": 0})
     return {"telnyx": order, "audit": record}
 
 
@@ -3887,13 +3893,7 @@ async def send_menu_sms_endpoint(
     request: Request,
     user: Dict[str, Any] = Depends(get_current_user)
 ):
-    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
-    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
-    restaurant = await get_business_collection(business_type).find_one(
-        {"id": restaurant_id}, {"_id": 0}
-    )
-    if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
     body = await request.json()
     caller_number = body.get("caller_number")
     if not caller_number:
@@ -5509,12 +5509,12 @@ async def reanalyse_call(call_id: str, user: Dict[str, Any] = Depends(get_curren
 # ============================================================
 
 @api_router.get("/test-mode/status")
-async def get_test_mode():
+async def get_test_mode(user: Dict[str, Any] = Depends(get_current_user)):
     return get_test_mode_status()
 
 
 @api_router.get("/test-mode/scenarios")
-async def get_test_call_scenarios():
+async def get_test_call_scenarios(user: Dict[str, Any] = Depends(get_current_user)):
     return {"scenarios": get_test_scenarios()}
 
 

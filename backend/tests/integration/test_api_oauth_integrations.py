@@ -770,7 +770,14 @@ async def test_telnyx_release_happy_path(
 # ---------------------------------------------------------------------------
 
 
-def test_telnyx_get_order_status(client, mock_clerk, telnyx_sdk_mock):
+async def test_telnyx_get_order_status(
+    client, two_tenant_with_memberships, patched_server_db, telnyx_sdk_mock
+):
+    # A6-3: the endpoint is now tenant-scoped — it requires an audit record whose
+    # restaurant_id the caller is a member of before it hits Telnyx.
+    await patched_server_db.phone_number_orders.insert_one(
+        {"order_id": "ord_test_123", "restaurant_id": TENANT_A_ID, "status": "pending"}
+    )
     response = client.get(
         "/api/telnyx/numbers/order/ord_test_123",
         headers={"Authorization": "Bearer tenant_a"},

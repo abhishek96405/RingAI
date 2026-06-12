@@ -210,14 +210,21 @@ async def test_seed_demo_disabled_in_test_env(client, two_tenant_with_membership
 # ---------------------------------------------------------------------------
 
 
-def test_test_mode_status_no_auth(client):
-    """Test-mode status endpoint is unauthenticated."""
-    response = client.get("/api/test-mode/status")
+def test_test_mode_status_requires_auth(client, mock_clerk):
+    """A6-4: test-mode status now requires a valid user."""
+    assert client.get("/api/test-mode/status").status_code == 401
+    response = client.get(
+        "/api/test-mode/status", headers={"Authorization": "Bearer tenant_a"}
+    )
     assert response.status_code == 200
 
 
-def test_test_mode_scenarios(client):
-    response = client.get("/api/test-mode/scenarios")
+def test_test_mode_scenarios(client, mock_clerk):
+    """A6-4: test-mode scenarios now requires a valid user."""
+    assert client.get("/api/test-mode/scenarios").status_code == 401
+    response = client.get(
+        "/api/test-mode/scenarios", headers={"Authorization": "Bearer tenant_a"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert "scenarios" in body
