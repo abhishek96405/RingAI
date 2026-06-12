@@ -52,6 +52,20 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
   - The media-stream (call-path) WS is intentionally NOT capped — capping it would drop a
     legitimate Nth concurrent call. It uses the separate register_active_websocket
     tracker, left unchanged.
+- **F4 (media-stream WS / A4-2) — PARTIAL, rest consciously deferred:**
+  - DONE: 15s timeout on the unauthenticated pre-start window
+    (MEDIA_STREAM_START_TIMEOUT_SECONDS) — silent sockets closed with 1008. This was
+    the only zero-knowledge attack sliver (anyone could hold connections open forever;
+    the media WS is intentionally uncapped per F3).
+  - DEFERRED (accepted-for-launch): stream-URL signed token + duplicate-stream guard.
+    Reason: (1) the Telnyx webhook chain is already Ed25519 signature-verified, so
+    abusing the media WS requires a LIVE call_control_id — an opaque, unguessable
+    token valid only for the minutes a call is up, present only in signed webhooks,
+    private logs, and the DB. (2) Both fixes put their failure mode on 100% of calls:
+    a token-verification or URL-encoding bug = no call can connect; a naive dup guard
+    can reject a legitimate Telnyx reconnect against a not-yet-cleaned-up session
+    (cleanup runs after pipeline teardown). Revisit on staging with a dedicated
+    Telnyx test number before onboarding real paying customers.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

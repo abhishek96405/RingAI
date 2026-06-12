@@ -4491,6 +4491,12 @@ async def admin_cost_analytics(
         "per_restaurant": per_restaurant,
     }
 
+# Max seconds an accepted media-stream socket may sit without sending the
+# Telnyx start message. Telnyx sends connected+start immediately after
+# connecting, so legitimate calls never approach this. Bounds the
+# unauthenticated pre-start window (A4-2 partial).
+MEDIA_STREAM_START_TIMEOUT_SECONDS = 15
+
 @app.websocket("/api/telnyx/media-stream")
 async def telnyx_media_stream(websocket: WebSocket):
     """Full Pipecat-integrated WebSocket for Telnyx media streams.
@@ -4511,7 +4517,18 @@ async def telnyx_media_stream(websocket: WebSocket):
         stream_id = ""
         call_control_id = ""
         while not call_control_id:
-            msg = await websocket.receive_json()
+            try:
+                msg = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=MEDIA_STREAM_START_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[Telnyx WS] no start message within "
+                    f"{MEDIA_STREAM_START_TIMEOUT_SECONDS}s — closing pre-start stream"
+                )
+                await websocket.close(code=1008)
+                return
             if "start" in msg and isinstance(msg["start"], dict):
                 start_data = msg["start"]
                 call_control_id = start_data.get("call_control_id", "")
