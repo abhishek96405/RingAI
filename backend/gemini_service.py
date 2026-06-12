@@ -1150,6 +1150,81 @@ Customer: "Do you have {wrong_item}?"
 You: "Yes, we have {wrong_item} for $X.XX." ← HALLUCINATION — never confirm unlisted items
 """
 
+
+def _build_upsell_section(menu_index: "MenuIndex") -> str:
+    """Build upsell guidance from the restaurant's ACTUAL menu (D3-11).
+
+    The upsell prompt used to hardcode Indian items ("Mango Lassi", "Gulab
+    Jamun"). At a non-Indian restaurant the model would sometimes anchor on them
+    and suggest an item that isn't on the menu — the kitchen can't make it and it
+    gets dropped at extraction. We instead surface real drink/dessert/side
+    candidates from THIS menu and hard-require the suggestion to be on the menu.
+
+    Categorisation matches whole words (not substrings — avoids the 'tea' in
+    'steak' class of false match) and is best-effort; the on-menu hard rule is
+    the real guardrail, since the model already has the full menu in context.
+    """
+    DRINK_KW = {"drink", "beverage", "soda", "juice", "tea", "coffee", "water",
+                "shake", "smoothie", "cola", "coke", "lemonade", "lassi",
+                "mocktail", "milkshake", "latte", "espresso", "cappuccino"}
+    DESSERT_KW = {"dessert", "cake", "pastry", "pudding", "brownie", "cookie",
+                  "pie", "cheesecake", "tiramisu", "gelato", "sundae", "sweet",
+                  "mousse", "donut", "doughnut", "gulab", "rasmalai", "kheer",
+                  "halwa", "jamun", "kulfi", "falooda"}
+    SIDE_KW = {"side", "appetizer", "starter", "fries", "bread", "naan", "chips",
+               "salad", "soup", "wings", "roll", "samosa", "nachos", "pakora"}
+
+    def _toks(s):
+        words = re.findall(r"[a-z]+", s.lower())
+        # add a naive singular so a 'Desserts' category matches the 'dessert' kw
+        return set(words) | {w[:-1] for w in words if len(w) > 3 and w.endswith("s")}
+
+    drinks, desserts, sides = [], [], []
+    for item in menu_index.items.values():
+        toks = _toks((item.get("category", "") or "") + " " + item.get("name", ""))
+        if toks & DRINK_KW:
+            drinks.append(item["name"])
+        elif toks & DESSERT_KW:
+            desserts.append(item["name"])
+        elif toks & SIDE_KW:
+            sides.append(item["name"])
+
+    # One real, on-menu item to anchor the example phrasing (prefer drink →
+    # dessert → side → any menu item). Never an invented name.
+    example_item = (drinks or desserts or sides or
+                    [i["name"] for i in menu_index.items.values()] or
+                    ["a complementary item"])[0]
+
+    def _fmt(names):
+        return ", ".join(names[:4]) if names else "(none on this menu — skip this category)"
+
+    return f"""UPSELL: After the customer finishes ordering (STEP 2), suggest ONE complementary item before asking for their name.
+  - CRITICAL: Only ever suggest an item that appears in the MENU above. NEVER suggest an item that is not on THIS restaurant's menu. If you are not sure an item is on the menu, do not suggest it.
+  - Suggest ONLY ONE item — never two options, never "X or Y".
+  - NEVER suggest an item the customer already ordered.
+  - Selection priority — pick from THIS restaurant's own menu:
+    1. If the customer has no drink → suggest a drink. Drinks on this menu: {_fmt(drinks)}
+    2. Else if the customer has no dessert → suggest a dessert. Desserts on this menu: {_fmt(desserts)}
+    3. Else → suggest a popular side or starter. Sides on this menu: {_fmt(sides)}
+  - If the chosen category shows "(none on this menu)", move to the next. If none of the three fit, suggest one other complementary item that IS on the menu and the customer hasn't ordered — or skip the upsell entirely. NEVER invent an item.
+  - Only reference items the customer actually ordered when personalizing the suggestion. NEVER mention items the customer did not order.
+  - Keep the upsell to ONE short sentence — never start with the customer's name.
+  - Use a real item from the menu above. Example: "A {example_item} would go great with that — want to add one?"
+  - WRONG: "Perfect, Abhishek! A {example_item} would go great with that..."
+  - RIGHT: "A {example_item} would go great with that — want to add one?"
+  - Accept any decline immediately — never push twice.
+  - CRITICAL: The upsell is a SEPARATE step from BOTH the name acknowledgment AND the readback.
+  - When the customer gives their name: acknowledge it briefly ("Got it!" or "Perfect!") — stop there, nothing else.
+  - Then on the NEXT sentence: deliver the upsell as a standalone question.
+  - WRONG: "Got it, Peter! A {example_item} would go great — want to add one?" ← name + upsell combined
+  - RIGHT: "Got it!" [natural pause] "A {example_item} would go great with that — want to add one?"
+  - Wait for the upsell response before doing anything else.
+  - Only AFTER the upsell response (accept or decline), proceed to STEP 4 readback.
+  - WRONG: "{example_item} would go great! Let me read back: ..." ← NEVER do this
+  - RIGHT: "{example_item} would go great with that — want to add one?" → wait → THEN readback
+  - If the conversation had any confusion or interruption before the name was given: still do the upsell after getting the name — NEVER skip it."""
+
+
 # ---------------------------------------------------------------------------
 # System Prompt Builder (hardened)
 # ---------------------------------------------------------------------------
@@ -1377,33 +1452,7 @@ This restaurant DOES take reservations, but reservations must be handled by our 
   If order is below minimum: "Our delivery minimum is ${delivery_minimum/100:.2f}. Would you like to add anything else, or switch to pickup?" """
     else:
         delivery_section = "DELIVERY: Not available. Pickup only."
-    upsell_section = (
-        """UPSELL: After the customer finishes ordering (STEP 2), suggest ONE complementary item before asking for their name.
-  - Suggest ONLY ONE item — never two options, never "X or Y"
-  - Selection priority: 
-    1. If customer has no drink → suggest a drink (Mango Lassi, Lassi, etc.)
-    2. If customer has no dessert → suggest a dessert (Gulab Jamun, Rasmalai, etc.)
-    3. If customer has both → suggest a popular side
-  - NEVER suggest an item the customer already ordered
-  - Only reference items the customer actually ordered when personalizing the suggestion
-  - NEVER mention items the customer did not order
-  - Example: Customer ordered Biryani → "A Mango Lassi would go great with that — want to add one?"
-  - Keep the upsell to ONE short sentence — never start with the customer's name
-  - WRONG: "Perfect, Abhishek! A Mango Lassi would go great with that..."
-  - RIGHT: "A Mango Lassi would go great with that — want to add one?"
-  - Accept any decline immediately — never push twice
-  - CRITICAL: The upsell is a SEPARATE step from BOTH the name acknowledgment AND the readback.
-  - When customer gives their name: acknowledge it briefly ("Got it!" or "Perfect!") — stop there, nothing else.
-  - Then on the NEXT sentence: deliver the upsell as a standalone question.
-  - WRONG: "Got it, Peter! A Mango Lassi would go great — want to add one?" ← name + upsell combined
-  - RIGHT: "Got it!" [natural pause] "A Mango Lassi would go great with that — want to add one?"
-  - Wait for upsell response before doing anything else.
-  - Only AFTER the upsell response (accept or decline), proceed to STEP 4 readback.
-  - WRONG: "Gulab Jamun would go great! Let me read back: one Biryani..." ← NEVER do this
-  - RIGHT: "Gulab Jamun would go great with that — want to add one?" → wait → THEN readback
-  - If the conversation had any confusion or interruption before the name was given: still do the upsell after getting the name — NEVER skip it."""
-        if upsell_enabled else ""
-    )
+    upsell_section = _build_upsell_section(menu_index) if upsell_enabled else ""
     escalation_target = escalation_phone or "a team member"
     prep_time = f"{avg_prep_time_minutes} minutes"
 
@@ -1733,8 +1782,7 @@ CRITICAL MENU RULES — NEVER VIOLATE:
    Then wait for their response.
    
    FALLBACK — only if customer says they can't access the link or has no internet:
-   List 3-4 popular items from that category briefly, then say "and a few others — want me to name more?"
-   Example: "We've got Mango Lassi, Masala Chai, Sweet Lassi, and a couple others — want the full list?"
+   Name 3-4 popular items FROM THAT CATEGORY in the menu above — only items that actually appear there, never invented ones — then add "and a few others — want me to name more?"
    
    NEVER read the entire menu unprompted.
    
