@@ -73,6 +73,16 @@ async def test_square_callback_rejects_replayed_state(
     assert connect.status_code == 200
     state = parse_qs(urlparse(connect.json()["connect_url"]).query)["state"][0]
 
+    # A5-3 (G3): the callback now exchanges the code for a token, so the first (valid)
+    # redemption needs the exchange mocked to reach 200 — the same mock the other two G3
+    # square-callback tests use. The replay assertion below is the actual security guard.
+    import pos_sync
+
+    async def _fake_exchange(code, redirect_uri):
+        return {"access_token": "sq_at_test", "merchant_id": "M123"}
+
+    monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
+
     r1 = client.get(f"/api/integrations/square/callback?code=c1&state={state}")
     r2 = client.get(f"/api/integrations/square/callback?code=c2&state={state}")
     assert r1.status_code == 200
