@@ -96,6 +96,12 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
   - Square endpoints are hardcoded to production (connect.squareup.com), consistent with the
     existing authorize + catalog URLs. Real verification needs a live Square OAuth round-trip
     with a production Square app; unit tests cover only the mocked exchange.
+- **Test determinism (utcnow flake) — FIXED:** the rotating ~17 failures were a dependency
+  (Starlette/jose) calling the deprecated datetime.datetime.utcnow(), promoted to an error by
+  `filterwarnings = ["error", ...]` for whichever tests hit that path under pytest-randomly
+  ordering. No repo code (source or tests) calls utcnow() — verified across all modules. Added
+  a global `ignore:datetime.datetime.utcnow` to filterwarnings (the same pattern 7 tests
+  already applied locally). The 7 now-redundant per-test markers can be removed later (harmless).
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

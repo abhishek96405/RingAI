@@ -79,6 +79,14 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning:google.*",
     "ignore::DeprecationWarning:passlib.*",
+    # A dependency (Starlette/jose, via the auth + middleware path) still calls the
+    # deprecated datetime.datetime.utcnow(). The warning originates in code we don't
+    # control — no source or test module in this repo calls utcnow(). With "error"
+    # above, it gets promoted to a failure for whichever tests happen to hit that path
+    # under pytest-randomly's ordering, producing a rotating set of ~17 flaky failures.
+    # Ignoring it globally (the exact pattern 7 tests already apply locally) makes the
+    # suite deterministic.
+    "ignore:datetime.datetime.utcnow",
     "ignore::PendingDeprecationWarning",
 ]
 
