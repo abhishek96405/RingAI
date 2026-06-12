@@ -16,8 +16,8 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 
 | PR | Status | Theme | Findings |
 |----|--------|-------|----------|
-| PR-D | ⬜ | Latent-500 / crash hardening | A8-1, A8-2, D3-2, D3-3, D3-4, D3-5, D3-6, D3-9, D3-10, D3-12, D3-15 |
-| PR-E | ⬜ | Order & money accuracy | A7-3, A7-6, A7-8, A7-9, A7-11, A7-12, A7-14, A7-15, D3-7, D3-8, D3-11 |
+| PR-D | ✔️ | Latent-500 / crash hardening | A8-1, A8-2, D3-2, D3-3, D3-4, D3-5, D3-6, D3-9, D3-10, D3-12, D3-15 |
+| PR-E | split → E1 ✔️ (accuracy) / E2 in-progress (modifiers) / E3 pending (upsell D3-11) | Order & money accuracy | A7-3, A7-6, A7-8, A7-9, A7-11, A7-12, A7-14, A7-15, D3-7, D3-8, D3-11 |
 | PR-F | ⬜ | Endpoint auth & abuse limits | A6-1, A6-3, A6-4, A6-5, A6-6/7/8, A2-1, A2-2, A4-1, A4-2, B4-10 |
 | PR-G | ⬜ | Token-at-rest encryption & POS OAuth (finishes A3-1) | B3-7, A5-3, A4-4 |
 | PR-H | ⬜ | Billing integrity & plan-casing | A5-1, A5-2, A5-5, A5-4/D3-13, D3-14, C23-1, C23-5, C12-6, C15-6 |
@@ -42,6 +42,9 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 - **PR-M** — publish real legal pages. LAUNCH-GATING (Stripe live mode requires them).
 - **PR-N** — config fail-loud, shared constants, admin-debug console leak (C14-1), CI gating + coverage threshold.
 - **PR-O** — dead code, stale `ringai-v2.onrender.com` hosts, docstrings, branding strings.
+
+## Conscious decisions (accepted for launch)
+- **A7-15** — on-disconnect last-chance extraction may dispatch a non-explicitly-confirmed order. Accepted: favor capturing genuinely-confirmed orders over consent-strictness; the prompt half was already correct. Revisit post-launch.
 
 ## Parked (NOT in the 12 — fire on external triggers)
 - **TOAST-REBUILD-1 / B1-6/7/8** — needs Toast partner-program approval.

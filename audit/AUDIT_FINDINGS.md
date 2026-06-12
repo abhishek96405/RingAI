@@ -32,6 +32,8 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 
 # §A — `server.py` (A1–A6)
 
+> **Resolved since this audit:** A8-1, A8-2 (PR-D); A7-3, A7-8, A7-9, A7-11, A7-12, A7-14 (PR-E1) are now fixed and merged.
+
 | ID | Sev | Area | Issue | Status |
 |---|---|---|---|---|
 | A1-1 | 🔴 | CORS | Wildcard `["*"]` + credentials fallback; secure helper unused | ✔️ |
@@ -276,20 +278,20 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | ID | Sev | File:line | Bug | Fix |
 |---|---|---|---|---|
 | D3-1 | ✔️ | `call_pipeline.py:812` | **RESOLVED / re-verified** — `_transfer_call` no longer references undefined `settings`; escalation transfer is robust (was: undefined `settings` → every human-escalation transfer silently failed, caller hung up not transferred) | ✔️ resolved — `os.environ.get("TELNYX_API_KEY","")` in place; transfer path verified |
-| D3-2 | 🔴 | `server.py:1359` | `public_menu_page` `HTMLResponse` UnboundLocalError on not-found → 500 not 404 (separate from the XSS `html`→`page_html` rename) | Remove the redundant local `from fastapi.responses import HTMLResponse` |
-| D3-3 | 🔴 | `server.py:4695` | `plan-features` uses undefined `payload.restaurant_id` → always 500 (explains C7-1) | Use the `restaurant_id` path param |
-| D3-4 | 🔴 | `server.py:3478/3552/3649` | `httpx` not module-imported → Telnyx error paths NameError → 500 not 502 | Add top-level `import httpx` |
-| D3-5 | 🔴 | `server.py:3037` | `simulate_call` `timedelta` UnboundLocalError when reservations disabled | Remove the local `from datetime import ...` shadow |
-| D3-6 | 🔴 | `server.py:1882` | `create_reservation` returns raw `ObjectId` → 500 on every successful create (qualifies C18 manual create) | `doc.pop("_id", None)` before returning |
-| D3-7 | 🟡 | `call_pipeline.py:925` | `classify_booking_intent` matches "tomorrow" before "day after tomorrow" → wrong date | Check "day after tomorrow" first |
-| D3-8 | 🟡 | `call_pipeline.py:569` | `dispatch_order_if_ready` doesn't reset `_order_dispatched` after extraction failure → blocks retry within the call (ties A7-1) | Reset `_order_dispatched = False` before the for/else `return False` |
-| D3-9 | 🟡 | `server.py:5258` | `run_test_scenario` undefined `call_sid` in clinic/salon branch + unguarded `config.get` | Generate a placeholder `call_sid`; guard `config.get` with `if config else default` |
+| D3-2 | ✔️ | `server.py:1359` | `public_menu_page` `HTMLResponse` UnboundLocalError on not-found → 500 not 404 (separate from the XSS `html`→`page_html` rename) | Remove the redundant local `from fastapi.responses import HTMLResponse` |
+| D3-3 | ✔️ | `server.py:4695` | `plan-features` uses undefined `payload.restaurant_id` → always 500 (explains C7-1) | Use the `restaurant_id` path param |
+| D3-4 | ✔️ | `server.py:3478/3552/3649` | `httpx` not module-imported → Telnyx error paths NameError → 500 not 502 | Add top-level `import httpx` |
+| D3-5 | ✔️ | `server.py:3037` | `simulate_call` `timedelta` UnboundLocalError when reservations disabled | Remove the local `from datetime import ...` shadow |
+| D3-6 | ✔️ | `server.py:1882` | `create_reservation` returns raw `ObjectId` → 500 on every successful create (qualifies C18 manual create) | `doc.pop("_id", None)` before returning |
+| D3-7 | ✔️ | `call_pipeline.py:925` | `classify_booking_intent` matches "tomorrow" before "day after tomorrow" → wrong date | Check "day after tomorrow" first |
+| D3-8 | ✔️ | `call_pipeline.py:569` | `dispatch_order_if_ready` doesn't reset `_order_dispatched` after extraction failure → blocks retry within the call (ties A7-1) | Reset `_order_dispatched = False` before the for/else `return False` |
+| D3-9 | ✔️ | `server.py:5258` | `run_test_scenario` undefined `call_sid` in clinic/salon branch + unguarded `config.get` | Generate a placeholder `call_sid`; guard `config.get` with `if config else default` |
 | D3-11 | 🟡 | `gemini_service.py` | Upsell is prompt-toggle only; no `decide_upsell`, no cuisine-match guard (could suggest Tiramisu for biryani) | Add structured `decide_upsell(cart)` keyed by cuisine |
-| D3-12 | 🟢 | `server.py:4703` | Stripe webhook 500 on missing `data.object` | `event.get("data",{}).get("object")` + short-circuit |
+| D3-12 | ✔️ | `server.py:4703` | Stripe webhook 500 on missing `data.object` | `event.get("data",{}).get("object")` + short-circuit |
 | D3-13 | 🟡 | `server.py:4689` | Stripe webhook no event-id dedup → duplicate payment SMS on replay | Dedup via `webhook_events` on `event_id` |
 | D3-14 | 🟢 | `server.py:4689` | Stripe webhook accepts future-timestamp signed payloads | Two-sided ±300s window check |
-| D3-15 | 🟡 | `server.py:5171` | Square webhook 500 on signed non-dict JSON body | `if not isinstance(event, dict): 400` |
-| D3-10 | 🟢 | `server.py:117` | `setup_signal_handlers` fails on non-main-thread lifespans | Skip/try-except when not main thread |
+| D3-15 | ✔️ | `server.py:5171` | Square webhook 500 on signed non-dict JSON body | `if not isinstance(event, dict): 400` |
+| D3-10 | ✔️ | `server.py:117` | `setup_signal_handlers` fails on non-main-thread lifespans | Skip/try-except when not main thread |
 
 ### Resolved-via-tests (✔️ merged into `ringai-deploy`)
 repair-membership takeover (PR #4) · OAuth state Square/Stripe + Square webhook signing (PR #5) · ensure_restaurant_access 403→404 · admin-reminders gate · public-menu XSS escape (auth batch — verify merge). Tests: `security/test_oauth_state_token_security.py`, `webhooks/test_square_*`, `integration/test_api_root_and_bootstrap.py` (`…does_not_steal_other_tenants`), `security/test_admin_role_enforcement.py`, `security/test_input_validation_html_injection.py`.
