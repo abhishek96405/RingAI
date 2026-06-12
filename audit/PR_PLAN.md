@@ -66,6 +66,11 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
     can reject a legitimate Telnyx reconnect against a not-yet-cleaned-up session
     (cleanup runs after pipeline teardown). Revisit on staging with a dedicated
     Telnyx test number before onboarding real paying customers.
+- **G1 (A4-4) — DONE:** the two silent `except: pass` blocks around POS-credential
+  decryption (in `pos_sync_menu` and the media-stream handler) now log via
+  `logger.error(..., exc_info=True)` — visible in Render logs and forwarded to Sentry when
+  configured. Behavior unchanged (still continues past a decrypt failure rather than
+  crashing). Observability only; no new test.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

@@ -2915,8 +2915,11 @@ async def pos_sync_menu(request: Request, restaurant_id: str, user: Dict[str, An
     try:
         from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
         restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(
+            f"[{restaurant_id}] POS credential decryption failed during sync: {e}",
+            exc_info=True,
+        )
     
     pos_type = restaurant.get("pos_type", "")
     
@@ -4572,8 +4575,11 @@ async def telnyx_media_stream(websocket: WebSocket):
         try:
             from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
             restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(
+                f"[{call_sid}] POS credential decryption failed: {e}",
+                exc_info=True,
+            )
 
         services = active_call.get("services", [])
         session = CallSession(
