@@ -45,6 +45,13 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
     whole call path. (2) The in-process limiter is only partly effective on a single
     instance; proper blanket limits need a Redis-backed store once multi-instance.
     Revisit before onboarding real paying customers.
+- **F3 (WS connection cap / A4-1) — DONE:**
+  - /ws/notifications now enforces MAX_WS_PER_RESTAURANT (5) live sockets per restaurant
+    via check/register/unregister_ws_connection (previously imported but never called).
+    Over-cap connections are rejected at the handshake with close 1013, before accept.
+  - The media-stream (call-path) WS is intentionally NOT capped — capping it would drop a
+    legitimate Nth concurrent call. It uses the separate register_active_websocket
+    tracker, left unchanged.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).

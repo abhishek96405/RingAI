@@ -5761,7 +5761,17 @@ async def websocket_notifications(
         return
     # --- end auth ---
 
+    # --- A4-1: per-restaurant WebSocket connection cap ---
+    # Reject at the handshake (before accept) if this restaurant already has
+    # MAX_WS_PER_RESTAURANT live notification sockets. Soft DoS guard. The
+    # media-stream (call-path) WS is intentionally NOT capped here.
+    if not check_ws_connection_limit(restaurant_id):
+        await websocket.close(code=1013)  # 1013 = Try Again Later
+        return
+    # --- end cap ---
+
     await manager.connect(websocket, restaurant_id)
+    register_ws_connection(restaurant_id)
     try:
         await websocket.send_json({
             "type": "connected",
@@ -5784,6 +5794,7 @@ async def websocket_notifications(
         logger.warning(f"WebSocket error: {e}")
     finally:
         await manager.disconnect(websocket)
+        unregister_ws_connection(restaurant_id)
 
 
 @app.on_event("startup")
