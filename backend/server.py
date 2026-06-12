@@ -1394,7 +1394,8 @@ async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_curr
 # PUBLIC MENU PAGE (no auth required)
 # ---------------------------------------------------------------------------
 @app.get("/menu/{restaurant_id}", include_in_schema=False)
-async def public_menu_page(restaurant_id: str):
+@limiter.limit("30/minute")
+async def public_menu_page(request: Request, restaurant_id: str):
     import asyncio as _asyncio
     results = await _asyncio.gather(
         db.restaurants.find_one({"id": restaurant_id}, {"_id": 0}),
@@ -3888,6 +3889,7 @@ async def telnyx_get_order(
 
 
 @api_router.post("/restaurants/{restaurant_id}/send-menu-sms")
+@limiter.limit("10/minute")
 async def send_menu_sms_endpoint(
     restaurant_id: str,
     request: Request,

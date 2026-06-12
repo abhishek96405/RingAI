@@ -33,6 +33,18 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 - **PR-D** — pure crash/500s; each has an xfail-strict test. Fix + flip the xfail = red→green proof. Includes the active salon `pos_type:null` crash (A8-1/A8-2).
 - **PR-E** — order correctness + money; A7-6 (modifier upcharges) is the meatiest (tool-schema + handler change). Pairs with the modifier work discussed for Clover (name/note encoding, price baked into line total).
 - **PR-F** — endpoint authz + rate limits + WS connection caps + body-size limit (verify RequestSizeLimitMiddleware already covers B4-10).
+- **F2 (rate limits + body-size) — DONE:**
+  - A2-2: public menu `/menu/{restaurant_id}` rate-limited (30/min per IP).
+  - A2-1 (partial): `send-menu-sms` rate-limited (10/min per user) — SMS cost guard.
+  - B4-10: already implemented (5MB RequestSizeLimitMiddleware) and already tested
+    (security/test_input_validation_oversize_payloads.py) — no change needed.
+  - DEFERRED (accepted-for-launch): blanket rate-limiting of all authenticated writes /
+    global SlowAPIMiddleware. Reason: (1) a global IP-keyed limit would throttle Telnyx
+    call/SMS webhooks and Stripe/Square payment webhooks (all from a few vendor IPs) →
+    dropped calls/payments; going blanket safely needs per-route exemptions across the
+    whole call path. (2) The in-process limiter is only partly effective on a single
+    instance; proper blanket limits need a Redis-backed store once multi-instance.
+    Revisit before onboarding real paying customers.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).
