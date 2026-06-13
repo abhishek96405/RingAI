@@ -18,9 +18,11 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import stripe
 
 from tests._constants import TENANT_A_ID
 
@@ -362,6 +364,10 @@ async def test_onboarding_menu_confirm_replaces_existing_items(
 async def test_onboarding_activate_persists_active_state(
     client, two_tenant_with_memberships, patched_server_db, telnyx_sdk_mock
 ):
+    # Confirmed subscription (webhook sets trialing) -> fast path, no Stripe call.
+    await patched_server_db.restaurants.update_one(
+        {"id": TENANT_A_ID}, {"$set": {"billing_status": "trialing"}}
+    )
     response = client.post(
         "/api/onboarding/activate",
         headers={"Authorization": "Bearer tenant_a"},
@@ -374,6 +380,74 @@ async def test_onboarding_activate_persists_active_state(
     assert saved["status"] == "active"
     assert saved["is_active"] is True
     assert saved["onboarding_step"] == 7
+
+
+async def test_onboarding_activate_rejects_when_never_paid(
+    client, two_tenant_with_memberships, patched_server_db, telnyx_sdk_mock
+):
+    """C23-1: a caller who never started checkout (no customer, pending) cannot
+    self-activate — no Stripe handle, straight 402, is_active stays False."""
+    await patched_server_db.restaurants.update_one(
+        {"id": TENANT_A_ID},
+        {"$set": {"billing_status": "pending", "is_active": False},
+         "$unset": {"stripe_customer_id": ""}},
+    )
+    response = client.post(
+        "/api/onboarding/activate",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"restaurant_id": TENANT_A_ID},
+    )
+    assert response.status_code == 402
+    saved = await patched_server_db.restaurants.find_one({"id": TENANT_A_ID}, {"_id": 0})
+    assert saved.get("is_active") is not True
+
+
+async def test_onboarding_activate_rejects_abandoned_checkout(
+    client, two_tenant_with_memberships, patched_server_db, telnyx_sdk_mock, monkeypatch
+):
+    """Abandoned checkout: a Stripe customer exists but has no subscription -> 402."""
+    import stripe
+    from types import SimpleNamespace
+    await patched_server_db.restaurants.update_one(
+        {"id": TENANT_A_ID},
+        {"$set": {"billing_status": "pending", "stripe_customer_id": "cus_test_x", "is_active": False}},
+    )
+    monkeypatch.setattr(stripe.Subscription, "list",
+                        lambda **kw: SimpleNamespace(data=[]), raising=False)
+    response = client.post(
+        "/api/onboarding/activate",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"restaurant_id": TENANT_A_ID},
+    )
+    assert response.status_code == 402
+
+
+async def test_onboarding_activate_confirms_via_stripe_when_webhook_lags(
+    client, two_tenant_with_memberships, patched_server_db, telnyx_sdk_mock, monkeypatch
+):
+    """Redirect beats the webhook: billing_status still 'pending', but Stripe has a
+    trialing subscription -> activate confirms against Stripe, proceeds, backfills."""
+    import stripe
+    from types import SimpleNamespace
+    await patched_server_db.restaurants.update_one(
+        {"id": TENANT_A_ID},
+        {"$set": {"billing_status": "pending", "stripe_customer_id": "cus_test_x", "is_active": False}},
+    )
+    monkeypatch.setattr(
+        stripe.Subscription, "list",
+        lambda **kw: SimpleNamespace(data=[{"id": "sub_test_x", "status": "trialing"}]),
+        raising=False,
+    )
+    response = client.post(
+        "/api/onboarding/activate",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"restaurant_id": TENANT_A_ID},
+    )
+    assert response.status_code == 200
+    saved = await patched_server_db.restaurants.find_one({"id": TENANT_A_ID}, {"_id": 0})
+    assert saved["is_active"] is True
+    assert saved["billing_status"] == "trialing"
+    assert saved["stripe_subscription_id"] == "sub_test_x"
 
 
 def test_onboarding_activate_unknown_restaurant_404(client, mock_clerk):

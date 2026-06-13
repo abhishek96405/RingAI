@@ -22,7 +22,7 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 | PR-E | ✔️ | Order & money accuracy (E1 accuracy · E2 modifier upcharges · E2.1 modifier display · E3 menu-driven upsell — all merged) | A7-3, A7-6, A7-8, A7-9, A7-11, A7-12, A7-14, A7-15, D3-7, D3-8, D3-11 |
 | PR-F | ✔️ | Endpoint auth & abuse limits (F1 authz · F2 rate-limit/body-size · F3 WS cap · F4 media-stream timeout — launch scope done; blanket rate-limit + signed stream-URL consciously deferred, see notes) | A6-1, A6-3, A6-4, A6-5, A6-6/7/8, A2-1, A2-2, A4-1, A4-2, B4-10 |
 | PR-G | ✔️ | Token-at-rest encryption & POS OAuth (finishes A3-1) | B3-7, A5-3, A4-4 |
-| PR-H | ⬜ | Billing integrity & plan-casing | A5-1, A5-2, A5-5, A5-4/D3-13, D3-14, C23-1, C23-5, C12-6, C15-6 |
+| PR-H | 🔧 | Billing integrity & plan-casing (H1 plan-casing ✔️ · H2 billing-bypass ✔️ · H3–H5 pending) | A5-1, A5-2, A5-5, A5-4/D3-13, D3-14, C23-1, C23-5, C12-6, C15-6 |
 | PR-I | ⬜ | Booking-vertical reliability | A3-2, B2-1, A8-7, B2-7, C17-1, C17-4, C18-2, C15-8 |
 | PR-J | ⬜ | Performance & startup | A1-3, A2-8/A3-3, A5-6, A1-4, A1-7, A1-5 |
 | PR-K | ⬜ | Operator failure-visibility & Pro features | C9-1, C9-3, C16-3, A7-17, C24-1/B5-38, C12-1/A8-6, C21-4, C21-1/B5-26, C22-1 |
@@ -115,6 +115,10 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
   orders/search calls (lines ~872, ~903) still hardcode production — non-fatal (try/except → None),
   fix next with a live sandbox call to verify.
 - **PR-G** — finishes A3-1: encrypt Google Calendar tokens at rest (reuse encryption_utils, as POS creds already do); complete the Square OAuth token exchange.
+- **H1 (C12-6/C15-6 plan-casing) — DONE:** canonical plan casing is UPPERCASE; reads normalized everywhere so a lowercase/mixed-case stored plan can't silently demote a paying Pro customer. get_plan_features() uppercases its input (covers all backend callers); gemini_service + call_pipeline direct reads normalized; frontend isProPlan() helper replaces all `plan === "PRO"` gates; BillingPage sends UPPERCASE. Added backend + frontend case-insensitivity tests. NOTE: the write side was already uppercase-normalized since the audit (server.py:4871 `.upper()`), so the lockout was latent, not active — H1 makes it structurally immune.
+- **H2 (C23-1 billing-bypass) — DONE:** POST /api/onboarding/activate no longer flips is_active / auto-provisions a Telnyx number on the caller's word alone. It requires a confirmed subscription — billing_status in {trialing, active} (webhook-set) OR, when the redirect beats the webhook, a live trialing/active subscription verified against Stripe directly (customer id stored at checkout-session creation). No subscription → 402. Backfills billing_status/stripe_subscription_id when resolved via Stripe.
+- **C23-5 (revenue chart units) — VERIFIED no-op:** backend pre-divides the chart series by 100 (server.py:2743/2757), so chart + KPI tiles both render dollars. No change; closed.
+- **H2b (DEFERRED, defense-in-depth):** the inbound call path (_prefetch_call_session_data) still gates on is_active alone, not billing_status. Adding a billing_status gate there (serve only trialing/active/past_due) is tracked but deferred pending voice-fixture review — it changes the hottest path and a bug = no calls connect.
 - **PR-H** — billing idempotency/dedup + the Pro-tier plan-casing lockout (normalize plan value on write).
 - **PR-I** — salon/clinic reliability + appointment manual-create parity (do before selling salons).
 - **PR-J** — hot-path Mongo write, double lookups, startup migration removal.
@@ -132,7 +136,7 @@ Net-new connector + integrations UX, shipped as 4 reviewed slices, all merged to
 - **C4 — Square OAuth branded landing** (`f1e76a2d`): square_callback now 303-redirects to a display-only SquareCallbackPage (success/error from query params) instead of raw JSON. Frontend base resolved via FRONTEND_URL → CLOVER_REDIRECT_URI origin. State validation still gates the exchange (bad/replayed state → reason=invalid_state redirect, exchange never runs).
 
 Open follow-ups for this arc:
-- **Clover order-push token refresh** — wire `get_valid_clover_token` into the Clover order-push path (gemini_service `_send_to_clover` / `send_order_to_kitchen`); needs `db` plumbed into the call pipeline. Deferred from C1.
+- **Clover order-push token refresh** — ✔️ SHIPPED (`0b7bebd2`): `get_valid_clover_token` is wired into `_send_to_clover` (gemini_service.py:733) with `db` plumbed through the order-push path.
 - **Square live validation** — Clover was validated live; Square OAuth still needs a real sandbox round-trip (Square sandbox app not set up yet).
 - **Clover private-app approval** — required before non-dev merchants can connect (functional demo video + legal/privacy docs). External action.
 - C4 makes **FRONTEND_URL** load-bearing for the Square landing — covered by the existing LAUNCH_PLAN gate ("point FRONTEND_URL at the canonical www origin"); falls back to CLOVER_REDIRECT_URI origin until set.

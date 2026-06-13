@@ -3086,12 +3086,37 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
     if not existing:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
+    # ── Billing gate (C23-1): never activate without a confirmed subscription ──
+    # billing_status in trialing/active is set only by the trusted Stripe webhook.
+    # The browser redirect to ?billing=success can beat that webhook, so when the
+    # status isn't confirmed yet we verify against Stripe directly (source of
+    # truth) using the customer id stored at checkout-session creation. A caller
+    # who never completed checkout has no subscription -> 402, no activation,
+    # no number provisioned.
+    _resolved_sub = None
+    if (existing.get("billing_status") or "").lower() not in ("trialing", "active"):
+        _customer_id = existing.get("stripe_customer_id")
+        if _customer_id:
+            try:
+                _subs = stripe.Subscription.list(customer=_customer_id, status="all", limit=10)
+                _resolved_sub = next(
+                    (s for s in _subs.data if s.get("status") in ("trialing", "active")),
+                    None,
+                )
+            except Exception as e:
+                logger.warning(f"[activate] Stripe subscription lookup failed for {data.restaurant_id}: {e}")
+        if _resolved_sub is None:
+            raise HTTPException(status_code=402, detail="No active subscription. Complete checkout to activate.")
+
     update_fields = {
         "status": "active",
         "is_active": True,
         "onboarding_step": 7,
         "onboarding_completed_at": datetime.now(timezone.utc).isoformat(),
     }
+    if _resolved_sub is not None:
+        update_fields["billing_status"] = _resolved_sub.get("status")
+        update_fields["stripe_subscription_id"] = _resolved_sub.get("id")
 
     if not existing.get("phone_number"):
         try:
