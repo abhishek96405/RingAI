@@ -100,4 +100,40 @@ describe("AppointmentsPage", () => {
     expect(screen.getByTestId("appointment-customer-name")).toBeInTheDocument();
     expect(screen.getByTestId("appointment-customer-phone")).toBeInTheDocument();
   });
+
+  it("confirms a conflicting appointment from the bookings list", async () => {
+    let confirmCalled = false;
+    server.use(
+      http.get("*/api/restaurants/:id/appointments", () =>
+        HttpResponse.json({
+          appointments: [
+            {
+              id: "appt_conf",
+              customer_name: "Conflicted Carol",
+              customer_phone: "+15555550199",
+              service_name: "Haircut",
+              scheduled_date: "2026-06-01",
+              scheduled_time: "10:00",
+              duration_minutes: 30,
+              status: "conflict",
+            },
+          ],
+          pages: 1,
+        })
+      ),
+      http.patch("*/api/appointments/:id/confirm", () => {
+        confirmCalled = true;
+        return HttpResponse.json({ message: "Appointment confirmed", id: "appt_conf" });
+      })
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<Shell />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Conflicted Carol/i)).toBeInTheDocument()
+    );
+    await user.click(screen.getByRole("button", { name: /confirm/i }));
+    await waitFor(() => expect(confirmCalled).toBe(true));
+  });
 });

@@ -1970,6 +1970,40 @@ async def cancel_appointment(
     return {"message": "Appointment cancelled", "id": appointment_id}
 
 
+@api_router.patch("/appointments/{appointment_id}/confirm")
+async def confirm_appointment(
+    appointment_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Resolve a conflicting (double-booked) appointment by confirming it.
+
+    Deliberately narrow: only an appointment currently in 'conflict' status can be
+    promoted to 'confirmed' here — the operator override after reviewing a double-book
+    the voice flow flagged. This is NOT a general status setter, so it can never
+    resurrect a cancelled/completed/no_show appointment.
+    """
+    appointment = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    await ensure_restaurant_access(appointment["restaurant_id"], user)
+
+    if appointment.get("status") != "conflict":
+        raise HTTPException(
+            status_code=400,
+            detail="Only a conflicting appointment can be confirmed",
+        )
+
+    await db.appointments.update_one(
+        {"id": appointment_id},
+        {"$set": {
+            "status": "confirmed",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+
+    return {"message": "Appointment confirmed", "id": appointment_id}
+
+
 @api_router.post("/appointments/{appointment_id}/send-reminder")
 async def send_appointment_reminder(
     appointment_id: str,

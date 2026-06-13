@@ -262,6 +262,9 @@ export const getAppointment = (appointmentId: string) =>
 export const cancelAppointment = (appointmentId: string) =>
   api.patch(`/appointments/${appointmentId}/cancel`);
 
+export const confirmAppointment = (appointmentId: string) =>
+  api.patch(`/appointments/${appointmentId}/confirm`);
+
 export const bookAppointment = (restaurantId: string | null | undefined, data: unknown) =>
   api.post(`/restaurants/${requireRestaurantId(restaurantId)}/calendar/book`, data);
 
