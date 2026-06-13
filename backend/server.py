@@ -15,6 +15,7 @@ import base64
 import json
 import httpx  # D3-4: module-level so Telnyx `except httpx.HTTPStatusError` paths resolve
 from pathlib import Path
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any, Set
 from bson import ObjectId
@@ -5161,12 +5162,41 @@ async def square_connect(restaurant_id: str = Query(...), user: Dict[str, Any] =
     return {"connect_url": connect_url}
 
 
+def _frontend_base() -> str:
+    """Resolve the frontend origin for Square's branded OAuth landing page.
+
+    Order of preference (zero-config in this deployment):
+      1. FRONTEND_URL — the same env the Google Calendar return-flow reads.
+      2. Derive the origin from CLOVER_REDIRECT_URI, which is already configured
+         here, so no new env is required. NOT hardcoded to any domain.
+    Trailing slash trimmed so callers can append a path directly.
+    """
+    frontend_url = os.environ.get("FRONTEND_URL", "").strip()
+    if frontend_url:
+        return frontend_url.rstrip("/")
+    clover_redirect = os.environ.get("CLOVER_REDIRECT_URI", "").strip()
+    if clover_redirect:
+        parsed = urlparse(clover_redirect)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return ""
+
+
 @api_router.get("/integrations/square/callback")
 async def square_callback(code: Optional[str] = None, state: Optional[str] = None):
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing Square authorization code")
+    from fastapi.responses import RedirectResponse
 
-    record = await consume_oauth_state(state=state, provider="square")
+    landing = f"{_frontend_base()}/integrations/square/callback"
+
+    if not code:
+        return RedirectResponse(url=f"{landing}?status=error&reason=missing_code", status_code=303)
+
+    # The state check still runs and still prevents the exchange on a bad state —
+    # we only change the failure response from a raised 400 to a friendly redirect.
+    try:
+        record = await consume_oauth_state(state=state, provider="square")
+    except Exception:
+        return RedirectResponse(url=f"{landing}?status=error&reason=invalid_state", status_code=303)
     restaurant_id = record["restaurant_id"]
 
     # A5-3: exchange the authorization code for an access token. Without this the
@@ -5191,7 +5221,7 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
             }},
             upsert=True,
         )
-        raise HTTPException(status_code=502, detail="Square token exchange failed")
+        return RedirectResponse(url=f"{landing}?status=error&reason=exchange_failed", status_code=303)
 
     access_token = token_data.get("access_token", "")
     merchant_id = token_data.get("merchant_id", "")
@@ -5216,7 +5246,7 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
                 "square_access_token": encrypt_value(access_token),
             }},
         )
-    return {"connected": True, "restaurant_id": restaurant_id}
+    return RedirectResponse(url=f"{landing}?status=connected&merchant_id={merchant_id}", status_code=303)
 
 
 # ─────────────────────────────────────────────────────────────

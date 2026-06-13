@@ -83,10 +83,20 @@ async def test_square_callback_rejects_replayed_state(
 
     monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
 
-    r1 = client.get(f"/api/integrations/square/callback?code=c1&state={state}")
-    r2 = client.get(f"/api/integrations/square/callback?code=c2&state={state}")
-    assert r1.status_code == 200
-    assert r2.status_code == 400
+    r1 = client.get(
+        f"/api/integrations/square/callback?code=c1&state={state}",
+        follow_redirects=False,
+    )
+    r2 = client.get(
+        f"/api/integrations/square/callback?code=c2&state={state}",
+        follow_redirects=False,
+    )
+    # First redemption succeeds → branded success landing; the replay is rejected
+    # (state already consumed) → error landing, with the exchange never re-run.
+    assert r1.status_code == 303
+    assert "status=connected" in r1.headers["location"]
+    assert r2.status_code == 303
+    assert "reason=invalid_state" in r2.headers["location"]
 
 
 # ---------------------------------------------------------------------------

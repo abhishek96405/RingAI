@@ -23,6 +23,7 @@ import AdminPage from "./pages/dashboard/AdminPage";
 import NotFound from "./pages/NotFound";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import CloverCallbackPage from "./pages/CloverCallbackPage";
+import SquareCallbackPage from "./pages/SquareCallbackPage";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
 
@@ -240,6 +241,11 @@ const AppRoutes = () => (
         ProtectedAppRoute/PublicAuthRoute — the page handles its own auth states;
         a wrapper would redirect and destroy the OAuth query params. */}
     <Route path="/integrations/clover/callback" element={<CloverCallbackPage />} />
+    {/* Square OAuth landing. The backend square_callback does the exchange and
+        redirects the browser here; this page is display-only. Top-level and
+        UNWRAPPED for the same reason as Clover's — a route guard would redirect
+        and destroy the status/merchant_id/reason query params. */}
+    <Route path="/integrations/square/callback" element={<SquareCallbackPage />} />
     <Route path="*" element={<NotFound />} />
   </Routes>
 );

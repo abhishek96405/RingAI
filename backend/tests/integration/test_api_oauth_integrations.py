@@ -900,11 +900,16 @@ async def test_square_callback_persists_integration(
 
     monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
 
-    response = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["connected"] is True
-    assert body["restaurant_id"] == TENANT_A_ID
+    # The callback now redirects (303) to the branded frontend landing page
+    # instead of returning JSON. The DB-state assertions below are unchanged.
+    response = client.get(
+        f"/api/integrations/square/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert "/integrations/square/callback" in location
+    assert "status=connected" in location
 
     # Access token exchanged + stored ENCRYPTED; raw auth code is no longer kept.
     from encryption_utils import decrypt_value
@@ -922,22 +927,69 @@ async def test_square_callback_persists_integration(
     assert integ["status"] == "connected"
 
 
-def test_square_callback_missing_code_400(client):
-    # Missing code is rejected before state validation.
-    response = client.get(f"/api/integrations/square/callback?state=anything")
-    assert response.status_code == 400
+async def test_square_callback_exchange_failure_redirects_error(
+    client, two_tenant_with_memberships, patched_server_db, monkeypatch
+):
+    """When the token exchange raises, the callback records an error integration
+    and redirects (303) to the landing page with reason=exchange_failed."""
+    monkeypatch.setenv("SQUARE_APPLICATION_ID", "app_test")
+    monkeypatch.setenv("SQUARE_REDIRECT_URI", "https://example.test/callback")
 
-
-def test_square_callback_missing_state_400(client):
-    response = client.get("/api/integrations/square/callback?code=AUTH")
-    assert response.status_code == 400
-
-
-def test_square_callback_unknown_state_400(client):
-    response = client.get(
-        "/api/integrations/square/callback?code=AUTH&state=does-not-exist"
+    connect_resp = client.get(
+        f"/api/integrations/square/connect?restaurant_id={TENANT_A_ID}",
+        headers={"Authorization": "Bearer tenant_a"},
     )
-    assert response.status_code == 400
+    assert connect_resp.status_code == 200
+    state = _extract_state(connect_resp.json()["connect_url"])
+
+    import pos_sync
+
+    async def _boom(code, redirect_uri):
+        raise RuntimeError("square exchange exploded")
+
+    monkeypatch.setattr(pos_sync, "exchange_square_code", _boom)
+
+    response = client.get(
+        f"/api/integrations/square/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert "status=error" in location
+    assert "reason=exchange_failed" in location
+
+    integ = await patched_server_db.integrations.find_one(
+        {"provider": "square", "restaurant_id": TENANT_A_ID}, {"_id": 0}
+    )
+    assert integ["status"] == "error"
+
+
+def test_square_callback_missing_code_redirects_error(client):
+    # Missing code is rejected before state validation — now a friendly redirect.
+    response = client.get(
+        "/api/integrations/square/callback?state=anything",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "reason=missing_code" in response.headers["location"]
+
+
+def test_square_callback_missing_state_redirects_error(client):
+    response = client.get(
+        "/api/integrations/square/callback?code=AUTH",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "reason=invalid_state" in response.headers["location"]
+
+
+def test_square_callback_unknown_state_redirects_error(client):
+    response = client.get(
+        "/api/integrations/square/callback?code=AUTH&state=does-not-exist",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "reason=invalid_state" in response.headers["location"]
 
 
 async def test_square_callback_state_is_single_use(
@@ -960,12 +1012,21 @@ async def test_square_callback_state_is_single_use(
 
     monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
 
-    first = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
-    assert first.status_code == 200
+    first = client.get(
+        f"/api/integrations/square/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert first.status_code == 303
+    assert "status=connected" in first.headers["location"]
 
-    # Replaying the same state token must be rejected.
-    second = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
-    assert second.status_code == 400
+    # Replaying the same state token must be rejected — the exchange never runs
+    # and the user lands on the error page rather than reconnecting.
+    second = client.get(
+        f"/api/integrations/square/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert second.status_code == 303
+    assert "reason=invalid_state" in second.headers["location"]
 
 
 async def test_square_callback_rejects_state_from_other_provider(
@@ -979,8 +1040,12 @@ async def test_square_callback_rejects_state_from_other_provider(
     )
     state = _extract_state(stripe_resp.json()["connect_url"])
 
-    response = client.get(f"/api/integrations/square/callback?code=AUTH&state={state}")
-    assert response.status_code == 400
+    response = client.get(
+        f"/api/integrations/square/callback?code=AUTH&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "reason=invalid_state" in response.headers["location"]
 
 
 # ---------------------------------------------------------------------------
