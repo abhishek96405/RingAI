@@ -90,7 +90,7 @@ const BillingPage = () => {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
       const res = await createBillingCheckout({ 
         restaurant_id: restaurantId,
-        plan: planName.toLowerCase(),
+        plan: planName.toUpperCase(),
       });
       const url = res?.data?.checkout_url;
       if (!url) {

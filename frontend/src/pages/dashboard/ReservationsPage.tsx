@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CalendarIcon, Users, Clock, X, Plus, Phone, Mail } from "lucide-react";
 import { api, getRestaurantId } from "@/lib/api";
 import { format } from "date-fns";
+import { isProPlan } from "@/lib/plan";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -49,7 +50,7 @@ const statusColors: Record<string, string> = {
 export const ReservationsPage = () => {
   const { activeRestaurant } = useAppSession();
 
-  if (activeRestaurant?.plan !== "PRO") {
+  if (!isProPlan(activeRestaurant?.plan)) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="p-8 text-center max-w-md rounded-xl border border-border bg-card">

@@ -1873,7 +1873,7 @@ async def create_call_pipeline(
                     # Detect order type from customer speech (restaurant only)
                     if session.business_type == "restaurant":
                         _tl = text.lower()
-                        _plan = session.restaurant.get("plan", "STARTER")
+                        _plan = (session.restaurant.get("plan") or "STARTER").upper()
                         _rest_has_delivery = session.restaurant.get("offers_delivery", True)
                         _rest_has_reservations = session.restaurant.get("offers_reservations", True)
                         if any(w in _tl for w in ["delivery", "deliver", "delivered"]):
@@ -2002,7 +2002,7 @@ async def create_call_pipeline(
                 if session and session.business_type == "restaurant":
                     async def _call_duration_guard():
                         try:
-                            _plan = session.restaurant.get("plan", "STARTER")
+                            _plan = (session.restaurant.get("plan") or "STARTER").upper()
                             try:
                                 from server import PLAN_CONFIG
                                 _pf = PLAN_CONFIG.get(_plan, PLAN_CONFIG["STARTER"])
