@@ -1251,6 +1251,14 @@ async def create_restaurant(data: RestaurantCreate, user: Dict[str, Any] = Depen
 
     business_type = restaurant_data.get("business_type", "restaurant")
 
+    # Active verticals are restaurant + salon only. clinic/home_services/legal are
+    # dormant for launch — reject creation here (the onboarding picker no longer
+    # offers them; this also guards direct API calls / stale client state). Existing
+    # collections and the shared appointment code path are left intact so these can
+    # be re-enabled later without a migration.
+    if business_type not in ("restaurant", "salon"):
+        raise HTTPException(status_code=400, detail=f"Business type '{business_type}' is not available.")
+
     # Resume an in-progress onboarding instead of creating a parallel record.
     # If this owner already has a not-yet-activated (draft) restaurant of this
     # business_type, return it — so leaving onboarding and later continuing OR

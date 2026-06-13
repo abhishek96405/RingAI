@@ -23,11 +23,11 @@ describe("Signup page", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the clinic business type context when query param is set", () => {
+  it("does not show context for a dormant business type query param", () => {
     renderWithProviders(<Signup />, {
       initialEntries: ["/signup?business_type=clinic"],
     });
-    expect(screen.getByText(/Clinic \/ Healthcare/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Clinic \/ Healthcare/i)).not.toBeInTheDocument();
   });
 
   it("persists the selected business_type to localStorage when the query param is set", () => {

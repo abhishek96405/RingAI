@@ -39,16 +39,16 @@ describe("Onboarding page (Duuutah AI)", () => {
     );
   });
 
-  it("offers all five business-type options", async () => {
+  it("offers restaurant and salon business types (others dormant)", async () => {
     renderWithProviders(<ShellOnboarding />, { initialEntries: ["/onboarding"] });
 
     await waitFor(() => {
       expect(screen.getByText(/Restaurant \/ Food Service/i)).toBeInTheDocument();
-      expect(screen.getByText(/Clinic \/ Healthcare/i)).toBeInTheDocument();
       expect(screen.getByText(/Salon \/ Beauty/i)).toBeInTheDocument();
-      expect(screen.getByText(/Home Services/i)).toBeInTheDocument();
-      expect(screen.getByText(/Legal \/ Professional/i)).toBeInTheDocument();
     });
+    expect(screen.queryByText(/Clinic \/ Healthcare/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Home Services/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Legal \/ Professional/i)).not.toBeInTheDocument();
   });
 
   it("advances to the Business Info step after a type is chosen", async () => {
