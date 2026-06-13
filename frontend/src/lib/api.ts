@@ -193,6 +193,39 @@ export const getSquareConnectUrl = (restaurantId?: string | null) =>
     params: { restaurant_id: requireRestaurantId(restaurantId) },
   });
 
+// ── Clover OAuth (v2) ──
+export const getCloverConnectUrl = (restaurantId?: string | null) =>
+  api.get(`/integrations/clover/connect`, {
+    params: { restaurant_id: requireRestaurantId(restaurantId) },
+  });
+
+export const exchangeCloverCode = (payload: { restaurant_id: string; code: string; merchant_id: string }) =>
+  api.post(`/integrations/clover/exchange`, payload);
+
+// Clover v2 OAuth has no state param, so the callback page can't carry the
+// originating restaurant through the redirect. Stash it in sessionStorage on
+// connect and consume it on return. Guarded for Safari private mode, where
+// sessionStorage access can throw.
+const PENDING_CLOVER_KEY = "ringai.pendingCloverRestaurantId";
+
+export const setPendingCloverRestaurantId = (id: string) => {
+  try {
+    sessionStorage.setItem(PENDING_CLOVER_KEY, id);
+  } catch {
+    /* sessionStorage unavailable (e.g. Safari private mode) — fall back to active id */
+  }
+};
+
+export const consumePendingCloverRestaurantId = (): string | null => {
+  try {
+    const value = sessionStorage.getItem(PENDING_CLOVER_KEY);
+    sessionStorage.removeItem(PENDING_CLOVER_KEY);
+    return value || null;
+  } catch {
+    return null;
+  }
+};
+
 export const getTelnyxStatus = (restaurantId?: string | null) =>
   api.get(`/telnyx/numbers/status`, {
     params: { restaurant_id: requireRestaurantId(restaurantId) },

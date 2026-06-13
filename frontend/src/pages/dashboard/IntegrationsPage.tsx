@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getRestaurantId, getStatus, getTestModeStatus, getTelnyxStatus, getSquareConnectUrl, provisionTelnyxNumber, assignTelnyxNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection } from "@/lib/api";
+import { getRestaurantId, getStatus, getTestModeStatus, getTelnyxStatus, getSquareConnectUrl, getCloverConnectUrl, setPendingCloverRestaurantId, provisionTelnyxNumber, assignTelnyxNumber, getCalendarStatus, connectGoogleCalendar, disconnectGoogleCalendar, savePOSCredentials, testPOSConnection } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +22,20 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
+
+  // TEMPORARY — interim connect entry point for live OAuth testing. This will be
+  // replaced by the upcoming Integrations redesign. Mirrors connectSquare's style.
+  const handleConnectClover = async () => {
+    try {
+      setPendingCloverRestaurantId(restaurantId);
+      const res = await getCloverConnectUrl(restaurantId);
+      const url = res?.data?.connect_url;
+      if (!url) return toast.error("Clover connect URL not available");
+      window.location.href = url;
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to start Clover connection");
+    }
+  };
 
   const handleTest = async () => {
     try {
@@ -87,6 +101,14 @@ function POSCredentialsCard({ restaurantId }: { restaurantId: string }) {
 
       {posType === "clover" && (
         <>
+          {/* TEMPORARY connect button — interim for live OAuth testing; to be
+              replaced by the upcoming Integrations redesign. */}
+          <div className="space-y-1">
+            <Button onClick={handleConnectClover} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90 w-full">
+              Connect with Clover
+            </Button>
+            <p className="text-xs text-muted-foreground">Or enter credentials manually below.</p>
+          </div>
           <div className="space-y-2">
             <Label>API Token</Label>
             <Input value={cloverToken} onChange={e => setCloverToken(e.target.value)} placeholder="Enter Clover API token" type="password" className="rounded-xl" />
