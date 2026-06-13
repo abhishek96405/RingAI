@@ -5212,6 +5212,7 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
             {"id": restaurant_id},
             {"$set": {
                 "square_connected": True,
+                "pos_type": "square",
                 "square_access_token": encrypt_value(access_token),
             }},
         )

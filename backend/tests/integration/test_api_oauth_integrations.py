@@ -910,6 +910,9 @@ async def test_square_callback_persists_integration(
     from encryption_utils import decrypt_value
     saved = await patched_server_db.restaurants.find_one({"id": TENANT_A_ID}, {"_id": 0})
     assert saved["square_connected"] is True
+    # Square-OAuth-connected restaurants must also get pos_type set so sync /
+    # order-push routing works (mirrors how Clover exchange sets pos_type).
+    assert saved["pos_type"] == "square"
     assert decrypt_value(saved["square_access_token"]) == "sq_at_test"
 
     integ = await patched_server_db.integrations.find_one(
