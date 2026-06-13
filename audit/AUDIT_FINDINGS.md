@@ -5,7 +5,7 @@ Full-stack, line-by-line audit. Single consolidated log across all series: backe
 **Repo:** `abhishek96405/RingAI` · audited at `ringai-deploy` HEAD `0e8fa6d4`
 **Product status:** PRE-LAUNCH — no live/paying customers (Bawarchi, Desi Chowrastha, Great Cups/Clips = demo/test data).
 **Severity:** 🔴 High / launch-blocker · 🟡 Medium · 🟢 Low/polish
-**Status:** ⬜ Open · 🔧 fix in progress · 🔍 verify · ✔️ merged/resolved
+**Status:** ⬜ Open · 🔧 fix in progress · 🔍 verify · ✔️ merged/resolved · ⏸️ deferred (accepted-for-launch, see detail)
 
 ---
 
@@ -44,7 +44,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | A2-1 | 🟡 | Security | Rate limiting applied to 6 of 95 routes | ⬜ |
 | A2-2 | 🟡 | Security/Perf | Public menu page unthrottled + 6 DB queries/hit | ⬜ |
 | A2-3 | 🟡 | Info leak | `detail=str(e)` returns raw exceptions to clients (4×) | ⬜ |
-| A3-2 | 🟡 | Correctness | Reservation availability-check + insert not atomic (double-book race) | ⬜ |
+| A3-2 | 🟡 | Correctness | Reservation availability-check + insert not atomic (double-book race) | ⏸️ |
 | A4-1 | 🟡 | DoS/Cost | WS connection-limit functions imported but never enforced | ⬜ |
 | A4-2 | 🟡 | WebSocket | Media-stream WS: no transport auth + no duplicate-stream guard | ⬜ |
 | A5-1 | 🟡 | Billing | Overage billing + count increment no idempotency (mitigated by A8 fire-once) | ⬜ |
@@ -118,7 +118,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **A2-1** — Rate limiting on 6 of 95 routes (`LIMIT_*` mostly unused). Apply to public menu (by IP), bootstrap/auth, all writes, POS/billing. (In-process → fully effective only at 1 instance.)
 - **A2-2** — Public menu page (`:1367`) unauth + 5 collection `find_one`s/hit. IP rate-limit + optional cache. (XSS-safe.)
 - **A2-3** — `detail=str(e)` 4× leaks internal exceptions. Generic 500, log detail to Sentry.
-- **A3-2** — Reservation availability check then insert not atomic (`:1990`). Unique index / atomic conditional insert.
+- **A3-2** ⏸️ **DEFERRED (accepted-for-launch).** `create_reservation` (`server.py:2107`) calls `check_reservation_availability` — which *counts* existing reservation docs for the slot against `capacity_per_slot` (`reservation_service.py`, default 10, overridable via `restaurant.reservation_max_per_slot`) — and then, as a separate step, `db.reservations.insert_one`. Two concurrent requests can both pass the count and both insert → an over-capacity slot. The same check-then-insert is shared by **two** write paths: the operator endpoint (`server.py:2156`) and the voice path (`reservation_service.py:579`), so any real fix must cover both. Because capacity is count-based (no per-slot counter to atomically `$inc`), the cheap mitigations are *not* correct: a unique index only works at capacity=1 (default is 10), and "re-check right before insert" / "insert-then-recount-and-roll-back" still race — with no single contended document, two inserts can each read before the other commits and both decide they fit. A correct fix needs a serialization point: **(a) an atomic per-slot counter doc** (`find_one_and_update(booked < capacity, $inc)`) — correct but a second source of truth that can drift if any create/cancel path misses it; or **(b) a `slot_seat` (0…capacity-1) field + a partial (active-only) unique index** on `(restaurant_id, reservation_date, reservation_time, slot_seat)` — drift-free (the docs stay source of truth, the DB enforces capacity) but needs an `active` flag toggled on cancel, a retry-on-duplicate insert loop in the shared path, and an index + backfill of existing docs. Both approaches touch both insert paths + the cancel/update paths + a migration, including the **live voice booking path**. **Deferred** because reservations are opt-in, Pro-gated, and **default-OFF**, default capacity is 10, and there are no live customers — the realistic pre-launch exposure is low and does not justify reworking the voice path right before launch (vs. the launch-gating PR-L). **TRIGGER: implement approach (b) before reservations are enabled for a real customer at meaningful scale.**
 - **A4-1** — WS connection-limit funcs imported (`:292–294`) but never called; media-stream WS (most expensive) uncapped. Call check/register/unregister at accept + in `finally`.
 - **A4-2** — Media-stream WS (`:4447`): authz rests only on the start message's `call_control_id` matching `active_calls`; no handshake signature/token; duplicate streams not rejected. Add a short-lived signed token in the stream URL; reject duplicate `call_sid` streams. (Shares auth pattern with A6-2.)
 - **A5-1** — Overage billing + count increment (`:4579–4600`) no idempotency guard. **Mitigated** by `_fire_on_call_complete` fire-once (A8), but add `idempotency_key=f"overage:{call_sid}"` as defense-in-depth.
