@@ -1,6 +1,7 @@
 # Duuutah AI — Remaining-Fixes PR Plan (post-blocker backlog)
 
 **Created:** 2026-06-11 · **Base:** `ringai-deploy` @ `3e024467` (all 6 launch-blockers resolved)
+**Updated:** 2026-06-13 · `ringai-deploy` @ `f1e76a2d` — POS OAuth arc shipped (Clover connect + Integrations redesign + Square landing page); PR-F closed (launch scope)
 **Findings source of truth:** `audit/AUDIT_FINDINGS.md`
 **Legend:** ⬜ not started · 🔧 in progress · 🔍 in review · ✔️ merged
 
@@ -11,6 +12,7 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 ## Already done (context)
 - 6 launch-blockers ✔️: A1-1, A1-2 (PR-C) · A3-1 CSRF-half, A6-2, C5-1 (PR-B) · A7-1, A7-2 (PR-A)
 - D3-1 ✔️ verified · prepayment disabled-but-dormant · Clover per-unit + order-integrity shipped
+- **POS OAuth arc ✔️ (2026-06-13, all merged to `ringai-deploy`):** Clover v2 OAuth (C1 backend + C2 callback page) — **validated live end-to-end** (connect → encrypted token in Mongo → menu sync on sandbox merchant `ANDMRV7JVAAC1`) · Integrations page redesign (C3) · Square OAuth branded landing page (C4). Detail in the "POS OAuth arc" section below.
 
 ## The 12-PR sequence
 
@@ -18,8 +20,8 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 |----|--------|-------|----------|
 | PR-D | ✔️ | Latent-500 / crash hardening | A8-1, A8-2, D3-2, D3-3, D3-4, D3-5, D3-6, D3-9, D3-10, D3-12, D3-15 |
 | PR-E | ✔️ | Order & money accuracy (E1 accuracy · E2 modifier upcharges · E2.1 modifier display · E3 menu-driven upsell — all merged) | A7-3, A7-6, A7-8, A7-9, A7-11, A7-12, A7-14, A7-15, D3-7, D3-8, D3-11 |
-| PR-F | 🔧 | Endpoint auth & abuse limits (F1 — authz holes A6-1/A6-3/A6-4) | A6-1, A6-3, A6-4, A6-5, A6-6/7/8, A2-1, A2-2, A4-1, A4-2, B4-10 |
-| PR-G | ⬜ | Token-at-rest encryption & POS OAuth (finishes A3-1) | B3-7, A5-3, A4-4 |
+| PR-F | ✔️ | Endpoint auth & abuse limits (F1 authz · F2 rate-limit/body-size · F3 WS cap · F4 media-stream timeout — launch scope done; blanket rate-limit + signed stream-URL consciously deferred, see notes) | A6-1, A6-3, A6-4, A6-5, A6-6/7/8, A2-1, A2-2, A4-1, A4-2, B4-10 |
+| PR-G | ✔️ | Token-at-rest encryption & POS OAuth (finishes A3-1) | B3-7, A5-3, A4-4 |
 | PR-H | ⬜ | Billing integrity & plan-casing | A5-1, A5-2, A5-5, A5-4/D3-13, D3-14, C23-1, C23-5, C12-6, C15-6 |
 | PR-I | ⬜ | Booking-vertical reliability | A3-2, B2-1, A8-7, B2-7, C17-1, C17-4, C18-2, C15-8 |
 | PR-J | ⬜ | Performance & startup | A1-3, A2-8/A3-3, A5-6, A1-4, A1-7, A1-5 |
@@ -121,6 +123,21 @@ merges to `ringai-deploy` independently. Update the Status column as PRs land.
 - **PR-M** — publish real legal pages. LAUNCH-GATING (Stripe live mode requires them).
 - **PR-N** — config fail-loud, shared constants, admin-debug console leak (C14-1), CI gating + coverage threshold.
 - **PR-O** — dead code, stale `ringai-v2.onrender.com` hosts, docstrings, branding strings.
+
+## POS OAuth arc (feature work — 2026-06-13, not audit findings)
+Net-new connector + integrations UX, shipped as 4 reviewed slices, all merged to `ringai-deploy`:
+- **C1 — Clover v2 OAuth backend** (`900fdb96`): `/integrations/clover/connect` (authorize URL, no state — Clover v2 has none) + authenticated `/integrations/clover/exchange` (ensure_restaurant_access is the CSRF defense replacing the state token). `exchange_clover_code` / `refresh_clover_token` / `get_valid_clover_token` in pos_sync.py; access + refresh tokens encrypted at rest (clover_refresh_token added to ENCRYPTED_CREDENTIAL_FIELDS); sandbox token host `apisandbox.dev.clover.com` (CLOVER_OAUTH_TOKEN_BASE override). Real test_pos_connection checks for Square + Clover. 19 unit tests.
+- **C2 — Clover frontend callback page** (`fd73f246`): standalone /integrations/clover/callback page does the authenticated exchange (StrictMode single-fire guard); handles App-Market launch (merchant_id, no code → initiates authorize) + sign-in / error / invalid states.
+- **C3 — Integrations page redesign** (`b3ee69d1`): removed Integration-Status / Telnyx-Number / Required-Env-Vars cards; new POSCard with a 3-row connect selector (Square/Clover live Connected badges read fresh from getRestaurant on mount; Toast "Coming soon"); manual-credentials form collapsed under an accordion; Calendar gated to `business_type != "restaurant"`. Backend one-liner: added `pos_type="square"` to square_callback (routing-asymmetry fix).
+- **C4 — Square OAuth branded landing** (`f1e76a2d`): square_callback now 303-redirects to a display-only SquareCallbackPage (success/error from query params) instead of raw JSON. Frontend base resolved via FRONTEND_URL → CLOVER_REDIRECT_URI origin. State validation still gates the exchange (bad/replayed state → reason=invalid_state redirect, exchange never runs).
+
+Open follow-ups for this arc:
+- **Clover order-push token refresh** — wire `get_valid_clover_token` into the Clover order-push path (gemini_service `_send_to_clover` / `send_order_to_kitchen`); needs `db` plumbed into the call pipeline. Deferred from C1.
+- **Square live validation** — Clover was validated live; Square OAuth still needs a real sandbox round-trip (Square sandbox app not set up yet).
+- **Clover private-app approval** — required before non-dev merchants can connect (functional demo video + legal/privacy docs). External action.
+- C4 makes **FRONTEND_URL** load-bearing for the Square landing — covered by the existing LAUNCH_PLAN gate ("point FRONTEND_URL at the canonical www origin"); falls back to CLOVER_REDIRECT_URI origin until set.
+
+Live setup state: Clover sandbox app `0B8DHWXAGS764` (Private); Render has CLOVER_APP_ID / CLOVER_APP_SECRET / CLOVER_REDIRECT_URI + CLOVER_ENV=sandbox.
 
 ## Conscious decisions (accepted for launch)
 - **A7-15** — on-disconnect last-chance extraction may dispatch a non-explicitly-confirmed order. Accepted: favor capturing genuinely-confirmed orders over consent-strictness; the prompt half was already correct. Revisit post-launch.
