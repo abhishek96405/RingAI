@@ -115,13 +115,6 @@ async def test_stripe_checkout_replay_does_not_double_mark_paid(
     assert count == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MEDIUM: Stripe webhook lacks event-id dedup. SMS/WebSocket notifications "
-        "for the same checkout.session.completed event fire on every replay."
-    ),
-)
 async def test_stripe_checkout_replay_does_not_send_second_sms_expected(
     client, patched_server_db, stripe_sdk_mock, telnyx_sdk_mock
 ):
