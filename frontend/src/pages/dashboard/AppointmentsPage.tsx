@@ -16,6 +16,7 @@ import {
   ChevronLeft, ChevronRight, Lock, Unlock,
 } from "lucide-react";
 import { toast } from "sonner";
+import CreateAppointmentDialog from "./CreateAppointmentDialog";
 
 interface Appointment {
   id: string;
@@ -134,6 +135,9 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
             <SelectItem value="conflict">Conflict</SelectItem>
           </SelectContent>
         </Select>
+        <div className="ml-auto">
+          <CreateAppointmentDialog restaurantId={restaurantId} onCreated={fetchAppointments} />
+        </div>
       </div>
 
       {loading ? (

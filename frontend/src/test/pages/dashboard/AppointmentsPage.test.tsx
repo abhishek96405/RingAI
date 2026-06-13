@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { http, HttpResponse } from "msw";
 import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { server } from "@/test/utils/msw-server";
 import { renderWithProviders } from "@/test/utils/render";
 import { AppSessionProvider } from "@/context/AppSessionContext";
@@ -72,5 +73,31 @@ describe("AppointmentsPage", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: /appointments/i })).toBeInTheDocument()
     );
+  });
+
+  it("opens the New Appointment dialog with the booking form", async () => {
+    server.use(
+      http.get("*/api/restaurants/:id/services", () =>
+        HttpResponse.json([
+          { id: "svc_1", name: "Haircut", duration_minutes: 30, price_cents: 4500 },
+        ])
+      ),
+      http.get("*/api/restaurants/:id/available-slots", () =>
+        HttpResponse.json({
+          slots: [{ slot_time: "10:00", display_time: "10:00 AM", available: true }],
+        })
+      )
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<Shell />);
+
+    await user.click(await screen.findByTestId("create-appointment-btn"));
+
+    // "Book Appointment" is both the dialog title and the submit button label,
+    // so scope the assertion to the heading to avoid an ambiguous match.
+    expect(await screen.findByRole("heading", { name: /Book Appointment/i })).toBeInTheDocument();
+    expect(screen.getByTestId("appointment-customer-name")).toBeInTheDocument();
+    expect(screen.getByTestId("appointment-customer-phone")).toBeInTheDocument();
   });
 });
