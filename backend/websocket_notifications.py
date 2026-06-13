@@ -230,6 +230,35 @@ async def notify_order_dispatch_failed(
     await manager.send_to_restaurant(restaurant_id, notification)
 
 
+async def notify_booking_dispatch_failed(
+    restaurant_id: str,
+    call_sid: str,
+    caller_number: str,
+    customer_name: str,
+    service_name: str,
+    requested_time: str,
+    error: str,
+):
+    """Notify the dashboard that an appointment booking could NOT be saved and the
+    customer must be followed up manually. Booking twin of order_dispatch_failed
+    (B2-1 / A8-7)."""
+    notification = build_notification(
+        event_type="booking_dispatch_failed",
+        title="Booking needs attention",
+        message=f"A booking for {customer_name} ({service_name}) could not be saved. Follow up with the caller.",
+        data={
+            "call_sid": call_sid,
+            "caller_number": caller_number[-4:] if caller_number and len(caller_number) > 4 else "****",
+            "customer_name": customer_name,
+            "service_name": service_name,
+            "requested_time": requested_time,
+            "error": error,
+        },
+        priority="high",
+    )
+    await manager.send_to_restaurant(restaurant_id, notification)
+
+
 async def notify_new_appointment(
     restaurant_id: str,
     appointment_id: str,
