@@ -68,8 +68,8 @@ PLAN_CONFIG = {
 
 
 def get_plan_features(plan_name: str) -> dict:
-    """Get feature config for a plan. Defaults to STARTER if unknown."""
-    return PLAN_CONFIG.get(plan_name, PLAN_CONFIG["STARTER"])
+    """Get feature config for a plan. Case-insensitive; defaults to STARTER if unknown."""
+    return PLAN_CONFIG.get((plan_name or "STARTER").upper(), PLAN_CONFIG["STARTER"])
 
 
 def get_price_id_to_plan_map() -> dict:

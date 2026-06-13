@@ -10,6 +10,7 @@ import { ChevronDown, Save, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { getVoicePreview } from "@/lib/api";
 import { voiceOptions, SUPPORTED_LANGUAGES } from "./constants";
+import { isProPlan } from "@/lib/plan";
 
 interface Props {
   restaurant: any;
@@ -81,7 +82,7 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
         <Label>Voice</Label>
         <div className="grid gap-2 mt-1">
           {voiceOptions.map((voice) => {
-            const isVoiceLocked = restaurant?.plan !== "PRO" && voice.id !== "Leda";
+            const isVoiceLocked = !isProPlan(restaurant?.plan) && voice.id !== "Leda";
             return (
               <div key={voice.id} onClick={() => !isVoiceLocked && setConfig({ ...config, voice_id: voice.id })}
                 className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${isVoiceLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${config?.voice_id === voice.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
@@ -127,7 +128,7 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
         <div>
           <h4 className="text-sm font-semibold mb-1">Language Support</h4>
           <p className="text-xs text-muted-foreground">
-            {restaurant?.plan === "PRO"
+            {isProPlan(restaurant?.plan)
               ? "Configure the AI's spoken language. With multilingual on, callers press a digit at the start to pick a language. Returning callers skip the menu — their last choice is remembered."
               : "Upgrade to Pro to let callers choose their language via IVR. Starter plans use the primary language only."}
           </p>
@@ -150,18 +151,18 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
           <div>
             <p className="text-sm font-medium">
               Multilingual IVR
-              {restaurant?.plan !== "PRO" && <span className="ml-2 text-xs text-muted-foreground font-normal">(Pro)</span>}
+              {!isProPlan(restaurant?.plan) && <span className="ml-2 text-xs text-muted-foreground font-normal">(Pro)</span>}
             </p>
             <p className="text-xs text-muted-foreground">Callers hear a menu and press a digit to choose their language</p>
           </div>
           <Switch
             checked={config?.multilingual_enabled || false}
-            disabled={restaurant?.plan !== "PRO"}
+            disabled={!isProPlan(restaurant?.plan)}
             onCheckedChange={(v) => setConfig({ ...config, multilingual_enabled: v })}
           />
         </div>
 
-        {config?.multilingual_enabled && restaurant?.plan === "PRO" && (
+        {config?.multilingual_enabled && isProPlan(restaurant?.plan) && (
           <div className="space-y-2">
             <Label>Additional Languages</Label>
             <p className="text-xs text-muted-foreground">
@@ -204,9 +205,9 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
             <p className="text-sm font-medium">Upselling</p>
             <p className="text-xs text-muted-foreground">Suggest add-ons after the main order</p>
           </div>
-          {restaurant?.plan !== "PRO" && <span className="text-xs text-muted-foreground">(Pro)</span>}
+          {!isProPlan(restaurant?.plan) && <span className="text-xs text-muted-foreground">(Pro)</span>}
         </div>
-        <Switch checked={config?.upsell_enabled || false} disabled={restaurant?.plan !== "PRO"} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
+        <Switch checked={config?.upsell_enabled || false} disabled={!isProPlan(restaurant?.plan)} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
       </div>
 
       <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">

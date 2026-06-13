@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { exportAnalytics } from "@/lib/api";
 import { Download } from "lucide-react";
 import AILearningWidget from "./AILearningWidget";
+import { isProPlan } from "@/lib/plan";
 
 function StatCard({ icon: Icon, label, value, subtext, iconColor }: any) {
   return (
@@ -249,7 +250,7 @@ const DashboardHome = () => {
       </div>
 
       {/* AI Learning */}
-      {activeRestaurant?.plan === "PRO" ? (
+      {isProPlan(activeRestaurant?.plan) ? (
         <AILearningWidget />
       ) : (
         <div className="premium-card p-6 rounded-xl border border-border">

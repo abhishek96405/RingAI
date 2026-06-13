@@ -66,6 +66,27 @@ describe("ReservationsPage", () => {
     expect(screen.getAllByText(/reservation/i).length).toBeGreaterThan(0);
   });
 
+  it("treats a lowercase 'pro' plan as Pro (case-insensitive)", async () => {
+    server.use(
+      http.get("*/api/me/bootstrap", () =>
+        HttpResponse.json({
+          user: { id: "user_test" },
+          memberships: [{ restaurant_id: "tenant_a_restaurant", role: "owner" }],
+          restaurants: [
+            { id: "tenant_a_restaurant", name: "Test Restaurant A", business_type: "restaurant", is_active: true, plan: "pro" },
+          ],
+          active_restaurant: { id: "tenant_a_restaurant", name: "Test Restaurant A", business_type: "restaurant", is_active: true, plan: "pro" },
+          onboarding_complete: true,
+        })
+      )
+    );
+    renderWithProviders(<Shell />);
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: /AI Table Reservations/i })).not.toBeInTheDocument()
+    );
+    expect(screen.getAllByText(/reservation/i).length).toBeGreaterThan(0);
+  });
+
   it("renders reservations when the API returns rows", async () => {
     server.use(
       PRO_BOOTSTRAP_HANDLER,

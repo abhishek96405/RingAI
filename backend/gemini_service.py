@@ -1322,7 +1322,7 @@ def build_system_prompt(
     # Import here to avoid circular imports
     try:
         from server import PLAN_CONFIG
-        plan_features = PLAN_CONFIG.get(plan, PLAN_CONFIG["STARTER"])
+        plan_features = PLAN_CONFIG.get((plan or "STARTER").upper(), PLAN_CONFIG["STARTER"])
     except ImportError:
         plan_features = {"delivery_enabled": True, "reservations_enabled": True,
                          "upsell_enabled": True, "customer_recognition": True,

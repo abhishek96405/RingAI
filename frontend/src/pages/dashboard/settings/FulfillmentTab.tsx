@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Save } from "lucide-react";
+import { isProPlan } from "@/lib/plan";
 
 interface Props {
   restaurant: any;
@@ -32,7 +33,7 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
       {/* Capability toggles */}
       <div className="grid sm:grid-cols-2 gap-4">
         {[["pickup_enabled", "Pickup Enabled"], ["delivery_enabled", "Delivery Enabled"], ["reservations_enabled", "Reservations Enabled"]].map(([key, label]) => {
-          const isGated = (key === "delivery_enabled" || key === "reservations_enabled") && restaurant?.plan !== "PRO";
+          const isGated = (key === "delivery_enabled" || key === "reservations_enabled") && !isProPlan(restaurant?.plan);
           return (
             <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
               <div className="flex items-center gap-2">
