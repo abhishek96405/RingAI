@@ -2149,13 +2149,8 @@ async def create_reservation(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Create a new reservation."""
-    await ensure_restaurant_access(restaurant_id, user)
-    
-    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
-    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
-    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
-    if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+    restaurant, membership = await resolve_restaurant_access(restaurant_id, user)
+    business_type = membership.get("business_type", "restaurant")
     
     config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}) or {}
     
@@ -2242,15 +2237,9 @@ async def get_reservation_slots_endpoint(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get available reservation slots for a specific date."""
-    await ensure_restaurant_access(restaurant_id, user)
-    
-    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
-    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
-    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
+    restaurant, membership = await resolve_restaurant_access(restaurant_id, user)
+    business_type = membership.get("business_type", "restaurant")
     config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0}) or {}
-    
-    if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
     
     slots = await get_reservation_slots(
         restaurant_id=restaurant_id,
