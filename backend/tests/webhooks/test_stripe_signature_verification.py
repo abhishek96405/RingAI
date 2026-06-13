@@ -89,28 +89,6 @@ def test_stale_timestamp_returns_400(client, stripe_signer):
     assert r.status_code == 400
 
 
-def test_future_timestamp_is_currently_accepted_captures_bug(client, stripe_signer):
-    """Capture current behaviour: Stripe's ``construct_event`` only checks
-    ``now - ts > tolerance``, so a far-future timestamp passes the replay
-    window check. A forger who can fix server clocks (e.g. via a compromised
-    NTP path) could reuse a captured webhook indefinitely. See FINDINGS.
-    """
-    body = _payload()
-    future = int(time.time()) + 3600
-    sig = stripe_signer.sign(body, timestamp=future)
-    r = client.post(
-        "/api/webhooks/stripe",
-        content=body,
-        headers={"Stripe-Signature": sig, "Content-Type": "application/json"},
-    )
-    # Documents the current behaviour — the route does not reject the future ts.
-    assert r.status_code != 400
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Stripe SDK does not reject future timestamps; needs custom check",
-)
 def test_future_timestamp_should_return_400_expected(client, stripe_signer):
     body = _payload()
     future = int(time.time()) + 3600

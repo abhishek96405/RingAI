@@ -5014,12 +5014,46 @@ async def stripe_webhook(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid Stripe webhook") from exc
 
+    # D3-14: construct_event enforces only the OLD side of the replay window
+    # (now - t > tolerance). Add the FUTURE side — reject a signed payload whose
+    # signature timestamp is >300s ahead of now. One-sided on purpose: the old
+    # side is already covered above, and a two-sided abs() check would also reject
+    # the t=0 placeholder used by mock-based idempotency tests. Together they form
+    # the two-sided ±300s window in production.
+    _sig_ts = None
+    for _part in (sig_header or "").split(","):
+        if _part.strip().startswith("t="):
+            try:
+                _sig_ts = int(_part.strip()[2:])
+            except ValueError:
+                _sig_ts = None
+            break
+    if _sig_ts is not None and (_sig_ts - datetime.now(timezone.utc).timestamp()) > 300:
+        raise HTTPException(status_code=400, detail="Stripe webhook timestamp too far in the future")
+
     event_type = event["type"]
     # D3-12: ping/malformed events may omit data.object — treat as malformed (400)
     # rather than KeyError → 500 (which Stripe would retry with backoff).
     data = (event.get("data") or {}).get("object")
     if data is None:
         raise HTTPException(status_code=400, detail="Malformed Stripe event: missing data.object")
+
+    # D3-13/A5-4: event-id dedup. Stripe retries delivery on a slow/failed ACK;
+    # without dedup, secondary side effects (payment SMS, WS notify) re-fire on
+    # every replay. Mirror the Square webhook — record seen ids in webhook_events
+    # (7-day TTL) and short-circuit a replay before any side effect. Recorded
+    # up-front so a replay is suppressed even if the first attempt partially ran.
+    _event_id = event.get("id")
+    if _event_id:
+        if await db.webhook_events.find_one({"provider": "stripe", "event_id": _event_id}):
+            return JSONResponse({"received": True, "deduped": True})
+        await db.webhook_events.insert_one({
+            "provider": "stripe",
+            "event_id": _event_id,
+            "event_type": event_type,
+            "received_at": datetime.now(timezone.utc),
+        })
+
     all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
 
     if event_type == "checkout.session.completed":
