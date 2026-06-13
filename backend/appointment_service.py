@@ -772,6 +772,8 @@ async def dispatch_appointment(
     # sms_sent will be set below after slot_status is determined
     
     # Save appointment to database
+    saved = False
+    save_error = None
     if db is not None:
         try:
             import uuid
@@ -826,6 +828,7 @@ async def dispatch_appointment(
                 "updated_at": None,
             }
             await db.appointments.insert_one(appointment_doc)
+            saved = True
             logger.info(f"Appointment saved: {appointment_doc['id']} status={slot_status}")
             result["appointment_id"] = appointment_doc["id"]
             result["slot_conflict"] = slot_status == "conflict"
@@ -851,9 +854,20 @@ async def dispatch_appointment(
                 result["sms_sent"] = False
 
         except Exception as e:
+            save_error = str(e)
             logger.error(f"Failed to save appointment to database: {e}")
+    else:
+        save_error = "no database handle"
 
-    result["success"] = True
+    # Success now reflects actual persistence. A booking that was never written to
+    # db.appointments is NOT a success — even if calendar/parse steps ran — because
+    # the live call already told the caller they were booked. Reporting success here
+    # would silently lose the booking (B2-1). Mirrors the restaurant A7-1 fix. The
+    # slot-conflict case still persists (status="conflict") and stays a success with
+    # slot_conflict=True for dashboard review.
+    result["success"] = saved
+    if not saved:
+        result["error"] = save_error or "appointment was not saved"
     return result
 
 

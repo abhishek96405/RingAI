@@ -838,3 +838,29 @@ async def test_dispatch_booking_returns_false_when_appointment_service_unavailab
     sess = make_call_session(business_type="salon", services=[])
     monkeypatch.setattr("call_pipeline._APPOINTMENT_SERVICE_AVAILABLE", False)
     assert await sess.dispatch_booking() is False
+
+
+async def test_dispatch_booking_reports_failure_and_alerts_when_not_saved(
+    make_call_session, stub_appointment_dispatch
+):
+    """B2-1/A8-7: a booking that wasn't persisted must surface as failure
+    (dispatch_booking returns False) and fire an operator alert — never a silent
+    success that leaves the caller thinking they're booked."""
+    from unittest.mock import AsyncMock
+
+    sess = make_call_session(
+        business_type="salon",
+        services=[{"name": "Standard Haircut", "price_cents": 4500}],
+    )
+    stub_appointment_dispatch["extracted"] = {
+        "service_name": "Standard Haircut",
+        "customer_name": "Jane",
+    }
+    stub_appointment_dispatch["dispatch_result"] = {
+        "success": False,
+        "error": "database unavailable",
+    }
+    sess._notify_booking_failure = AsyncMock()
+
+    assert await sess.dispatch_booking() is False
+    sess._notify_booking_failure.assert_called_once()

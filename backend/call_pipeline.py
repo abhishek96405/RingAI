@@ -1179,10 +1179,86 @@ class CallSession:
             logger.info(f"[{self.call_sid}] Appointment dispatched: calendar={result.get('calendar_event_id')}, sms={result.get('sms_sent')}")
             if result.get("sms_sent"):
                 self._sms_count += 1
-        else:
-            logger.warning(f"[{self.call_sid}] Appointment dispatch partial: {result}")
+            return True
 
-        return True
+        # Hard failure — the booking was never persisted. The live call already told
+        # the caller they were booked, so we must NOT report success (A8-7). Mirror
+        # the restaurant A7-1 path: surface it and fire a fire-and-forget operator
+        # alert so the business can follow up with the customer manually.
+        logger.error(
+            f"[{self.call_sid}] Appointment dispatch FAILED — booking not saved: "
+            f"{result.get('error')}"
+        )
+        asyncio.create_task(self._notify_booking_failure(result, booking))
+        return False
+
+    async def _notify_booking_failure(
+        self, result: Dict[str, Any], booking: Dict[str, Any]
+    ) -> None:
+        """Alert the operator that an appointment booking could not be saved and must
+        be followed up manually. The caller was told on the call they were booked, but
+        nothing was persisted. Booking twin of _notify_dispatch_failure (A7-1).
+
+        NEVER raises and NEVER blocks call teardown — every external call is wrapped in
+        try/except and the whole method is fire-and-forget.
+        """
+        error = result.get("error", "error")
+        customer_name = (booking or {}).get("customer_name") or "a caller"
+        service_name = (booking or {}).get("service_name") or "an appointment"
+        when = " ".join(
+            x for x in (
+                (booking or {}).get("preferred_date", ""),
+                (booking or {}).get("preferred_time", ""),
+            ) if x
+        ).strip()
+        try:
+            # (a) Real-time WebSocket push to any connected dashboard client.
+            try:
+                from websocket_notifications import notify_booking_dispatch_failed
+                await notify_booking_dispatch_failed(
+                    restaurant_id=self.restaurant_id,
+                    call_sid=self.call_sid,
+                    caller_number=self.caller_number,
+                    customer_name=customer_name,
+                    service_name=service_name,
+                    requested_time=when,
+                    error=error,
+                )
+            except Exception as ws_err:
+                logger.error(f"[{self.call_sid}] booking-failure WS notify error: {ws_err}")
+
+            # (b) SMS to the operator. Resolve a destination number in priority order.
+            alert_phone = (
+                (self.config.get("dispatch_alert_phone") if self.config else None)
+                or (self.config.get("escalation_phone_number") if self.config else None)
+                or self.restaurant.get("owner_phone")
+            )
+            if not alert_phone:
+                logger.warning(
+                    f"[{self.call_sid}] Booking failed but no operator number configured "
+                    f"(dispatch_alert_phone/escalation_phone_number/owner_phone) — SMS skipped"
+                )
+                return
+            try:
+                import telnyx_service
+                await telnyx_service.send_sms(
+                    to=alert_phone,
+                    body=(
+                        f"Duuutah AI: a booking from {self.caller_number} ({customer_name}) for "
+                        f"{service_name}{(' on ' + when) if when else ''} could NOT be saved ({error}). "
+                        f"The caller was told it was confirmed — please call them back to rebook."
+                    ),
+                    idempotency_key=f"booking_fail:{self.call_sid}",
+                    metadata={
+                        "purpose": "booking_dispatch_failure",
+                        "restaurant_id": self.restaurant_id,
+                        "call_sid": self.call_sid,
+                    },
+                )
+            except Exception as sms_err:
+                logger.error(f"[{self.call_sid}] booking-failure SMS error: {sms_err}")
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] _notify_booking_failure unexpected error: {e}")
 
 
 # ---------------------------------------------------------------------------
