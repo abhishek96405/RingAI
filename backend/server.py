@@ -3019,13 +3019,9 @@ async def save_pos_credentials(request: Request, restaurant_id: str, data: POSCr
 @api_router.post("/restaurants/{restaurant_id}/pos/sync")
 @limiter.limit(LIMIT_MENU_BULK)
 async def pos_sync_menu(request: Request, restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
-    await ensure_restaurant_access(restaurant_id, user)
-    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
-    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant, membership = await resolve_restaurant_access(restaurant_id, user)
+    business_type = membership.get("business_type", "restaurant")
     coll = get_business_collection(business_type)
-    restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
-    if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
     
     # Decrypt POS credentials before use
     try:
@@ -3059,13 +3055,9 @@ async def pos_sync_menu(request: Request, restaurant_id: str, user: Dict[str, An
 @limiter.limit(LIMIT_POS_CREDENTIALS)
 async def test_pos_connection(request: Request, restaurant_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Test POS connection with current credentials."""
-    await ensure_restaurant_access(restaurant_id, user)
-    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
-    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    restaurant, membership = await resolve_restaurant_access(restaurant_id, user)
+    business_type = membership.get("business_type", "restaurant")
     coll = get_business_collection(business_type)
-    restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
-    if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
 
     # Decrypt POS credentials before use (same pattern as pos_sync_menu). The
     # toast branch's inline decrypt_value calls stay harmless — decrypt_value is
