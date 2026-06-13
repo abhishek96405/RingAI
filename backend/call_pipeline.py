@@ -929,7 +929,7 @@ class CallSession:
                 # Proceed anyway — don't block order if validation service fails
 
         self._order_dispatched = True
-        result = await send_order_to_kitchen(self.order, self.restaurant)
+        result = await send_order_to_kitchen(self.order, self.restaurant, self.db)
         self._apply_dispatch_result(result)
         return True
 
@@ -2101,7 +2101,7 @@ async def create_call_pipeline(
                                 _food = "delivery" if ("delivery" in _ot or extracted.order_type == "delivery") else "pickup"
                                 extracted.order_type = f"{_food}+reservation" if ("reservation" in _ot or extracted.order_type == "reservation") else _food
                                 session.order = extracted
-                                result = await send_order_to_kitchen(extracted, session.restaurant)
+                                result = await send_order_to_kitchen(extracted, session.restaurant, session.db)
                                 # Same DISPATCH_FAILED handling as dispatch_order_if_ready:
                                 # a configured-POS failure must surface + alert, not be
                                 # silently swallowed on this last-chance path either (A7-1).

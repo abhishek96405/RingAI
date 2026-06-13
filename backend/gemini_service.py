@@ -618,7 +618,7 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
 # Kitchen / POS dispatch
 # ---------------------------------------------------------------------------
 
-async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
+async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db=None) -> Dict[str, Any]:
     """
     Dispatch order to POS based on pos_type configuration.
     Routes: pos_type → specific POS → webhook fallback → DB fallback
@@ -652,7 +652,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
         clover_mid = restaurant.get("clover_merchant_id", "")
         if clover_token and clover_mid:
             attempted_pos = "clover"
-            result = await _send_to_clover(order, restaurant)
+            result = await _send_to_clover(order, restaurant, db)
             if result["success"]:
                 return {**result, "attempted_pos": "clover", "fallback_saved": False}
             pos_error = result.get("error", "Clover dispatch failed")
@@ -673,7 +673,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
         clover_mid = restaurant.get("clover_merchant_id", "")
         if clover_token and clover_mid:
             attempted_pos = "clover"
-            result = await _send_to_clover(order, restaurant)
+            result = await _send_to_clover(order, restaurant, db)
             if result["success"]:
                 return {**result, "attempted_pos": "clover", "fallback_saved": False}
             pos_error = result.get("error", "Clover dispatch failed")
@@ -723,9 +723,17 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any]) ->
     }
 
 
-async def _send_to_clover(order: LiveOrder, restaurant: Dict = None) -> Dict[str, Any]:
+async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) -> Dict[str, Any]:
     """Create an order in Clover POS via REST API."""
-    api_token    = (restaurant or {}).get("clover_api_token", "")
+    # When a db handle is threaded through (the live order-push path), refresh a
+    # near-expiry Clover OAuth token before creating the order — mirrors
+    # pos_sync.sync_menu_from_clover. db=None preserves the legacy/test path that
+    # uses the raw token verbatim (manual creds never refresh anyway).
+    if db is not None:
+        from pos_sync import get_valid_clover_token
+        api_token = await get_valid_clover_token(restaurant or {}, db)
+    else:
+        api_token = (restaurant or {}).get("clover_api_token", "")
     merchant_id  = (restaurant or {}).get("clover_merchant_id", "")
     clover_env = (restaurant or {}).get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
 

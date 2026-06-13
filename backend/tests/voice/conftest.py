@@ -316,8 +316,8 @@ def stub_kitchen_dispatch(monkeypatch):
         "result": {"success": True, "order_id": "DTH-TEST", "method": "database"},
     }
 
-    async def _fake_send(order, restaurant):
-        calls["sends"].append({"order": order, "restaurant": restaurant})
+    async def _fake_send(order, restaurant, db=None):
+        calls["sends"].append({"order": order, "restaurant": restaurant, "db": db})
         return dict(calls["result"])
 
     import call_pipeline

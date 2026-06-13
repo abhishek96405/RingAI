@@ -9,6 +9,7 @@ These tests have no network I/O, no real Mongo, no filesystem writes
 """
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock
 
 import httpx
@@ -671,6 +672,126 @@ async def test_square_line_item_bakes_modifier_price_and_names(monkeypatch):
     assert li["quantity"] == "2"  # Square multiplies per-unit by quantity
     assert "Large" in li["name"] and "Extra Cheese" in li["name"]
     assert li["name"].startswith("Pizza")
+
+
+# ---------------------------------------------------------------------------
+# Clover OAuth token refresh in the order-push path. When a db handle is
+# threaded through, a near-expiry access token is refreshed via
+# get_valid_clover_token BEFORE the order is created (mirrors
+# sync_menu_from_clover). db=None preserves the raw-token legacy behavior.
+# ---------------------------------------------------------------------------
+
+
+class _FakeCollection:
+    """A Mongo-like collection that records update_one calls (async)."""
+
+    def __init__(self, updates):
+        self._updates = updates
+
+    async def update_one(self, filt, update):
+        self._updates.append({"filter": filt, "update": update})
+
+
+class _FakeDB:
+    """The 5 business collections get_valid_clover_token persists to."""
+
+    def __init__(self):
+        self.updates = []
+        self.restaurants = _FakeCollection(self.updates)
+        self.clinics = _FakeCollection(self.updates)
+        self.salons = _FakeCollection(self.updates)
+        self.home_services = _FakeCollection(self.updates)
+        self.legal = _FakeCollection(self.updates)
+
+
+async def test_send_order_refreshes_near_expiry_clover_token(monkeypatch):
+    """With a db handle and a near-expiry OAuth token, send_order_to_kitchen
+    refreshes via get_valid_clover_token before creating the order: the rotated
+    pair is persisted and the Clover order POST carries the NEW access token."""
+    import pos_sync
+    from gemini_service import send_order_to_kitchen
+
+    refresh_calls = []
+
+    async def _fake_refresh(refresh_token):
+        refresh_calls.append(refresh_token)
+        return {
+            "access_token": "clv_new_at",
+            "access_token_expiration": 9999999999,
+            "refresh_token": "clv_new_rt",
+            "refresh_token_expiration": 9999999999,
+        }
+
+    monkeypatch.setattr(pos_sync, "refresh_clover_token", _fake_refresh)
+
+    auth_headers = []
+
+    async def fake_post(self, url, **kwargs):
+        auth_headers.append((url, (kwargs.get("headers") or {}).get("Authorization")))
+        if url.endswith("/orders"):
+            return _resp(201, json={"id": "clv_refreshed"})
+        return _resp(201, json={"id": "x"})  # line_items + print_event
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    now = int(time.time())
+    db = _FakeDB()
+    restaurant = {
+        "id": "rest_a",
+        "pos_type": "clover",
+        "clover_api_token": "old_tok",
+        "clover_refresh_token": "old_rt",
+        "clover_merchant_id": "m",
+        "clover_access_token_expiration": now + 60,  # within the 300s window
+    }
+
+    out = await send_order_to_kitchen(_make_order(), restaurant, db)
+    assert out["success"] is True
+    assert out["method"] == "clover"
+
+    # (a) refresh happened with the stored refresh token.
+    assert refresh_calls == ["old_rt"]
+
+    # (b) the Clover order create POST used the NEW access token.
+    order_auth = next(a for u, a in auth_headers if u.endswith("/orders"))
+    assert order_auth == "Bearer clv_new_at"
+
+    # (c) the rotated pair was persisted via db.update_one (all 5 collections).
+    assert len(db.updates) == 5
+    persisted = db.updates[0]["update"]["$set"]
+    assert "clover_api_token" in persisted
+    assert persisted["clover_access_token_expiration"] == 9999999999
+
+
+async def test_send_to_clover_db_none_uses_raw_token_no_refresh(monkeypatch):
+    """Legacy path: db=None uses restaurant['clover_api_token'] verbatim and
+    never attempts a refresh."""
+    import pos_sync
+    from gemini_service import _send_to_clover
+
+    def _must_not_refresh(*a, **k):
+        raise AssertionError("refresh_clover_token must not be called when db is None")
+
+    monkeypatch.setattr(pos_sync, "refresh_clover_token", _must_not_refresh)
+
+    auth_headers = []
+
+    async def fake_post(self, url, **kwargs):
+        auth_headers.append((kwargs.get("headers") or {}).get("Authorization"))
+        if url.endswith("/orders"):
+            return _resp(201, json={"id": "clv_raw"})
+        return _resp(201, json={"id": "x"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    out = await _send_to_clover(_make_order(), {
+        "clover_api_token": "raw_tok",
+        "clover_refresh_token": "old_rt",
+        "clover_merchant_id": "m",
+        "clover_access_token_expiration": 1,  # would be near-expiry IF db were passed
+    })  # db defaults to None
+    assert out["success"] is True
+    assert all(a == "Bearer raw_tok" for a in auth_headers)
 
 
 async def test_clover_line_item_failure_surfaces_as_failure(monkeypatch):
