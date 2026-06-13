@@ -1117,8 +1117,20 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
     }
     existing = await db.users.find_one({"id": user_id}, {"_id": 0})
     if existing:
-        await db.users.update_one({"id": user_id}, {"$set": user_doc})
-        return {**existing, **user_doc}
+        # A1-3: this runs on EVERY authenticated request — do not write on the hot
+        # path. Persist only the Clerk-sourced fields that actually changed.
+        # updated_at alone is regenerated each call and is not a real change, and a
+        # claim absent from this particular token must not wipe a stored value.
+        updates = {}
+        for field in ("email", "first_name", "last_name", "image_url"):
+            value = user_doc.get(field)
+            if value is not None and value != existing.get(field):
+                updates[field] = value
+        if not updates:
+            return existing
+        updates["updated_at"] = user_doc["updated_at"]
+        await db.users.update_one({"id": user_id}, {"$set": updates})
+        return {**existing, **updates}
 
     new_user = UserProfile(**user_doc).model_dump()
     await db.users.insert_one(new_user)
