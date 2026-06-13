@@ -23,7 +23,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **D3-1** ✔️ — re-verified resolved; escalation transfer is robust at `call_pipeline.py:812`.
 
 **Remaining open items are all non-blockers** — called out explicitly so nothing reads as "done" that isn't:
-- **B3-7** ⬜ — Google Calendar tokens still stored **plaintext** at rest (`encryption_utils` unused for them). This is the still-open half of A3-1 (token-at-rest encryption).
+- **B3-7** ✔️ — Google Calendar tokens are encrypted at rest (PR-G, commit `4fff5f6`): `encrypt_calendar_tokens` on connect + refresh, prefix-aware `decrypt_calendar_tokens` on read, field in `ENCRYPTED_CREDENTIAL_FIELDS`. Completes A3-1.
 - The **§A medium/low items** (A1-3 perf, A2-x rate-limit/info-leak, A4-x, A5-x billing, A6-x, the §A 🟢 polish cluster).
 - The **C31-x marketing-claims cluster** (fabricated integration/feature advertising — legal/content lane).
 - The **D3 latent-500 batch** (D3-12/13/14/15 webhook resilience + the remaining D3-2…D3-10 latent NameError/edge branches).
@@ -37,7 +37,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | ID | Sev | Area | Issue | Status |
 |---|---|---|---|---|
 | A1-1 | 🔴 | CORS | Wildcard `["*"]` + credentials fallback; secure helper unused | ✔️ |
-| A3-1 | 🔴 | OAuth | Google callback uses raw `restaurant_id` as `state` — no validation (CSRF) + unauth callback + plaintext tokens | 🔧 |
+| A3-1 | 🔴 | OAuth | Google callback uses raw `restaurant_id` as `state` — no validation (CSRF) + unauth callback + plaintext tokens | ✔️ |
 | A6-2 | 🔴 | WebSocket | `/ws/notifications` unauth + unauthorized → live cross-tenant data leak | ✔️ |
 | A1-2 | 🔴 | Ops | No `/health` endpoint (Render health check + readiness probe) | ✔️ |
 | A1-3 | 🟡 | Perf | `get_current_user` does Mongo read+write every request | ⬜ |
@@ -78,8 +78,8 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 **Resolved (THIS PR):** the `cors_origins` assignment now calls `get_cors_origins()` (dev-localhost defaults + `CORS_ORIGINS`/`FRONTEND_URL`, normalized — **never** `["*"]`); the wildcard default is gone. The `add_middleware` call is unchanged (`allow_credentials=True`, `allow_origins=cors_origins`, env regex). `get_secure_cors_origins`/`get_cors_origins` left in place; confirm `CORS_ORIGINS` set on prod for the exact frontend origin.
 **Test:** `integration/test_middleware_and_lifespan.py` — `get_cors_origins()` never returns `"*"` with env unset; a disallowed Origin is not reflected back.
 
-### 🔧 A3-1 — Google Calendar OAuth callback: no state validation + unauth token write — CSRF half ✔️ PR-B, token-at-rest encryption ⬜ (B3-7)
-**Status (THIS update):** the **CSRF half is ✔️ resolved (PR-B, commit `5629634e`)** — the `state` is now opaque, single-use, and validated, and the trusted `restaurant_id` is derived from the stored state record rather than the attacker-supplied query param. **The other half — B3-7 (Calendar tokens stored plaintext at rest, `encryption_utils` unused) — remains ⬜ OPEN.** Token-at-rest encryption is still outstanding; keep B3-7 open.
+### ✔️ A3-1 — Google Calendar OAuth callback: no state validation + unauth token write — CSRF half ✔️ PR-B, token-at-rest encryption ✔️ (B3-7, PR-G)
+**Status (THIS update):** the **CSRF half is ✔️ resolved (PR-B, commit `5629634e`)** — the `state` is now opaque, single-use, and validated, and the trusted `restaurant_id` is derived from the stored state record rather than the attacker-supplied query param. **The other half — B3-7 (Calendar token encryption at rest) — is now ✔️ resolved (PR-G, commit `4fff5f6`):** `encrypt_calendar_tokens` on connect + refresh, prefix-aware `decrypt_calendar_tokens` on read, field in `ENCRYPTED_CREDENTIAL_FIELDS`. **A3-1 is fully closed.**
 **Where:** connect `:2237`, callback `:2264`; `get_google_auth_url` in `calendar_service.py:33` (`"state": restaurant_id` at `:47`). Contrast Square `:5048` / Stripe Connect `:5127` (both call `consume_oauth_state`).
 **Problem:** The connect passes the raw `restaurant_id` as the OAuth `state` (plain, **not** a signed JWT). The callback (`google_calendar_callback`) takes `state`, does `restaurant_id = state` (`:2282`) with **no `consume_oauth_state`, no signature/JWT verify, and no `Depends(get_current_user)`**, then upserts `google_calendar_tokens` into that tenant.
 **Risk:** An attacker completes Google OAuth on their own account (valid `code`), then calls `GET /api/calendar/google/callback?code=<their_code>&state=<victim_restaurant_id>` (restaurant_id is semi-public — it appears in `/menu/{restaurant_id}` URLs). The callback writes the **attacker's** Google tokens into the **victim's** config → the victim's AI books its customers' appointments into the **attacker's** calendar (attacker sees customer names/times/phones; or sabotages bookings). Tokens (incl. `refresh_token`) are stored **plaintext** at rest (B3-7).
@@ -188,9 +188,9 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 |---|---|---|---|---|---|
 | B1-6/7/8 | 🟡 | `toast_integration.py` | Toast order submission malformed / kitchen-fire+fulfillment unverified (A7-2 family); Toast also blocked on partner approval (not live) | ⬜ | `unit/test_toast_integration_unit.py` |
 | B2-1 | 🔴* | `appointment_service.py` | Silent appointment dispatch failure — `dispatch_appointment` returns success on partial/failure; calendar-write + SMS not surfaced | ⬜ | `unit/test_appointment_service_validation.py`, `integration/test_api_appointments.py` |
-| B2-7 | 🟡 | `appointment_service.py` | Google Calendar free/busy not wired (manual block/unblock is the workaround) | ⬜ | `unit/test_calendar_service_unit.py` |
-| B2-x | 🟢 | `appointment_service.py` | Dead `function_call` path (appointment-todo #2) | ⬜ | — |
-| B3-7 | 🔴 | `encryption_utils.py` | Google Calendar tokens stored plaintext (util exists + POS creds use it; calendar tokens don't) — the still-OPEN half of A3-1 (its CSRF half is ✔️ PR-B; token-at-rest encryption outstanding) | ⬜ | `unit/test_encryption_utils.py`, `security/test_encryption_roundtrip_property.py` |
+| B2-7 | 🟡 | `appointment_service.py` | Calendar free/busy not wired into `get_available_slots` (one-way sync — bookings push to Google, but external busy events don't block AI slots; manual block/unblock is the workaround). `get_free_busy` helper already scaffolded. ⏸️ Deferred post-launch — feature, not a bug; non-launch-gating. | ⏸️ | `unit/test_calendar_service_unit.py` |
+| B2-x | 🟢 | `appointment_service.py` | Dead `function_call` path — verified ABSENT (`git log -S 'function_call'` shows it never existed in `appointment_service.py`; `dispatch_appointment` has no legacy branch). Already resolved. | ✔️ | — |
+| B3-7 | 🔴 | `encryption_utils.py` | Google Calendar tokens encrypted at rest (PR-G `4fff5f6`: `encrypt_calendar_tokens` on connect + refresh, prefix-aware `decrypt_calendar_tokens` on read; field in `ENCRYPTED_CREDENTIAL_FIELDS`). Completes A3-1 (CSRF half ✔️ PR-B). | ✔️ | `unit/test_encryption_utils.py`, `security/test_encryption_roundtrip_property.py` |
 | B4-10 | 🟡 | `server.py`/middleware | No request body-size limit → oversize-payload DoS | ⬜ | `security/test_input_validation_oversize_payloads.py` |
 | B5-26 | 🟡 | `delivery_utils.py` | `validate_delivery_distance` fail-open (delivery allowed when distance check errors); verify zip allowlist enforced | ⬜ | `unit/test_delivery_utils.py` |
 | B5-38 | 🟡 | `auto_learning_service.py` | Auto-learned aliases auto-apply with no human approve/reject gate (ties C24-1; endpoints exist, UI not wired) | ⬜ | `unit/test_auto_learning_service_unit.py` |
@@ -243,7 +243,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **C17-1 🟡** — `AppointmentsPage` surfaces conflict status (better than Orders) but total-failure dispatch (B2-1) is invisible. Surface total-failure.
 - **C17-4 🟡** — no manual appointment creation. Add it (reservations already have this).
 - **C18-2 🟡** — reservations have manual create + confirm; appointments lack both → the appointment vertical is less complete. Bring appointments to parity before selling salons.
-- **C15-8 🔍** — `Onboarding` claims timezone is "auto-detected from address" but the payload defaults `America/Chicago` → non-Central businesses get wrong hours unless they use the `BusinessTab` manual tz fix (which mitigates). Verify backend derivation.
+- **C15-8 ✔️** — Verified correct. `auto_detect_timezone(address)` (`server.py:493`, Google Geocoding + Timezone API) runs in `create_restaurant` and on address-change in update whenever tz is still the `America/Chicago` default — so it never clobbers an explicit pick, and degrades to the default on geocode failure with the `BusinessTab` manual override as backstop. The Onboarding "auto-detected from address" claim is accurate.
 
 ### 🔴 Marketing-claims cluster (pre-launch blocker — legal/FTC + trust; non-code lane)
 - **C32-1 🔴** — `FeaturesSection` claims **"SOC 2 compliant"** (no audit; open security holes) — highest-liability claim on the site. Also "30+ languages natively" (actually 4, parked). Remove both until true.
@@ -301,7 +301,7 @@ repair-membership takeover (PR #4) · OAuth state Square/Stripe + Square webhook
 # §E — Coverage map (findings ↔ tests ↔ status)
 Legend: ✅ acceptance test passing · 🔴xf xfail-strict capture (flips green when fixed) · 🟡 path tested, risk not asserted · ⛔ gap
 
-**Blockers (all ✔️ resolved):** A1-1 ✔️ → `integration/test_middleware_and_lifespan` (no-wildcard + disallowed-origin) · A1-2 ✔️ → `integration/test_api_root_and_bootstrap` (`/health`) · A3-1 CSRF ✔️ → `integration/test_api_oauth_integrations` + `unit/test_calendar_service_unit` (token-at-rest encryption still ⬜ B3-7) · A6-2 ✔️ → `integration/test_websocket_endpoints` + `unit/test_websocket_notifications_unit` · A7-1 ✔️ → `unit/test_gemini_service_pos_dispatch` + `voice/test_post_call_extraction_e2e` · A7-2 ✔️ → `unit/test_gemini_service_pos_dispatch` + `unit/test_pos_sync_unit` + `unit/test_toast_integration_unit`.
+**Blockers (all ✔️ resolved):** A1-1 ✔️ → `integration/test_middleware_and_lifespan` (no-wildcard + disallowed-origin) · A1-2 ✔️ → `integration/test_api_root_and_bootstrap` (`/health`) · A3-1 CSRF ✔️ → `integration/test_api_oauth_integrations` + `unit/test_calendar_service_unit` (token-at-rest encryption ✔️ B3-7, PR-G `4fff5f6`) · A6-2 ✔️ → `integration/test_websocket_endpoints` + `unit/test_websocket_notifications_unit` · A7-1 ✔️ → `unit/test_gemini_service_pos_dispatch` + `voice/test_post_call_extraction_e2e` · A7-2 ✔️ → `unit/test_gemini_service_pos_dispatch` + `unit/test_pos_sync_unit` + `unit/test_toast_integration_unit`.
 **All D3 bugs:** each has its named xfail-strict capture (🔴xf) — see §D table for file mapping.
 **Frontend:** C12-1 `VoiceAndAITab.test` · C24-1 `AILearningWidget.test` 🟡 · C22 `RulesTab.test` + `unit/test_gemini_service_prompt_assembly` 🔍 · C4-4 (bootstrap race) `AppSessionContext.test` 🟡 · C1-x `ProtectedRoute.test` ✅ · C9-3/C14-1/C23-3 tests exist but render-only 🟡.
 **Gaps (⛔):** marketing-claims cluster (C28–C35, not unit-testable — legal/content lane) · C12-6 plan-casing (no case-insensitivity assertion) · front-end info-leak console asserts · failure-visibility UX · infra (branch protection D1-1, deploy-gating D1-2, M0 backups, scheduler lock, Vercel limits).
