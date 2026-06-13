@@ -35,10 +35,7 @@ import {
   ArrowRight,
   LogOut,
   Briefcase,
-  Stethoscope,
   Scissors,
-  Wrench,
-  Scale,
   Zap,
 } from "lucide-react";
 import { SignOutButton } from "@clerk/clerk-react";
@@ -48,10 +45,7 @@ import { toast } from "sonner";
 // Business type options for horizontal platform
 const businessTypeOptions = [
   { value: "restaurant", label: "Restaurant / Food Service", icon: Utensils, description: "Restaurants, cafes, food trucks, catering" },
-  { value: "clinic", label: "Clinic / Healthcare", icon: Stethoscope, description: "Medical clinics, dental offices, therapy practices" },
   { value: "salon", label: "Salon / Beauty", icon: Scissors, description: "Hair salons, spas, nail studios, barbershops" },
-  { value: "home_services", label: "Home Services", icon: Wrench, description: "Plumbing, HVAC, cleaning, repair services" },
-  { value: "legal", label: "Legal / Professional", icon: Scale, description: "Law offices, consulting, accounting" },
 ];
 
 const steps = [
@@ -99,7 +93,7 @@ export default function Onboarding() {
   // Business type — read from localStorage if pre-selected from landing page
   const [businessType, setBusinessType] = useState<string>(() => {
     const preSelected = localStorage.getItem("ringai_selected_business_type");
-    if (preSelected && ["restaurant", "clinic", "salon", "home_services", "legal"].includes(preSelected)) {
+    if (preSelected && ["restaurant", "salon"].includes(preSelected)) {
       return preSelected;
     }
     return "restaurant";
@@ -146,7 +140,7 @@ export default function Onboarding() {
   });
 
   // Derived helpers
-  const isAppointmentBusiness = ["clinic", "salon", "home_services", "legal"].includes(businessType);
+  const isAppointmentBusiness = businessType === "salon";
 
   const getBusinessLabel = () => {
     switch (businessType) {

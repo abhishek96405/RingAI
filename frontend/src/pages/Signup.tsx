@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { SignUp } from "@clerk/clerk-react";
-import { Phone, Briefcase, Stethoscope, Scissors, Wrench, Scale, Utensils } from "lucide-react";
+import { Phone, Briefcase, Scissors, Utensils } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect } from "react";
 
@@ -40,10 +40,7 @@ const clerkAppearance = {
 
 const businessTypeConfig: Record<string, { label: string; icon: any; description: string }> = {
   restaurant: { label: "Restaurant / Food Service", icon: Utensils, description: "AI calling for restaurants, cafes, and food services" },
-  clinic: { label: "Clinic / Healthcare", icon: Stethoscope, description: "AI assistant for medical clinics and healthcare" },
   salon: { label: "Salon / Beauty", icon: Scissors, description: "AI receptionist for salons and beauty services" },
-  home_services: { label: "Home Services", icon: Wrench, description: "AI calling for home service businesses" },
-  legal: { label: "Legal / Professional", icon: Scale, description: "AI assistant for legal and professional offices" },
 };
 
 const Signup = () => {

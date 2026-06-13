@@ -96,6 +96,29 @@ def test_create_restaurant_rejects_bad_payload(client, mock_clerk):
     assert response.status_code == 422
 
 
+async def test_create_restaurant_rejects_dormant_business_type(
+    client, mock_clerk, patched_server_db
+):
+    """clinic/home_services/legal are dormant for launch — creation is rejected.
+
+    Restaurant + salon stay the only creatable verticals (I0 vertical-pruning).
+    """
+    for dormant in ("clinic", "home_services", "legal"):
+        resp = client.post(
+            "/api/restaurants",
+            headers={"Authorization": "Bearer tenant_a"},
+            json={"name": "Dormant Co", "business_type": dormant},
+        )
+        assert resp.status_code == 400, f"{dormant} should be rejected, got {resp.status_code}"
+
+    ok = client.post(
+        "/api/restaurants",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"name": "Glow Salon", "business_type": "salon"},
+    )
+    assert ok.status_code == 200, "salon must remain creatable"
+
+
 # ---------------------------------------------------------------------------
 # GET /api/restaurants  (list — proxies through bootstrap)
 # ---------------------------------------------------------------------------
