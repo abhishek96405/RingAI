@@ -34,6 +34,8 @@ const notificationIcons: Record<string, any> = {
   appointment: Calendar,
   reminder: Bell,
   system: Info,
+  order_dispatch_failed: AlertTriangle,
+  booking_dispatch_failed: AlertTriangle,
 };
 
 const notificationColors: Record<string, string> = {
@@ -44,6 +46,8 @@ const notificationColors: Record<string, string> = {
   appointment: "text-purple-500 bg-purple-500/10",
   reminder: "text-amber-500 bg-amber-500/10",
   system: "text-gray-500 bg-gray-500/10",
+  order_dispatch_failed: "text-destructive bg-destructive/10",
+  booking_dispatch_failed: "text-destructive bg-destructive/10",
 };
 
 // Base nav items (always shown)
@@ -99,12 +103,24 @@ const DashboardLayout = () => {
     
     setNotifications(prev => [notification, ...prev].slice(0, 50));
     
-    // Show toast for high-priority notifications
+    // Show toast for high-priority notifications. Dispatch failures (a lost
+    // order/booking the caller was told went through) get a longer error toast
+    // so the operator is more likely to catch and act on them.
     if (wsNotification.priority === "high") {
-      toast(wsNotification.title, {
-        description: wsNotification.message,
-        duration: 5000,
-      });
+      const isDispatchFailure =
+        typeof wsNotification.event === "string" &&
+        wsNotification.event.endsWith("_dispatch_failed");
+      if (isDispatchFailure) {
+        toast.error(wsNotification.title, {
+          description: wsNotification.message,
+          duration: 10000,
+        });
+      } else {
+        toast(wsNotification.title, {
+          description: wsNotification.message,
+          duration: 5000,
+        });
+      }
     }
   }, []);
 
