@@ -1137,14 +1137,38 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
     return new_user
 
 
-async def ensure_restaurant_access(restaurant_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
-    membership = await db.memberships.find_one({"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0})
+async def resolve_restaurant_access(
+    restaurant_id: str, user: Dict[str, Any]
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Authorize the user for ``restaurant_id`` and return ``(restaurant, membership)``
+    in a single membership+restaurant lookup.
+
+    Same 404 semantics as ``ensure_restaurant_access``. Use this — instead of calling
+    ``ensure_restaurant_access`` and then re-querying membership / the business
+    collection (A2-8/A3-3 double-lookup) — at routes that need the membership (e.g.
+    ``business_type``) and/or the restaurant doc. The returned restaurant is the FULL
+    document (sensitive fields intact); strip it with ``strip_sensitive_fields`` before
+    returning it to a client.
+    """
+    membership = await db.memberships.find_one(
+        {"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0}
+    )
     if not membership:
         raise HTTPException(status_code=404, detail="Restaurant not found")
     business_type = membership.get("business_type", "restaurant")
-    restaurant = await get_business_collection(business_type).find_one({"id": restaurant_id}, {"_id": 0})
+    restaurant = await get_business_collection(business_type).find_one(
+        {"id": restaurant_id}, {"_id": 0}
+    )
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
+    return restaurant, membership
+
+
+async def ensure_restaurant_access(restaurant_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    # Delegates to resolve_restaurant_access and returns the stripped restaurant. The
+    # contract (stripped doc + identical 404s) is unchanged for the callers that only
+    # need the access check.
+    restaurant, _membership = await resolve_restaurant_access(restaurant_id, user)
     return strip_sensitive_fields(restaurant)
 
 
