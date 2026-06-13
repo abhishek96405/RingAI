@@ -172,6 +172,57 @@ def test_cancel_appointment_missing_404(client, mock_clerk):
     assert response.status_code == 404
 
 
+async def test_confirm_appointment_resolves_conflict(
+    client, two_tenant_with_memberships, patched_server_db
+):
+    """A conflicting (double-booked) appointment can be promoted to confirmed."""
+    await patched_server_db.appointments.insert_one(
+        {
+            "id": "a1",
+            "restaurant_id": TENANT_A_ID,
+            "customer_name": "x",
+            "customer_phone": "+1",
+            "service_name": "s",
+            "scheduled_date": "2026-06-01",
+            "scheduled_time": "10:00",
+            "status": "conflict",
+        }
+    )
+    response = client.patch(
+        "/api/appointments/a1/confirm",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert response.status_code == 200
+    saved = await patched_server_db.appointments.find_one({"id": "a1"})
+    assert saved["status"] == "confirmed"
+
+
+async def test_confirm_appointment_rejects_non_conflict(
+    client, two_tenant_with_memberships, patched_server_db
+):
+    """Confirm is a narrow conflict-resolution action — a confirmed/cancelled
+    appointment cannot be re-confirmed through it (400, status unchanged)."""
+    await patched_server_db.appointments.insert_one(
+        {
+            "id": "a1",
+            "restaurant_id": TENANT_A_ID,
+            "customer_name": "x",
+            "customer_phone": "+1",
+            "service_name": "s",
+            "scheduled_date": "2026-06-01",
+            "scheduled_time": "10:00",
+            "status": "cancelled",
+        }
+    )
+    response = client.patch(
+        "/api/appointments/a1/confirm",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert response.status_code == 400
+    saved = await patched_server_db.appointments.find_one({"id": "a1"})
+    assert saved["status"] == "cancelled"
+
+
 async def test_send_appointment_reminder_only_for_confirmed(
     client, two_tenant_with_memberships, patched_server_db
 ):

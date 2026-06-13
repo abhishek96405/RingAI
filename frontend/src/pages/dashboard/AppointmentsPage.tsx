@@ -8,12 +8,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  getAppointments, cancelAppointment,
+  getAppointments, cancelAppointment, confirmAppointment,
   getAvailableSlots, getBlockedSlots, blockSlot, unblockSlot,
 } from "@/lib/api";
 import {
   Calendar, Clock, Phone, User, Search, X, Loader2,
-  ChevronLeft, ChevronRight, Lock, Unlock,
+  ChevronLeft, ChevronRight, Lock, Unlock, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import CreateAppointmentDialog from "./CreateAppointmentDialog";
@@ -93,6 +93,16 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
       fetchAppointments();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to cancel");
+    }
+  };
+
+  const handleConfirm = async (apt: Appointment) => {
+    try {
+      await confirmAppointment(apt.id);
+      toast.success("Appointment confirmed");
+      fetchAppointments();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to confirm");
     }
   };
 
@@ -185,7 +195,12 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
                       <span>{apt.scheduled_time} ({apt.duration_minutes}min)</span>
                     </div>
                   </div>
-                  {apt.status === "confirmed" && (
+                  {apt.status === "conflict" && (
+                    <Button variant="outline" size="sm" onClick={() => handleConfirm(apt)}>
+                      <Check className="w-4 h-4 mr-1" />Confirm
+                    </Button>
+                  )}
+                  {(apt.status === "confirmed" || apt.status === "conflict") && (
                     <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleCancel(apt)}>
                       <X className="w-4 h-4 mr-1" />Cancel
                     </Button>
