@@ -552,9 +552,11 @@ async def test_pos_test_connection_no_pos_type(client, two_tenant_with_membershi
     assert response.json()["success"] is False
 
 
-async def test_pos_test_clover_placeholder(
+async def test_pos_test_clover_missing_credentials(
     client, two_tenant_with_memberships, patched_server_db
 ):
+    # The Clover branch is now a real connection test (no longer a stub). With
+    # pos_type=clover but no token/merchant configured it reports missing creds.
     await patched_server_db.restaurants.update_one(
         {"id": TENANT_A_ID}, {"$set": {"pos_type": "clover"}}
     )
@@ -563,7 +565,9 @@ async def test_pos_test_clover_placeholder(
         headers={"Authorization": "Bearer tenant_a"},
     )
     assert response.status_code == 200
-    assert response.json()["success"] is True
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"] == "Clover credentials not configured"
 
 
 # ---------------------------------------------------------------------------

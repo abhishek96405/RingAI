@@ -2857,6 +2857,7 @@ class POSCredentials(BaseModel):
     toast_client_id: Optional[str] = None
     toast_client_secret: Optional[str] = None
     toast_restaurant_guid: Optional[str] = None
+    pos_env: Optional[str] = None
 
 @api_router.post("/restaurants/{restaurant_id}/pos/credentials")
 @limiter.limit(LIMIT_POS_CREDENTIALS)
@@ -2890,7 +2891,11 @@ async def save_pos_credentials(request: Request, restaurant_id: str, data: POSCr
     if data.toast_restaurant_guid:
         from encryption_utils import encrypt_value
         update["toast_restaurant_guid"] = encrypt_value(data.toast_restaurant_guid)
-    
+    # pos_env (sandbox/production) is not a secret — stored plaintext for the
+    # env switch in sync/test paths. Previously dropped silently by this handler.
+    if data.pos_env in ("sandbox", "production"):
+        update["pos_env"] = data.pos_env
+
     await coll.update_one({"id": restaurant_id}, {"$set": update})
     
     # Clear cached tokens when credentials change
@@ -2951,9 +2956,22 @@ async def test_pos_connection(request: Request, restaurant_id: str, user: Dict[s
     restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
-    
+
+    # Decrypt POS credentials before use (same pattern as pos_sync_menu). The
+    # toast branch's inline decrypt_value calls stay harmless — decrypt_value is
+    # prefix-aware/idempotent, so a second pass on already-decrypted values is a
+    # no-op.
+    try:
+        from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
+        restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
+    except Exception as e:
+        logger.error(
+            f"[{restaurant_id}] POS credential decryption failed during test: {e}",
+            exc_info=True,
+        )
+
     pos_type = restaurant.get("pos_type", "")
-    
+
     if pos_type == "toast":
         from encryption_utils import decrypt_value
         result = await test_toast_connection(
@@ -2964,11 +2982,35 @@ async def test_pos_connection(request: Request, restaurant_id: str, user: Dict[s
         )
         return result
     elif pos_type == "clover":
-        # Placeholder for Clover test
-        return {"success": True, "message": "Clover connection test not yet implemented"}
+        from pos_sync import get_valid_clover_token
+        token = await get_valid_clover_token(restaurant, db)
+        merchant_id = restaurant.get("clover_merchant_id", "")
+        if not token or not merchant_id:
+            return {"success": False, "error": "Clover credentials not configured"}
+        clover_env = restaurant.get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
+        data_api_base = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            resp = await http_client.get(
+                f"{data_api_base}/v3/merchants/{merchant_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if resp.status_code == 200:
+            return {"success": True, "message": "Clover connection OK"}
+        return {"success": False, "error": f"Clover API error: {resp.status_code}"}
     elif pos_type == "square":
-        # Placeholder for Square test
-        return {"success": True, "message": "Square connection test not yet implemented"}
+        access_token = restaurant.get("square_access_token", "")
+        if not access_token:
+            return {"success": False, "error": "Square credentials not configured"}
+        square_env = restaurant.get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+        square_base = "https://connect.squareupsandbox.com" if square_env == "sandbox" else "https://connect.squareup.com"
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            resp = await http_client.get(
+                f"{square_base}/v2/locations",
+                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            )
+        if resp.status_code == 200:
+            return {"success": True, "message": "Square connection OK"}
+        return {"success": False, "error": f"Square API error: {resp.status_code}"}
     else:
         return {"success": False, "error": "No POS type configured"}
 
@@ -5174,6 +5216,103 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
             }},
         )
     return {"connected": True, "restaurant_id": restaurant_id}
+
+
+# ─────────────────────────────────────────────────────────────
+# CLOVER v2 OAuth — connect + authenticated exchange
+#
+# Clover v2 OAuth does NOT support a state parameter, so we can't use the
+# unauthenticated-callback + state-token pattern Square uses. Instead the
+# browser redirect lands on the frontend, which POSTs the code to the
+# authenticated /exchange endpoint below. The auth + tenant check there
+# (ensure_restaurant_access) is what provides CSRF protection in place of
+# the missing state token.
+# ─────────────────────────────────────────────────────────────
+
+
+@api_router.get("/integrations/clover/connect")
+async def clover_connect(restaurant_id: str = Query(...), user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_restaurant_access(restaurant_id, user)
+    app_id = os.environ.get("CLOVER_APP_ID", "")
+    redirect_uri = os.environ.get("CLOVER_REDIRECT_URI", "")
+    if not app_id or not redirect_uri:
+        raise HTTPException(status_code=400, detail="Clover credentials are not configured")
+    # Same env switch as pos_sync._clover_oauth_base (inline, matching square_connect's style).
+    clover_env = os.environ.get("CLOVER_ENV", "sandbox")
+    oauth_base = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://www.clover.com"
+    # No state param — Clover v2 OAuth doesn't support it. CSRF protection is
+    # provided by the authenticated /exchange endpoint below.
+    connect_url = (
+        f"{oauth_base}/oauth/v2/authorize"
+        f"?client_id={app_id}&redirect_uri={redirect_uri}"
+    )
+    return {"connect_url": connect_url}
+
+
+class CloverOAuthExchange(BaseModel):
+    restaurant_id: str
+    code: str
+    merchant_id: str
+
+
+@api_router.post("/integrations/clover/exchange")
+async def clover_oauth_exchange(data: CloverOAuthExchange, user: Dict[str, Any] = Depends(get_current_user)):
+    # This auth + tenant check is the CSRF defense that replaces the state
+    # token Clover v2 OAuth doesn't support.
+    await ensure_restaurant_access(data.restaurant_id, user)
+
+    from pos_sync import exchange_clover_code
+    from encryption_utils import encrypt_value
+
+    try:
+        token_data = await exchange_clover_code(data.code)
+    except Exception as e:
+        logger.error(
+            f"[Clover OAuth] token exchange failed for {data.restaurant_id}: {e}",
+            exc_info=True,
+        )
+        await db.integrations.update_one(
+            {"provider": "clover", "restaurant_id": data.restaurant_id},
+            {"$set": {
+                "provider": "clover",
+                "restaurant_id": data.restaurant_id,
+                "status": "error",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        raise HTTPException(status_code=502, detail="Clover token exchange failed")
+
+    access_token = token_data.get("access_token", "")
+    refresh_token = token_data.get("refresh_token", "")
+    access_token_expiration = token_data.get("access_token_expiration")
+    refresh_token_expiration = token_data.get("refresh_token_expiration")
+
+    await db.integrations.update_one(
+        {"provider": "clover", "restaurant_id": data.restaurant_id},
+        {"$set": {
+            "provider": "clover",
+            "restaurant_id": data.restaurant_id,
+            "status": "connected",
+            "merchant_id": data.merchant_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+        await _coll.update_one(
+            {"id": data.restaurant_id},
+            {"$set": {
+                "pos_type": "clover",
+                "clover_connected": True,
+                "clover_api_token": encrypt_value(access_token),
+                "clover_merchant_id": encrypt_value(data.merchant_id),
+                "clover_refresh_token": encrypt_value(refresh_token or ""),
+                "clover_access_token_expiration": int(access_token_expiration or 0),
+                "clover_refresh_token_expiration": int(refresh_token_expiration or 0),
+            }},
+        )
+    return {"connected": True, "restaurant_id": data.restaurant_id}
 
 
 # ─────────────────────────────────────────────────────────────

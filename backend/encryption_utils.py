@@ -158,7 +158,8 @@ def decrypt_calendar_tokens(tokens):
 # Fields that should be encrypted at rest
 ENCRYPTED_CREDENTIAL_FIELDS = {
     "clover_api_token",
-    "clover_merchant_id", 
+    "clover_merchant_id",
+    "clover_refresh_token",
     "square_access_token",
     "square_location_id",
     "toast_client_id",
