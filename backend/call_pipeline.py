@@ -942,8 +942,13 @@ class CallSession:
                     # Could NOT verify (no ZIPs configured AND no/failed Maps API).
                     # Fail closed: don't dispatch blind, but the caller was told the
                     # order is confirmed — so don't lose it silently or mislead them
-                    # with "outside area". Alert the operator to verify + handle it
-                    # manually (A7-1 family).
+                    # with "outside area". Mark it DISPATCH_FAILED so it surfaces on
+                    # the dashboard's failure surface (OrdersPage badge + banner, C9-1),
+                    # then alert the operator to verify + enter it manually (A7-1 family).
+                    self.order.dispatch_failure_reason = (
+                        f"delivery address could not be verified ({validation.get('reason')})"
+                    )
+                    self.order.transition(OrderState.DISPATCH_FAILED, "delivery address unverifiable")
                     logger.error(
                         f"[{self.call_sid}] Delivery address UNVERIFIABLE "
                         f"(reason={validation.get('reason')}) — holding for operator review"
