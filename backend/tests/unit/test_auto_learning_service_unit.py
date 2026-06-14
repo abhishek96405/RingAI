@@ -112,30 +112,141 @@ async def test_increments_occurrence_count_on_repeat(async_db):
     assert doc.get("applied") is not True  # below threshold
 
 
-async def test_auto_applies_after_threshold(async_db):
-    """At 5 occurrences (MENU_ALIAS_THRESHOLD), alias is auto-applied."""
+async def test_threshold_no_longer_auto_applies(async_db):
+    """B5-38: past the old MENU_ALIAS_THRESHOLD, aliases are NOT auto-applied.
+
+    They stay pending (applied=False) and the menu item is untouched until a
+    human approves via approve_alias_suggestion.
+    """
     from auto_learning_service import AutoLearningService
     svc = AutoLearningService(async_db)
 
-    # Pre-seed a menu item to attach the alias to
     await async_db.menu_items.insert_one({
         "restaurant_id": "rest_a",
         "name": "Apollo Fish",
         "aliases": [],
     })
 
-    for i in range(5):
+    for i in range(6):  # past the old threshold of 5
         out = await svc._process_menu_suggestion(
             restaurant_id="rest_a",
             suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
             call_id=f"call_{i}",
         )
 
-    # 5th occurrence triggers auto-apply
-    assert out["auto_applied"] is True
+    assert out["auto_applied"] is False
+    doc = await async_db.learning_suggestions.find_one({
+        "restaurant_id": "rest_a", "alias_term": "fish bowl",
+    })
+    assert doc.get("applied") is not True
+    assert doc["occurrence_count"] == 6
+    item = await async_db.menu_items.find_one({"name": "Apollo Fish"})
+    assert "fish bowl" not in item.get("aliases", [])
+
+
+async def test_approve_alias_suggestion_applies_and_marks(async_db):
+    """Approving a pending alias applies it to the menu and marks it applied."""
+    from auto_learning_service import AutoLearningService
+    svc = AutoLearningService(async_db)
+
+    await async_db.menu_items.insert_one({
+        "restaurant_id": "rest_a", "name": "Apollo Fish", "aliases": [],
+    })
+    await svc._process_menu_suggestion(
+        restaurant_id="rest_a",
+        suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
+        call_id="c1",
+    )
+    pending = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+
+    result = await svc.approve_alias_suggestion("rest_a", str(pending["_id"]))
+    assert result is not None and result["applied"] is True
 
     item = await async_db.menu_items.find_one({"name": "Apollo Fish"})
     assert "fish bowl" in item["aliases"]
+    doc = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+    assert doc["applied"] is True
+    out = await svc.get_pending_suggestions("rest_a")
+    assert all(a["alias_term"] != "fish bowl" for a in out["pending_aliases"])
+    learned = await svc.get_learned_aliases("rest_a")
+    assert any(a["alias_term"] == "fish bowl" for a in learned)
+    stats = await async_db.learning_stats.find_one({"restaurant_id": "rest_a"})
+    assert stats["aliases_learned"] == 1
+
+
+async def test_approve_alias_suggestion_invalid_id_returns_none(async_db):
+    from auto_learning_service import AutoLearningService
+    svc = AutoLearningService(async_db)
+    assert await svc.approve_alias_suggestion("rest_a", "not-an-objectid") is None
+
+
+async def test_approve_alias_suggestion_wrong_tenant_returns_none(async_db):
+    """Tenant isolation: can't approve another restaurant's suggestion."""
+    from auto_learning_service import AutoLearningService
+    svc = AutoLearningService(async_db)
+    await svc._process_menu_suggestion(
+        restaurant_id="rest_a",
+        suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
+        call_id="c1",
+    )
+    pending = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+    assert await svc.approve_alias_suggestion("rest_b", str(pending["_id"])) is None
+
+
+async def test_reject_alias_suggestion_marks_and_hides(async_db):
+    from auto_learning_service import AutoLearningService
+    svc = AutoLearningService(async_db)
+    await svc._process_menu_suggestion(
+        restaurant_id="rest_a",
+        suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
+        call_id="c1",
+    )
+    pending = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+
+    assert await svc.reject_alias_suggestion("rest_a", str(pending["_id"])) is True
+    doc = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+    assert doc["rejected"] is True
+    assert doc.get("applied") is not True
+    out = await svc.get_pending_suggestions("rest_a")
+    assert all(a["alias_term"] != "fish bowl" for a in out["pending_aliases"])
+
+
+async def test_rejected_suggestion_not_resurfaced(async_db):
+    """A rejected term isn't re-counted or resurfaced on later calls."""
+    from auto_learning_service import AutoLearningService
+    svc = AutoLearningService(async_db)
+    await svc._process_menu_suggestion(
+        restaurant_id="rest_a",
+        suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
+        call_id="c1",
+    )
+    pending = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+    await svc.reject_alias_suggestion("rest_a", str(pending["_id"]))
+
+    out = await svc._process_menu_suggestion(
+        restaurant_id="rest_a",
+        suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
+        call_id="c2",
+    )
+    assert out is None
+    doc = await async_db.learning_suggestions.find_one({"alias_term": "fish bowl"})
+    assert doc["occurrence_count"] == 1
+
+
+async def test_get_pending_suggestions_exposes_string_id(async_db):
+    """Pending suggestions carry a JSON-safe string id (for approve/reject)."""
+    from auto_learning_service import AutoLearningService
+    svc = AutoLearningService(async_db)
+    await svc._process_menu_suggestion(
+        restaurant_id="rest_a",
+        suggestion={"said": "fish bowl", "resolved_as": "Apollo Fish"},
+        call_id="c1",
+    )
+    out = await svc.get_pending_suggestions("rest_a")
+    assert len(out["pending_aliases"]) == 1
+    item = out["pending_aliases"][0]
+    assert isinstance(item["id"], str) and item["id"]
+    assert "_id" not in item
 
 
 async def test_string_format_suggestions_still_parsed(async_db):

@@ -2386,6 +2386,40 @@ async def manually_apply_alias(
         return {"success": True, "message": f"Global alias '{alias}' → '{target}' created"}
 
 
+@api_router.post("/restaurants/{restaurant_id}/learning/aliases/{suggestion_id}/approve")
+async def approve_learning_alias(
+    restaurant_id: str,
+    suggestion_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Approve a pending auto-learned alias — applies it to the menu (B5-38 human gate)."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    if not get_plan_features(restaurant.get("plan", "STARTER"))["auto_learning"]:
+        raise HTTPException(status_code=403, detail="Auto-learning is not available on this plan")
+    learning_service = get_learning_service(db)
+    result = await learning_service.approve_alias_suggestion(restaurant_id, suggestion_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Pending alias suggestion not found")
+    return {"success": True, **result}
+
+
+@api_router.post("/restaurants/{restaurant_id}/learning/aliases/{suggestion_id}/reject")
+async def reject_learning_alias(
+    restaurant_id: str,
+    suggestion_id: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Reject a pending auto-learned alias — dismisses it so it won't resurface (B5-38)."""
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+    if not get_plan_features(restaurant.get("plan", "STARTER"))["auto_learning"]:
+        raise HTTPException(status_code=403, detail="Auto-learning is not available on this plan")
+    learning_service = get_learning_service(db)
+    ok = await learning_service.reject_alias_suggestion(restaurant_id, suggestion_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Pending alias suggestion not found")
+    return {"success": True, "rejected": True}
+
+
 # ============================================================
 # GOOGLE CALENDAR INTEGRATION ENDPOINTS
 # ============================================================
