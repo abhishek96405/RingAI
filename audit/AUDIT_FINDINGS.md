@@ -51,7 +51,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | A5-2 | 🟡 | Billing | Overage decision reads a stale pre-fetched call count | ⬜ |
 | A5-3 | 🟡 | Functional | Square OAuth callback stores raw auth code, never exchanges for token | 🔍 |
 | A6-1 | 🟡 | Access ctl | `send_menu_sms_endpoint` no membership check → SMS abuse/spoofing | ⬜ |
-| A1-4 | 🟡 | Tech debt | Data migration runs on every startup | ⬜ |
+| A1-4 | 🟡 | Tech debt | Data migration runs on every startup | ✔️ |
 | A2-8/A3-3 | 🟡 | Perf | Double restaurant+membership lookup per request (systemic) | 🔧 |
 | A1-5 | 🟢 | Ops | `logging.basicConfig` after early log calls | ⬜ |
 | A2-4 | 🟢 | Dead code | `select_restaurant` orphaned + redundant local imports | ⬜ |
@@ -125,7 +125,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **A5-2** — Overage decision reads a stale pre-fetched count (`:4586`). Use `find_one_and_update(..., return_document=AFTER)`.
 - **A5-3** — Square OAuth callback (`:5044–5064`) stores the raw `auth_code` and sets `square_connected=True` but never exchanges it for a token → integration likely non-functional. Exchange + store encrypted token. (Verify in `pos_sync.py`, B-series.)
 - **A6-1** — `send_menu_sms_endpoint` (`:3840`) doesn't enforce membership → SMS cost abuse + spoofing. Use `ensure_restaurant_access`.
-- **A1-4** — Migration runs on every startup (`:382–411`). One-off script then remove the hook (appointment-todo #1).
+- **A1-4** ✔️ (PR-J/J4 — appointment-todo #1) — `migrate_businesses_to_typed_collections` was `@app.on_event("startup")`, re-running a data migration on every boot. Removed the startup decorator; the function is retained as a callable, test-covered utility. The comprehensive one-off lives in `backend/migrate_split_brain.py` (dry-run by default). Safe to unwire: `create_restaurant` writes new businesses straight to the typed collection (and rejects dormant types), so nothing needs ongoing migration, and existing data is already migrated.
 - **A2-8 / A3-3** 🔧 (PR-J/J2 — substantially addressed; long tail tracked) — ~18 `restaurant_id` routes called `ensure_restaurant_access` (which already fetches membership + restaurant) and then re-fetched both — 4 reads where 2 suffice. Instead of changing `ensure_restaurant_access`'s return type (a breaking change to all ~77 call sites), added `resolve_restaurant_access(restaurant_id, user) -> (full_restaurant, membership)` (J2a) and refactored `ensure_restaurant_access` to delegate to it (contract unchanged; unit-tested in `tests/unit/test_resolve_restaurant_access_unit.py`). Migrated the highest-value double-lookups — reservation routes (J2b) + POS routes (J2c), 4→2 reads each. **Remaining ~11 double-lookup routes tracked for opportunistic migration** (helper already in place): 5 config-only sites (save 1 read each — settings/calendar config routes), 2 `coll = get_business_collection` variants, and 4 structural outliers where the access check is separated from the re-fetch (demo-data + manual-booking + available-slots) needing per-site care on auth/error ordering. **Enumerate the remainder anytime:** ``grep -n 'membership = await db.memberships.find_one({"restaurant_id"' backend/server.py`` and keep the hits with an `ensure_restaurant_access` within ~8 lines above. **TRIGGER:** migrate each to `resolve_restaurant_access` when next touching that route.
 
 ## Detail — Medium (`gemini_service.py`)
