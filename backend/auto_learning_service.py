@@ -56,7 +56,7 @@ class AutoLearningService:
             "aliases_learned": [],
             "rules_suggested": [],
             "flagged_for_review": False,
-            "quality_score": analysis.get("quality_score", 0),
+            "quality_score": analysis.get("quality_score"),
         }
         
         # A7-17: may be None when Gemini was unavailable (honest "analysis
