@@ -766,7 +766,7 @@ class RestaurantConfig(BaseModel):
     business_type: str = "restaurant"
 
     persona: str = "friendly"
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    voice_id: str = "Leda"  # must be a real Gemini Live voice — a stale ElevenLabs ID here kills live calls (1011)
     primary_language: str = "en"
     multilingual_enabled: bool = False
     additional_languages: List[str] = []
@@ -3763,7 +3763,7 @@ async def startup_seed():
         config = RestaurantConfig(
             restaurant_id="demo-restaurant-001",
             persona="warm and friendly Italian-American",
-            voice_id="21m00Tcm4TlvDq8ikWAM",
+            voice_id="Leda",
             escalation_phone_number="+15553456789",
             business_rules=[
                 "Maximum party size for reservations is 12",

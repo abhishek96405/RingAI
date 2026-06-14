@@ -1553,23 +1553,47 @@ def classify_booking_intent(
     )
 
 
+# Gemini Live native-audio voices the app supports — MUST match voiceOptions in
+# the frontend settings/constants.ts picker. Any other value (a typo, or a stale
+# ElevenLabs voice_id like "21m00Tcm4TlvDq8ikWAM" left over from the old TTS stack)
+# makes Gemini Live reject the session setup with a 1011 internal error and the
+# call dies in silence — so anything not in this set is ignored for the default.
+_GEMINI_LIVE_VOICES = frozenset({
+    "Leda", "Kore", "Aoede", "Puck", "Zephyr", "Orus", "Fenrir", "Charon",
+})
+_DEFAULT_GEMINI_VOICE = "Leda"
+
+
 def _resolve_voice(requested: Optional[str], session: Optional[CallSession]) -> str:
-    """A8-6: choose the live TTS voice. Priority:
+    """A8-6: choose the live TTS voice. Priority (each candidate must be a real
+    Gemini Live voice, or it's skipped):
       1. an explicitly-passed `voice` arg,
       2. the restaurant's saved config.voice_id (session.config),
       3. env GEMINI_VOICE,
       4. the platform default "Leda".
-    The VoiceAndAITab picker persists config.voice_id using real Gemini voice
-    names (Leda/Kore/Aoede/Puck/Zephyr/Orus/Fenrir/Charon), so the stored value
-    is safe to hand straight to GeminiLive with no mapping.
+    Validation matters: a stale/invalid voice_id (e.g. an ElevenLabs ID from the
+    old TTS stack) handed to Gemini Live kills the session with a 1011 internal
+    error and the caller hears dead air — so an invalid value falls through to the
+    next source instead of being shipped.
     """
-    if requested:
+    if requested in _GEMINI_LIVE_VOICES:
         return requested
+
     if session is not None:
         cfg_voice = (getattr(session, "config", None) or {}).get("voice_id")
-        if cfg_voice:
+        if cfg_voice in _GEMINI_LIVE_VOICES:
             return cfg_voice
-    return os.environ.get("GEMINI_VOICE", "Leda")
+        if cfg_voice:
+            logger.warning(
+                f"Ignoring invalid voice_id '{cfg_voice}' (not a Gemini Live voice) "
+                f"— using default '{_DEFAULT_GEMINI_VOICE}'"
+            )
+
+    env_voice = os.environ.get("GEMINI_VOICE")
+    if env_voice in _GEMINI_LIVE_VOICES:
+        return env_voice
+
+    return _DEFAULT_GEMINI_VOICE
 
 
 async def create_call_pipeline(
