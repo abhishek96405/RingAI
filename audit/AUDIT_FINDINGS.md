@@ -64,7 +64,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | A4-4 | 🟢 | Observability | Silent `except` on POS credential decryption | ⬜ |
 | A5-4 | 🟢 | Billing | No explicit Stripe event-id dedup (mitigated; handlers idempotent) | ⬜ |
 | A5-5 | 🟢 | Billing | `refund_order` leaks raw Stripe error + Stripe-before-DB + no idempotency key | ⬜ |
-| A5-6 | 🟢 | Perf | `$inc`/`$set` fan-out across all 5 collections for one restaurant_id | ⬜ |
+| A5-6 | 🟢 | Perf | `$inc`/`$set` fan-out across all 5 collections for one restaurant_id | ⏸️ |
 | A6-3 | 🟢 | Access ctl | `telnyx_get_order` authed but not scoped to caller | ⬜ |
 | A6-4 | 🟢 | Security | `test-mode/status` + `scenarios` unauthenticated | ⬜ |
 | A6-5 | 🟢 | Webhook | Square webhook signs over `str(request.url)` — proxy mismatch risk | ⬜ |
@@ -155,7 +155,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **A4-4** — Silent `except` on POS credential decryption (`:4511–4513`). Log to Sentry.
 - **A5-4** — No explicit Stripe event-id dedup (`:4862`). Mitigated; add `event.id` dedup as defense-in-depth. (See D3-13.)
 - **A5-5** — `refund_order` (`:5212`) leaks raw Stripe error, refunds before DB update, no idempotency key.
-- **A5-6** — `$inc`/`$set` fan-out across all 5 collections (`:4580`, `:5063`) — 4 no-ops. Resolve `business_type` once.
+- **A5-6** ⏸️ **ACCEPTED (by design; cold-path tidy-up tracked).** The hot-path fan-out is already gone: the per-call `monthly_call_count` `$inc` was de-fanned to break-on-match in PR-H (A5-2), and the `visit_count` `$inc` is a single `customer_profiles` upsert (not a business-collection fan-out). The remaining `$set` fan-outs all live on **cold integration paths** — `stripe_webhook`, `square_callback`, `clover_oauth_exchange`, `stripe_connect_callback`/`disconnect` — which fire rarely (a tenant connects a POS once; webhooks occasionally). There the fan-out is a deliberate safety net: it writes POS/billing flags + encrypted credentials to the tenant doc *regardless of which business collection it lives in*, protecting the most sensitive fields against the collection-misplacement class this codebase has hit (the split-brain bug). Resolving `business_type` once to write a single collection would trade that robustness for ~4 no-op writes on rare events — a bad trade. **Tracked tidy-up (post-launch):** now that only `restaurants`+`salons` are active verticals (I0), narrow the fan-out list from all 5 to `[db.restaurants, db.salons]` — keeps cross-collection robustness on the live axis while dropping the 3 always-empty writes. **TRIGGER:** when the dormant clinic/home_services/legal collections are formally retired.
 - **A6-3** — `telnyx_get_order` (`:3824`) authed but not scoped to caller. Scope via the audit record's `restaurant_id`.
 - **A6-4** — `test-mode/status` + `test-mode/scenarios` (`:5456`, `:5461`) unauthenticated. Require auth or disable in prod.
 - **A6-5** — Square webhook signs over `str(request.url)` (`:5296`) → behind CF/Render scheme/host may mismatch. Ensure proxy headers (ties to A6-7).
