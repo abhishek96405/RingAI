@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Bell, Calendar, CalendarDays, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed, Briefcase, X, CheckCircle2, AlertTriangle, Info, PhoneIncoming, Wifi, WifiOff, ShieldCheck } from "lucide-react";
+import { Bell, Brain, Calendar, CalendarDays, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed, Briefcase, X, CheckCircle2, AlertTriangle, Info, PhoneIncoming, Wifi, WifiOff, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -61,6 +61,7 @@ const restaurantNavItems = [
   { icon: UtensilsCrossed, label: "Menu", path: "/dashboard/menu" },
   { icon: ShoppingBag, label: "Orders", path: "/dashboard/orders" },
   { icon: CalendarDays, label: "Reservations", path: "/dashboard/reservations", proOnly: true },
+  { icon: Brain, label: "AI Learning", path: "/dashboard/learning", proOnly: true },
 ];
 
 // Appointment business nav items
