@@ -53,13 +53,13 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | A6-1 | 🟡 | Access ctl | `send_menu_sms_endpoint` no membership check → SMS abuse/spoofing | ⬜ |
 | A1-4 | 🟡 | Tech debt | Data migration runs on every startup | ✔️ |
 | A2-8/A3-3 | 🟡 | Perf | Double restaurant+membership lookup per request (systemic) | 🔧 |
-| A1-5 | 🟢 | Ops | `logging.basicConfig` after early log calls | ⬜ |
+| A1-5 | 🟢 | Ops | `logging.basicConfig` after early log calls | ✔️ |
 | A2-4 | 🟢 | Dead code | `select_restaurant` orphaned + redundant local imports | ⬜ |
 | A2-5 | 🟢 | Logic | Unreachable plan-gating branch in `update_restaurant` | ⬜ |
 | A2-6 | 🟢 | Branding | "Powered by RingAI" on customer-facing public menu page | ⬜ |
 | A1-6 | 🟢 | Branding | "RingAI" in API title + root message | ⬜ |
 | A2-7 | 🟢 | Consistency | Input sanitization applied unevenly | ⬜ |
-| A1-7 | 🟢 | Resilience | All service modules hard-imported → any import error crashes startup | ⬜ |
+| A1-7 | 🟢 | Resilience | All service modules hard-imported → any import error crashes startup | ⏸️ |
 | A4-3 | 🟢 | Analytics | Call duration estimated `len(transcript)*8` (NOT billing) | ⬜ |
 | A4-4 | 🟢 | Observability | Silent `except` on POS credential decryption | ⬜ |
 | A5-4 | 🟢 | Billing | No explicit Stripe event-id dedup (mitigated; handlers idempotent) | ⬜ |
@@ -144,13 +144,13 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **A8-7** — Appointment dispatch failures silent: `dispatch_booking` (`:1028`) returns `True` on partial/failure with no customer/business alert (A7-1 family). Verify `dispatch_appointment` internals (calendar write + SMS) in `appointment_service.py` (B-series).
 
 ## Detail — Low / polish (`server.py`)
-- **A1-5** — `logging.basicConfig` at `:414` after Sentry init + import warnings → early INFO swallowed.
+- **A1-5** ✔️ (PR-J/J5) — `logging.basicConfig` ran after the import-time log calls (Sentry init, optional-service import warnings, service-module import logging), so early INFO was swallowed (root defaults to WARNING) and early records missed the timestamp/name format. Moved the identical `basicConfig` call (plus the module `logger`) to the top of the module, right after the import block — `basicConfig` is a no-op once the root logger has handlers, so it must run before the first log call. Pure relocation; level/format args unchanged.
 - **A2-4** — `select_restaurant` (`:1140`) orphaned (no decorator); redundant local `asyncio`/`HTMLResponse` imports.
 - **A2-5** — `update_restaurant` (~`:1230`) pops a field then checks `if field in update_data` (unreachable).
 - **A2-6** — "Powered by RingAI" on the customer-facing menu page (~`:1465`). Rebrand before launch.
 - **A1-6** — FastAPI title "RingAI API" (`:357`) + root message (`:1108`). Cosmetic.
 - **A2-7** — Sanitization uneven (`create_service` rigorous; menu/restaurant rely on Pydantic + output escaping).
-- **A1-7** — All service modules hard-imported (`:258–356`); any import error crashes startup.
+- **A1-7** ⏸️ **ACCEPTED (by design)** (PR-J/J5) — on inspection the split is already correct. The genuinely-optional modules are soft-imported with graceful degradation: `sentry_sdk` (try/except → "Sentry init skipped"), `payment_service` (try/except → "SMS payment links disabled"), `auto_learning_service` (try/except → "AI learning disabled"). The core modules (`gemini_service`, `call_pipeline`, `auth_helpers`, `security_middleware`, `rate_limiting`, `encryption_utils`, `reservation_service`) are hard-imported — which is the desired behavior: if a core module can't import, the service is fundamentally broken and should fail fast and loudly at deploy/boot, not start "healthy" and then 500 when a user hits a call/auth/billing path. Softening these to try/except would hide deploy failures (missing dep, bad env) until runtime — strictly worse. No code change.
 - **A4-3** — Call duration `len(transcript)*8` in `on_call_complete`. NOT billing (billing is per-call-count). Analytics inconsistent: `:4385` uses accurate `duration_seconds_actual`; `:2672/:2739/:2792` use the estimate.
 - **A4-4** — Silent `except` on POS credential decryption (`:4511–4513`). Log to Sentry.
 - **A5-4** — No explicit Stripe event-id dedup (`:4862`). Mitigated; add `event.id` dedup as defense-in-depth. (See D3-13.)

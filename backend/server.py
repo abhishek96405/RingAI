@@ -27,6 +27,15 @@ import stripe
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
+# A1-5: configure logging at the top of the module, before any import-time log calls
+# (Sentry init, optional-service import warnings, and any service module that logs on
+# import). logging.basicConfig is a no-op once the root logger has handlers, so it must
+# run first — otherwise early INFO is swallowed (root defaults to WARNING) and early
+# records miss the "%(asctime)s ..." format. The module `logger` is defined here too so
+# it exists for any code that runs during import.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # PLAN CONFIGURATION — SINGLE SOURCE OF TRUTH
@@ -478,10 +487,6 @@ async def migrate_businesses_to_typed_collections():
         logger.info("[Migration] Business collection migration complete")
     except Exception as e:
         logger.error(f"[Migration] Error during migration: {e}")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
 
 
 # ============================================================
