@@ -1459,6 +1459,25 @@ def classify_booking_intent(
     )
 
 
+def _resolve_voice(requested: Optional[str], session: Optional[CallSession]) -> str:
+    """A8-6: choose the live TTS voice. Priority:
+      1. an explicitly-passed `voice` arg,
+      2. the restaurant's saved config.voice_id (session.config),
+      3. env GEMINI_VOICE,
+      4. the platform default "Leda".
+    The VoiceAndAITab picker persists config.voice_id using real Gemini voice
+    names (Leda/Kore/Aoede/Puck/Zephyr/Orus/Fenrir/Charon), so the stored value
+    is safe to hand straight to GeminiLive with no mapping.
+    """
+    if requested:
+        return requested
+    if session is not None:
+        cfg_voice = (getattr(session, "config", None) or {}).get("voice_id")
+        if cfg_voice:
+            return cfg_voice
+    return os.environ.get("GEMINI_VOICE", "Leda")
+
+
 async def create_call_pipeline(
     websocket,
     system_prompt: str,
@@ -1480,7 +1499,7 @@ async def create_call_pipeline(
     try:
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
         model   = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
-        voice   = os.environ.get("GEMINI_VOICE", "Leda")
+        voice   = _resolve_voice(voice, session)
 
         logger.info(f"[{call_sid}] Starting pipeline | model={model} voice={voice}")
 
