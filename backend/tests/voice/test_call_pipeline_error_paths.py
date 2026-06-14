@@ -251,9 +251,15 @@ async def test_delivery_outside_radius_sends_rejection_sms(
     stub_order_extraction["return_value"] = extracted
     sess.order.transition(OrderState.CONFIRMED, "test")
 
-    # Mock the distance validator to return OUT-OF-RADIUS.
+    # Mock the validator to return a CONCLUSIVE out-of-radius result
+    # (allowed=False, verified=True) — accurate customer rejection SMS.
     fake_validation = AsyncMock(
-        return_value={"within_radius": False, "distance_miles": 12.5}
+        return_value={
+            "allowed": False,
+            "verified": True,
+            "distance_miles": 12.5,
+            "reason": "outside_radius",
+        }
     )
     monkeypatch.setattr("delivery_utils.validate_delivery_distance", fake_validation)
     monkeypatch.setattr("call_pipeline.send_order_to_kitchen", AsyncMock())
@@ -265,11 +271,12 @@ async def test_delivery_outside_radius_sends_rejection_sms(
     assert stub_send_sms[0]["to"] == "+15555550199"
 
 
-async def test_delivery_validation_exception_proceeds_with_dispatch(
+async def test_delivery_validation_exception_fails_closed(
     make_call_session, stub_order_extraction, monkeypatch
 ):
-    """If the distance validator raises, we log and dispatch anyway — don't
-    block legitimate orders on a validator outage."""
+    """B5-26/C21-1: if the validator itself raises, we FAIL CLOSED — hold the
+    order for operator review instead of dispatching a delivery we couldn't
+    confirm. The kitchen must NOT be called."""
     from gemini_service import LiveOrder, OrderItem, OrderState
 
     sess = make_call_session()
@@ -297,11 +304,13 @@ async def test_delivery_validation_exception_proceeds_with_dispatch(
         "delivery_utils.validate_delivery_distance",
         AsyncMock(side_effect=RuntimeError("boom")),
     )
+    notify = AsyncMock()
+    monkeypatch.setattr(sess, "_notify_delivery_unverifiable", notify)
     kitchen = AsyncMock(
         return_value={"success": True, "order_id": "k1", "method": "database"}
     )
     monkeypatch.setattr("call_pipeline.send_order_to_kitchen", kitchen)
 
     result = await sess.dispatch_order_if_ready()
-    assert result is True
-    kitchen.assert_awaited_once()
+    assert result is False
+    kitchen.assert_not_awaited()

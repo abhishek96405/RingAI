@@ -886,8 +886,9 @@ class CallSession:
                 self._order_dispatched = False
                 return False
 
-        # Post-call delivery address validation (distance check)
+        # Post-call delivery eligibility (ZIP allowlist + distance).
         # startswith covers both "delivery" and the combined "delivery+reservation".
+        # B5-26/C21-1: FAIL CLOSED — never dispatch a delivery we couldn't confirm.
         if self.order.order_type.startswith("delivery") and self.order.delivery_address:
             try:
                 from delivery_utils import validate_delivery_distance
@@ -895,21 +896,37 @@ class CallSession:
                     restaurant_address=self.restaurant.get("address", ""),
                     delivery_address=self.order.delivery_address,
                     max_radius_miles=self.restaurant.get("delivery_radius_miles", 5.0),
+                    delivery_zip_codes=self.restaurant.get("delivery_zip_codes", []),
                 )
-                if not validation.get("within_radius"):
+            except Exception as e:
+                # The validator catches its own errors and returns a dict, so this
+                # shouldn't happen — but if it does, fail CLOSED (treat as unverifiable).
+                logger.error(f"[{self.call_sid}] Delivery validation crashed: {e}", exc_info=True)
+                validation = {"allowed": False, "verified": False, "reason": "validator_error", "distance_miles": None}
+
+            if not validation.get("allowed"):
+                self._order_dispatched = False
+                if validation.get("verified"):
+                    # Conclusively out of area (ZIP not allowlisted, or distance >
+                    # radius). Tell the customer accurately; do not dispatch.
                     logger.warning(
-                        f"[{self.call_sid}] Delivery address outside radius: "
-                        f"{validation.get('distance_miles', '?')} miles"
+                        f"[{self.call_sid}] Delivery out of area "
+                        f"(reason={validation.get('reason')}, distance={validation.get('distance_miles', '?')} miles)"
                     )
-                    # Send apology SMS via Telnyx
                     try:
                         from telnyx_service import send_sms
+                        _dist = validation.get("distance_miles")
+                        _max_mi = self.restaurant.get("delivery_radius_miles", 5)
+                        _detail = (
+                            f"it's outside our delivery area ({_dist} miles, max {_max_mi} miles)"
+                            if _dist is not None
+                            else "your address isn't in our delivery area"
+                        )
                         await send_sms(
                             to=self.caller_number,
                             body=(
                                 f"Sorry, {self.restaurant.get('name', 'the restaurant')} "
-                                f"cannot deliver to your address — it's outside our delivery area "
-                                f"({validation.get('distance_miles', '?')} miles, max {self.restaurant.get('delivery_radius_miles', 5)} miles). "
+                                f"cannot deliver to your address — {_detail}. "
                                 f"Please call back to place a pickup order instead."
                             ),
                             idempotency_key=f"delivery_reject:{self.call_sid}",
@@ -921,12 +938,23 @@ class CallSession:
                         )
                     except Exception as sms_err:
                         logger.error(f"[{self.call_sid}] Delivery rejection SMS error: {sms_err}")
-                    self._order_dispatched = False
-                    return False
-                logger.info(f"[{self.call_sid}] Delivery address validated: {validation.get('distance_miles')} miles")
-            except Exception as e:
-                logger.warning(f"[{self.call_sid}] Delivery validation skipped: {e}")
-                # Proceed anyway — don't block order if validation service fails
+                else:
+                    # Could NOT verify (no ZIPs configured AND no/failed Maps API).
+                    # Fail closed: don't dispatch blind, but the caller was told the
+                    # order is confirmed — so don't lose it silently or mislead them
+                    # with "outside area". Alert the operator to verify + handle it
+                    # manually (A7-1 family).
+                    logger.error(
+                        f"[{self.call_sid}] Delivery address UNVERIFIABLE "
+                        f"(reason={validation.get('reason')}) — holding for operator review"
+                    )
+                    asyncio.create_task(self._notify_delivery_unverifiable(validation))
+                return False
+
+            logger.info(
+                f"[{self.call_sid}] Delivery eligible "
+                f"(reason={validation.get('reason')}, distance={validation.get('distance_miles')})"
+            )
 
         self._order_dispatched = True
         result = await send_order_to_kitchen(self.order, self.restaurant, self.db)
@@ -1018,6 +1046,67 @@ class CallSession:
                 logger.error(f"[{self.call_sid}] dispatch-failure SMS error: {sms_err}")
         except Exception as e:
             logger.error(f"[{self.call_sid}] _notify_dispatch_failure unexpected error: {e}")
+
+    async def _notify_delivery_unverifiable(self, validation: Dict[str, Any]) -> None:
+        """Alert the operator that a delivery order's address could not be verified
+        (no delivery ZIPs configured AND the Maps distance check was unavailable), so
+        it was held rather than auto-dispatched (B5-26 fail-closed). The caller was
+        told the order is confirmed, so the operator must confirm the address is
+        deliverable and enter the order manually. Delivery twin of
+        _notify_dispatch_failure (A7-1).
+
+        NEVER raises and NEVER blocks call teardown.
+        """
+        reason = validation.get("reason", "unverifiable")
+        addr = self.order.delivery_address or "(no address captured)"
+        try:
+            # (a) Real-time dashboard push — reuse the dispatch-failure surface;
+            # from the operator's POV this is an order that needs manual handling.
+            try:
+                from websocket_notifications import notify_order_dispatch_failed
+                await notify_order_dispatch_failed(
+                    restaurant_id=self.restaurant_id,
+                    call_sid=self.call_sid,
+                    caller_number=self.caller_number,
+                    attempted_pos="delivery address check",
+                    error=f"address unverifiable ({reason})",
+                    total=self.order.total,
+                )
+            except Exception as ws_err:
+                logger.error(f"[{self.call_sid}] delivery-unverifiable WS notify error: {ws_err}")
+
+            # (b) Operator SMS — same destination resolution as dispatch failures.
+            alert_phone = (
+                (self.config.get("dispatch_alert_phone") if self.config else None)
+                or (self.config.get("escalation_phone_number") if self.config else None)
+                or self.restaurant.get("owner_phone")
+            )
+            if not alert_phone:
+                logger.warning(
+                    f"[{self.call_sid}] Delivery unverifiable but no operator number configured "
+                    f"(dispatch_alert_phone/escalation_phone_number/owner_phone) — SMS skipped"
+                )
+                return
+            try:
+                import telnyx_service
+                await telnyx_service.send_sms(
+                    to=alert_phone,
+                    body=(
+                        f"Duuutah AI: a delivery order from {self.caller_number} could not have its "
+                        f"address auto-verified ({reason}). Address: {addr}. The order is saved in your "
+                        f"dashboard — please confirm it's in your delivery area and enter it manually."
+                    ),
+                    idempotency_key=f"delivery_unverified:{self.call_sid}",
+                    metadata={
+                        "purpose": "delivery_unverifiable_alert",
+                        "restaurant_id": self.restaurant_id,
+                        "call_sid": self.call_sid,
+                    },
+                )
+            except Exception as sms_err:
+                logger.error(f"[{self.call_sid}] delivery-unverifiable SMS error: {sms_err}")
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] _notify_delivery_unverifiable unexpected error: {e}")
 
     # ------------------------------------------------------------------
     # Final call record builder
