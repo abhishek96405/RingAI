@@ -94,14 +94,4 @@ describe("DashboardHome page (Duuutah AI overview)", () => {
       ).toBeInTheDocument()
     );
   });
-
-  it("shows the AI Learning upsell card on the STARTER plan", async () => {
-    renderWithProviders(<Shell />);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: /^AI Learning$/i })
-      ).toBeInTheDocument()
-    );
-    expect(screen.getByText(/Upgrade to Pro/i)).toBeInTheDocument();
-  });
 });

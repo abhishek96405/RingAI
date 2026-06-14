@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Brain, CheckCircle, XCircle, AlertTriangle, Sparkles, Plus, RefreshCw } from "lucide-react";
-import { api, getRestaurantId } from "@/lib/api";
+import { api, getRestaurantId, approveLearningAlias, rejectLearningAlias } from "@/lib/api";
 import { toast } from "sonner";
 
 interface LearningStats {
@@ -31,6 +31,7 @@ interface LearnedAlias {
 }
 
 interface PendingSuggestion {
+  id: string;
   alias_term?: string;
   target_item?: string;
   rule_text?: string;
@@ -107,6 +108,26 @@ export const AILearningWidget = () => {
     }
   };
 
+  const handleApproveAlias = async (aliasId: string) => {
+    try {
+      await approveLearningAlias(restaurantId, aliasId);
+      toast.success("Alias approved and added to your menu");
+      fetchData();
+    } catch (err) {
+      toast.error("Failed to approve alias");
+    }
+  };
+
+  const handleRejectAlias = async (aliasId: string) => {
+    try {
+      await rejectLearningAlias(restaurantId, aliasId);
+      toast.success("Suggestion dismissed");
+      fetchData();
+    } catch (err) {
+      toast.error("Failed to dismiss suggestion");
+    }
+  };
+
   if (loading) {
     return (
       <Card className="p-6">
@@ -132,7 +153,7 @@ export const AILearningWidget = () => {
             </Button>
           </div>
           <CardDescription>
-            The AI learns from every call - no manual training needed
+            The AI suggests aliases from your calls - you approve what goes live
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -239,17 +260,45 @@ export const AILearningWidget = () => {
             </p>
           )}
           
-          {/* Pending suggestions */}
+          {/* Pending suggestions — approve/reject (C24-1) */}
           {pendingSuggestions.pending_aliases.length > 0 && (
             <div className="mb-4">
               <p className="text-xs text-muted-foreground mb-2">
-                Learning ({pendingSuggestions.pending_aliases.length} pending)...
+                Pending review ({pendingSuggestions.pending_aliases.length}) - approve to add to your menu
               </p>
-              <div className="flex flex-wrap gap-1">
-                {pendingSuggestions.pending_aliases.slice(0, 5).map((s, i) => (
-                  <Badge key={i} variant="secondary" className="text-xs opacity-70">
-                    "{s.alias_term}" ({s.occurrence_count}x)
-                  </Badge>
+              <div className="space-y-2">
+                {pendingSuggestions.pending_aliases.slice(0, 8).map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between gap-2 p-2 rounded-lg border bg-card"
+                    data-testid={`pending-alias-${s.id}`}
+                  >
+                    <div className="min-w-0 text-sm">
+                      <span className="font-medium">"{s.alias_term}"</span>
+                      <span className="text-muted-foreground"> → {s.target_item}</span>
+                      <Badge variant="secondary" className="text-xs ml-2">{s.occurrence_count}x</Badge>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                        onClick={() => handleApproveAlias(s.id)}
+                        title="Approve - add this alias to your menu"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => handleRejectAlias(s.id)}
+                        title="Reject - dismiss this suggestion"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>

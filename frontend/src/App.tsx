@@ -19,6 +19,7 @@ import IntegrationsPage from "./pages/dashboard/IntegrationsPage";
 import ServicesPage from "./pages/dashboard/ServicesPage";
 import AppointmentsPage from "./pages/dashboard/AppointmentsPage";
 import ReservationsPage from "./pages/dashboard/ReservationsPage";
+import AILearningPage from "./pages/dashboard/AILearningPage";
 import AdminPage from "./pages/dashboard/AdminPage";
 import NotFound from "./pages/NotFound";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
@@ -233,6 +234,7 @@ const AppRoutes = () => (
       <Route path="services" element={<ServicesPage />} />
       <Route path="appointments" element={<AppointmentsPage />} />
       <Route path="reservations" element={<ReservationsPage />} />
+      <Route path="learning" element={<AILearningPage />} />
       <Route path="admin" element={<AdminPage />} />
     </Route>
     <Route path="/payment-success" element={<PaymentSuccessPage />} />
