@@ -230,7 +230,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **C9-3 🟡** — `OrdersPage` fetches ≤3 pages (~300 most-recent calls) then silently truncates older orders, with no "showing N of M". Add real pagination (match `CallsPage`).
 - **C21-1 🟡** — fulfillment: delivery radius relies on the fail-open `validate_delivery_distance` (B5-26). Verify a zip allowlist is enforced.
 - **C21-4 🟡** — `FulfillmentTab` saves to two docs (restaurant + config) → partial-save risk if one write fails. Make it transactional or reconcile.
-- **C16-3 🟡** — `CallsPage` shows `quality_score` / AI-analysis as real, but A7-17 fabricates them. Hide/label until A7-17 is fixed. (Transcript-only, no stored audio — a positive.)
+- **C16-3 ✔️** (PR-K/K2b) — with A7-17 fixed (K2a) the analysis fallback returns a null score + `analysis_available=false` instead of fabricated values, so the UI is already truthful (the list row hides a null score). K2b makes it explicit: the detail Quality Score tile reads "Unavailable" and the AI-Analysis block shows a muted "analysis was unavailable" note when `analysis_available === false`. (Transcript-only, no stored audio — a positive.)
 
 ### Voice / AI / Pro features
 - **C12-1 ✔️** (PR-K/K1) — resolved via A8-6: `create_call_pipeline` now honors `config.voice_id` instead of the env voice, so the `VoiceAndAITab` picker drives live calls. No frontend change needed (the picker already persists `config.voice_id`).

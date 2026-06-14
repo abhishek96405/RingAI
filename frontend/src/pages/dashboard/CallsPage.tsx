@@ -338,7 +338,7 @@ const CallsPage = () => {
                   <div className="p-3 rounded-lg bg-muted/30"><p className="text-xs text-muted-foreground">Phone</p><p className="text-sm font-medium">{selectedCall.caller_number}</p></div>
                   <div className="p-3 rounded-lg bg-muted/30"><p className="text-xs text-muted-foreground">Duration</p><p className="text-sm font-medium">{formatDuration(selectedCall.duration_seconds)}</p></div>
                   <div className="p-3 rounded-lg bg-muted/30"><p className="text-xs text-muted-foreground">Status</p><Badge variant="secondary" className={`text-xs border-0 mt-1 ${statusColors[selectedCall.status] || "bg-primary/10 text-primary"}`}>{selectedCall.status}</Badge></div>
-                  <div className="p-3 rounded-lg bg-muted/30"><p className="text-xs text-muted-foreground">Quality Score</p><p className="text-sm font-medium">{selectedCall.quality_score || "--"}</p></div>
+                  <div className="p-3 rounded-lg bg-muted/30"><p className="text-xs text-muted-foreground">Quality Score</p><p className="text-sm font-medium">{selectedCall.quality_score != null ? selectedCall.quality_score : "Unavailable"}</p></div>
                 </div>
 
                 {selectedCall.order_json && (
@@ -380,9 +380,15 @@ const CallsPage = () => {
                     <Separator />
                     <div>
                       <h4 className="text-sm font-display font-semibold mb-3">AI Analysis</h4>
-                      <p className="text-sm text-muted-foreground mb-3">{selectedCall.analysis_json.summary}</p>
-                      {selectedCall.analysis_json.highlights?.length > 0 && <div className="mb-3"><p className="text-xs font-medium text-success mb-1">Highlights</p><div className="flex flex-wrap gap-1.5">{selectedCall.analysis_json.highlights.map((h: string, i: number) => <Badge key={i} variant="secondary" className="text-xs bg-success/10 text-success border-0">{h}</Badge>)}</div></div>}
-                      {selectedCall.analysis_json.issues?.length > 0 && <div><p className="text-xs font-medium text-warning mb-1">Issues</p><div className="flex flex-wrap gap-1.5">{selectedCall.analysis_json.issues.map((issue: string, i: number) => <Badge key={i} variant="secondary" className="text-xs bg-warning/10 text-warning border-0">{issue}</Badge>)}</div></div>}
+                      {selectedCall.analysis_json.analysis_available === false ? (
+                        <p className="text-sm text-muted-foreground italic">Automated quality analysis was unavailable for this call.</p>
+                      ) : (
+                        <>
+                          <p className="text-sm text-muted-foreground mb-3">{selectedCall.analysis_json.summary}</p>
+                          {selectedCall.analysis_json.highlights?.length > 0 && <div className="mb-3"><p className="text-xs font-medium text-success mb-1">Highlights</p><div className="flex flex-wrap gap-1.5">{selectedCall.analysis_json.highlights.map((h: string, i: number) => <Badge key={i} variant="secondary" className="text-xs bg-success/10 text-success border-0">{h}</Badge>)}</div></div>}
+                          {selectedCall.analysis_json.issues?.length > 0 && <div><p className="text-xs font-medium text-warning mb-1">Issues</p><div className="flex flex-wrap gap-1.5">{selectedCall.analysis_json.issues.map((issue: string, i: number) => <Badge key={i} variant="secondary" className="text-xs bg-warning/10 text-warning border-0">{issue}</Badge>)}</div></div>}
+                        </>
+                      )}
                     </div>
                   </>
                 )}
