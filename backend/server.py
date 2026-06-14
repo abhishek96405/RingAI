@@ -1456,6 +1456,105 @@ async def update_restaurant_config(restaurant_id: str, data: RestaurantConfigUpd
     config = await cfg_coll.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     return config
 
+
+# ============================================================
+# FULFILLMENT — atomic two-doc save (C21-4)
+# ============================================================
+class _FulfillmentRestaurantFields(BaseModel):
+    pickup_enabled: Optional[bool] = None
+    delivery_enabled: Optional[bool] = None
+    reservations_enabled: Optional[bool] = None
+    offers_delivery: Optional[bool] = None
+    offers_reservations: Optional[bool] = None
+    avg_prep_time_minutes: Optional[int] = None
+    delivery_fee: Optional[int] = None
+    delivery_radius_miles: Optional[float] = None
+    delivery_zip_codes: Optional[list] = None
+    delivery_eta_offset_minutes: Optional[int] = None
+    reservation_party_limit: Optional[int] = None
+    reservation_slot_duration: Optional[int] = None
+    reservation_max_per_slot: Optional[int] = None
+    reservation_advance_booking_days: Optional[int] = None
+
+
+class _FulfillmentConfigFields(BaseModel):
+    delivery_enabled: Optional[bool] = None
+    delivery_minimum: Optional[int] = None
+
+
+class FulfillmentUpdate(BaseModel):
+    restaurant: Optional[_FulfillmentRestaurantFields] = None
+    config: Optional[_FulfillmentConfigFields] = None
+
+
+@api_router.put("/restaurants/{restaurant_id}/fulfillment")
+async def update_fulfillment(
+    restaurant_id: str,
+    data: FulfillmentUpdate,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Atomic two-doc save for the Fulfillment settings tab (C21-4).
+
+    Fulfillment edits span the restaurant doc (capabilities + delivery/reservation
+    settings) and the config doc (delivery_minimum). Both are written inside one
+    MongoDB transaction, so either both land or neither does — no silent partial
+    save. On Atlas (a replica set) this is a real transaction; the in-memory test
+    DB can't run transactions, so it degrades to sequential writes there only.
+
+    Typed sub-models act as a field whitelist: Pydantic drops anything not listed
+    (so this endpoint can't be used to set plan/is_active/name, etc.).
+    """
+    restaurant = await ensure_restaurant_access(restaurant_id, user)
+
+    rest_fields = data.restaurant.model_dump(exclude_none=True) if data.restaurant else {}
+    cfg_fields = data.config.model_dump(exclude_none=True) if data.config else {}
+
+    # Plan gating — mirror update_restaurant: a plan without delivery/reservations
+    # can't switch them on here.
+    plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+    if not plan_features["delivery_enabled"]:
+        rest_fields.pop("delivery_enabled", None)
+        cfg_fields.pop("delivery_enabled", None)
+    if not plan_features["reservations_enabled"]:
+        rest_fields.pop("reservations_enabled", None)
+
+    if not rest_fields and not cfg_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    membership = await db.memberships.find_one(
+        {"restaurant_id": restaurant_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    business_type = membership.get("business_type", "restaurant") if membership else "restaurant"
+    coll = get_business_collection(business_type)
+    cfg_coll = get_config_collection(business_type)
+
+    async def _txn(session):
+        kw = {"session": session} if session is not None else {}
+        if rest_fields:
+            await coll.update_one({"id": restaurant_id}, {"$set": rest_fields}, **kw)
+        existing = await cfg_coll.find_one({"restaurant_id": restaurant_id}, **kw)
+        if existing:
+            if cfg_fields:
+                await cfg_coll.update_one({"restaurant_id": restaurant_id}, {"$set": cfg_fields}, **kw)
+        else:
+            new_cfg = RestaurantConfig(restaurant_id=restaurant_id, **cfg_fields).model_dump()
+            await cfg_coll.insert_one(new_cfg, **kw)
+
+    # mongomock (the in-memory test DB) can't run transactions; Motor/Atlas can.
+    # mongomock_motor subclasses the real motor client, so type(db).__module__
+    # reads "motor.*" — detect the mock via the client's MRO instead.
+    is_mock_db = any("mongomock" in cls.__module__ for cls in type(db.client).__mro__)
+    if is_mock_db:
+        await _txn(None)
+    else:
+        async with await db.client.start_session() as session:
+            await session.with_transaction(_txn)
+
+    updated_restaurant = await coll.find_one({"id": restaurant_id}, {"_id": 0})
+    updated_config = await cfg_coll.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    return {"restaurant": strip_sensitive_fields(updated_restaurant), "config": updated_config}
+
+
 @api_router.get("/voice-preview/{voice_name}")
 async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Generate a short audio preview of a Gemini voice using TTS API."""

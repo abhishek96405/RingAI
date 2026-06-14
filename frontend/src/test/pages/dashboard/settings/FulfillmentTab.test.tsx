@@ -16,8 +16,7 @@ const makeProps = (overrides: Partial<Parameters<typeof FulfillmentTab>[0]> = {}
   config: {},
   setConfig: vi.fn(),
   saving: false,
-  onSaveRestaurant: vi.fn().mockResolvedValue(undefined),
-  onSaveConfig: vi.fn().mockResolvedValue(undefined),
+  onSave: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 });
 
@@ -66,18 +65,16 @@ describe("FulfillmentTab", () => {
     expect(screen.getByText(/Delivery Settings/i)).toBeInTheDocument();
   });
 
-  it("invokes both save handlers when the Save button is clicked", async () => {
+  it("invokes the single atomic save handler when the Save button is clicked", async () => {
     const user = userEvent.setup();
-    const onSaveRestaurant = vi.fn().mockResolvedValue(undefined);
-    const onSaveConfig = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(
       <FulfillmentTab
-        {...makeProps({ onSaveRestaurant, onSaveConfig })}
+        {...makeProps({ onSave })}
       />
     );
 
     await user.click(screen.getByRole("button", { name: /save fulfillment/i }));
-    expect(onSaveRestaurant).toHaveBeenCalled();
-    expect(onSaveConfig).toHaveBeenCalled();
+    expect(onSave).toHaveBeenCalledTimes(1);
   });
 });

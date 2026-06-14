@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppSession } from "@/context/AppSessionContext";
-import { getConfig, getRestaurant, getRestaurantId, updateConfig, updateRestaurant } from "@/lib/api";
+import { getConfig, getRestaurant, getRestaurantId, updateConfig, updateFulfillment, updateRestaurant } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Building2, Clock, PhoneForwarded, ShoppingBag, Mic, ShieldAlert } from "lucide-react";
@@ -158,6 +158,44 @@ const SettingsPage = () => {
     }
   };
 
+  // Fulfillment spans two docs (restaurant + config). One atomic backend call
+  // writes both or neither — no silent partial save (C21-4).
+  const saveFulfillment = async () => {
+    setSaving(true);
+    try {
+      const restaurantId = activeRestaurant?.id || getRestaurantId();
+      const restaurantFields: any = {
+        pickup_enabled: restaurant?.pickup_enabled,
+        delivery_enabled: restaurant?.delivery_enabled,
+        reservations_enabled: restaurant?.reservations_enabled,
+        offers_delivery: restaurant?.offers_delivery,
+        offers_reservations: restaurant?.offers_reservations,
+        avg_prep_time_minutes: Number(restaurant?.avg_prep_time_minutes || 0),
+        delivery_fee: Number(restaurant?.delivery_fee || 0),
+        delivery_radius_miles: Number(restaurant?.delivery_radius_miles || 5),
+        delivery_zip_codes: restaurant?.delivery_zip_codes || [],
+        delivery_eta_offset_minutes: Number(restaurant?.delivery_eta_offset_minutes || 15),
+        reservation_party_limit: Number(restaurant?.reservation_party_limit || 0),
+      };
+      if (restaurant?.reservations_enabled) {
+        restaurantFields.reservation_slot_duration = Number(restaurant?.reservation_slot_duration || 30);
+        restaurantFields.reservation_max_per_slot = Number(restaurant?.reservation_max_per_slot || 5);
+        restaurantFields.reservation_advance_booking_days = Number(restaurant?.reservation_advance_booking_days || 7);
+      }
+      const configFields: any = {
+        delivery_enabled: restaurant?.delivery_enabled,
+        delivery_minimum: Number(config?.delivery_minimum || 0),
+      };
+      await updateFulfillment(restaurantId, { restaurant: restaurantFields, config: configFields });
+      await refreshSession(restaurantId);
+      toast.success("Fulfillment saved!");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to save Fulfillment");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <div className="space-y-4">{[...Array(3)].map((_, i) => <Card key={i} className="premium-card h-40 animate-pulse" />)}</div>;
 
   return (
@@ -226,8 +264,7 @@ const SettingsPage = () => {
               config={config}
               setConfig={setConfig}
               saving={saving}
-              onSaveRestaurant={saveRestaurant}
-              onSaveConfig={saveConfig}
+              onSave={saveFulfillment}
             />
           </TabsContent>
         )}

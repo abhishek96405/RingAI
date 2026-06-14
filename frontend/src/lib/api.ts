@@ -121,6 +121,9 @@ export const getConfig = (id?: string | null) => api.get(`/restaurants/${require
 export const updateConfig = (id: string | null | undefined, data: unknown) =>
   api.put(`/restaurants/${requireRestaurantId(id)}/config`, data);
 
+export const updateFulfillment = (id: string | null | undefined, data: unknown) =>
+  api.put(`/restaurants/${requireRestaurantId(id)}/fulfillment`, data);
+
 export const getMenuItems = (id?: string | null, category?: string) => {
   const params = category ? { category } : {};
   return api.get(`/restaurants/${requireRestaurantId(id)}/menu`, { params });
