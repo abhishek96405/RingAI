@@ -442,12 +442,18 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 
-@app.on_event("startup")
 async def migrate_businesses_to_typed_collections():
     """
     One-time migration: move documents from db.restaurants to the correct
-    typed collection based on their business_type field.
-    Idempotent — safe to run on every startup.
+    typed collection based on their business_type field. Idempotent.
+
+    A1-4: no longer wired to @app.on_event("startup") — running a data migration on
+    every boot is wasteful and risky. New businesses are created directly in the correct
+    typed collection (create_restaurant routes via get_business_collection and rejects
+    dormant types), so there is nothing to migrate on an ongoing basis, and existing data
+    has already been migrated. The comprehensive one-off repair lives in
+    backend/migrate_split_brain.py (dry-run by default); this narrower helper is retained
+    as a callable utility and is covered by the migration tests.
     """
     try:
         all_docs = await db.restaurants.find(
