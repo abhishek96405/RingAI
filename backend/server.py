@@ -3462,7 +3462,10 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
         "special_instructions": "",
     }
     analysis = await analyse_call_transcript(transcript, order_json, menu_items)
-    quality = analysis.get("quality_score", random.randint(78, 99))
+    # A7-17: preserve a null score when Gemini was unavailable — never substitute
+    # a fabricated number. analyse_call_transcript always sets the key, so .get()
+    # returns None (not the default) on the honest-fallback path.
+    quality = analysis.get("quality_score")
 
     now = datetime.now(timezone.utc)
     start_offset = random.randint(0, 3600 * 4)
@@ -4819,7 +4822,10 @@ async def telnyx_media_stream(websocket: WebSocket):
                     escalated_to_human=escalated,
                     transcript=transcript,
                     order_json=order_data,
-                    quality_score=analysis.get("quality_score", quality_score),
+                    # A7-17: keep the analysis score null when Gemini was
+                    # unavailable (the deterministic rule_based_score still lives
+                    # in analysis_json["rule_eval"]); don't backfill a number.
+                    quality_score=analysis.get("quality_score"),
                     analysis_json={**analysis, "rule_eval": quality_eval if session else {}},
                     order_total=order_total,
                 )
@@ -6070,7 +6076,7 @@ async def run_test_scenario(
         escalated_to_human=scenario.get("order_type") == "escalation",
         transcript=transcript,
         order_json=order_json,
-        quality_score=analysis.get("quality_score", 85),
+        quality_score=analysis.get("quality_score"),  # A7-17: null when unavailable, no default
         analysis_json=analysis,
         order_total=total,
     )

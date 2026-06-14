@@ -59,7 +59,10 @@ class AutoLearningService:
             "quality_score": analysis.get("quality_score", 0),
         }
         
-        quality_score = analysis.get("quality_score", 85)
+        # A7-17: may be None when Gemini was unavailable (honest "analysis
+        # unavailable" marker). None can't be compared with < / >= below, so we
+        # guard every numeric branch on `is not None`.
+        quality_score = analysis.get("quality_score")
         menu_suggestions = analysis.get("menu_suggestions", [])
         rule_suggestions = analysis.get("rule_suggestions", [])
         
@@ -80,14 +83,14 @@ class AutoLearningService:
                 actions_taken["rules_suggested"].append(rule_result)
         
         # 3. Flag low-quality calls for review
-        if quality_score < LOW_QUALITY_THRESHOLD:
+        if quality_score is not None and quality_score < LOW_QUALITY_THRESHOLD:
             await self._flag_call_for_review(
                 restaurant_id, call_id, analysis, quality_score
             )
             actions_taken["flagged_for_review"] = True
-        
+
         # 4. Track successful patterns (positive reinforcement)
-        if order_completed and quality_score >= 80:
+        if order_completed and quality_score is not None and quality_score >= 80:
             await self._record_success_pattern(
                 restaurant_id, call_id, order_total
             )

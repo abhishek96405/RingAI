@@ -2276,6 +2276,7 @@ async def analyse_call_transcript(
             if not isinstance(result.get(key), list):
                 result[key] = []
 
+        result["analysis_available"] = True
         return result
 
     except Exception as e:
@@ -2284,23 +2285,23 @@ async def analyse_call_transcript(
 
 
 def _mock_call_analysis(transcript, order_json):
-    import random
+    """Gemini-unavailable fallback (A7-17). Do NOT fabricate a quality_score or
+    invent issues/highlights — that fake data was being stored and shown in the
+    dashboard as if it were a real analysis. Return an explicit 'analysis
+    unavailable' marker instead; the UI renders it as unavailable, not a number."""
     return {
-        "quality_score": random.randint(78, 99),
-        "order_accuracy": "accurate",
+        "quality_score": None,
+        "analysis_available": False,
+        "order_accuracy": "unknown",
         "detected_language": "en",
-        "issues": random.sample(
-            ["Minor pause before confirming order", "Could have offered drinks", "Slight delay in greeting"],
-            random.randint(0, 1),
-        ),
-        "highlights": random.sample(
-            ["Clear order readback", "Friendly tone", "Efficient flow", "Natural conversation", "Proper greeting"],
-            random.randint(2, 4),
-        ),
+        "issues": [],
+        "highlights": [],
         "menu_suggestions": [],
         "rule_suggestions": [],
-        "summary": f"Call completed with {len(transcript)} exchanges. "
-                   f"{'Order placed successfully.' if order_json else 'No order placed.'}",
+        "summary": (
+            "Automated quality analysis was unavailable for this call"
+            + (" (order placed)." if order_json else " (no order placed).")
+        ),
     }
 
 # ---------------------------------------------------------------------------
