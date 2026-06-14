@@ -62,21 +62,31 @@ const OrdersPage = () => {
       const restaurantId = getRestaurantId();
       if (!restaurantId) { setOrders([]); setFiltered([]); return; }
 
-    // Fetch up to 3 pages to get up to 300 orders
-      const [res1, res1e] = await Promise.all([
-        getCalls(restaurantId, { page: 1, limit: 100, status: "COMPLETED" }),
-        getCalls(restaurantId, { page: 1, limit: 100, status: "ESCALATED" }),
+      // Load ALL order-bearing calls (orders live on COMPLETED or ESCALATED calls),
+      // not just the first few pages — otherwise older orders silently vanish (C9-3).
+      // Page 1 reports the page count; the rest are fetched in parallel. MAX_PAGES is
+      // a stopgap safety cap (50 × 100 = 5k calls/status) until the dedicated
+      // server-side /orders endpoint replaces this client-side load.
+      const MAX_PAGES = 50;
+      const fetchAllCalls = async (status: string) => {
+        const first = await getCalls(restaurantId, { page: 1, limit: 100, status });
+        const calls = [...(first.data.calls || [])];
+        const pages = Math.min(first.data.pages || 1, MAX_PAGES);
+        if (pages > 1) {
+          const rest = await Promise.all(
+            Array.from({ length: pages - 1 }, (_, i) =>
+              getCalls(restaurantId, { page: i + 2, limit: 100, status })
+            )
+          );
+          rest.forEach((r) => calls.push(...(r.data.calls || [])));
+        }
+        return calls;
+      };
+      const [completedCalls, escalatedCalls] = await Promise.all([
+        fetchAllCalls("COMPLETED"),
+        fetchAllCalls("ESCALATED"),
       ]);
-      const data = res1.data;
-      let allCalls = [...(data.calls || []), ...(res1e.data.calls || [])];
-      if (data.pages > 1) {
-        const res2 = await getCalls(restaurantId, { page: 2, limit: 100, status: "COMPLETED" });
-        allCalls = [...allCalls, ...(res2.data.calls || [])];
-      }
-      if (data.pages > 2) {
-        const res3 = await getCalls(restaurantId, { page: 3, limit: 100, status: "COMPLETED" });
-        allCalls = [...allCalls, ...(res3.data.calls || [])];
-      }
+      const allCalls = [...completedCalls, ...escalatedCalls];
 
       const withOrders = allCalls.filter(
         (c: any) => c.order_json && c.order_json.items && c.order_json.items.length > 0
@@ -143,11 +153,16 @@ const OrdersPage = () => {
     return `DTH-${sid.slice(-8).toUpperCase()}`;
   };
 
-  const totalRevenue = orders.reduce((sum, o) => sum + (o.order_total || 0), 0);
-  const avgOrder = orders.length > 0 ? totalRevenue / orders.length : 0;
-  const failedCount = orders.filter(
-    (o) => o.order_json?.state === "DISPATCH_FAILED"
-  ).length;
+  // A DISPATCH_FAILED order was confirmed with the caller but never reached the POS
+  // (or its delivery address couldn't be verified) — money not actually earned, so
+  // it's excluded from revenue and the average. It still counts as an order the AI
+  // captured, so Total Orders stays orders.length.
+  const fulfilledOrders = orders.filter(
+    (o) => o.order_json?.state !== "DISPATCH_FAILED"
+  );
+  const totalRevenue = fulfilledOrders.reduce((sum, o) => sum + (o.order_total || 0), 0);
+  const avgOrder = fulfilledOrders.length > 0 ? totalRevenue / fulfilledOrders.length : 0;
+  const failedCount = orders.length - fulfilledOrders.length;
 
   const handleRefund = async () => {
     if (!selectedOrder) return;
