@@ -314,3 +314,7 @@ async def test_delivery_validation_exception_fails_closed(
     result = await sess.dispatch_order_if_ready()
     assert result is False
     kitchen.assert_not_awaited()
+    # K5/C9-1: an unverifiable delivery is held as DISPATCH_FAILED so it surfaces
+    # on the OrdersPage failure banner, not silently left CONFIRMED.
+    assert sess.order.state == OrderState.DISPATCH_FAILED
+    assert sess.order.dispatch_failure_reason

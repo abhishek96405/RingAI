@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Receipt,
+  AlertTriangle,
 } from "lucide-react";
 
 // Pretty label for an order's fulfillment type. Food orders are "pickup"/"delivery";
@@ -48,6 +49,7 @@ const OrdersPage = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [failedOnly, setFailedOnly] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [refunding, setRefunding] = useState(false);
@@ -93,25 +95,25 @@ const OrdersPage = () => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Search filter
+  // Search + "failed only" filter
   useEffect(() => {
-    if (!search.trim()) {
-      setFiltered(orders);
-      setPage(1);
-      return;
+    let base = orders;
+    if (failedOnly) {
+      base = base.filter((o) => o.order_json?.state === "DISPATCH_FAILED");
     }
-    const q = search.toLowerCase();
-    setFiltered(
-      orders.filter(
+    const q = search.trim().toLowerCase();
+    if (q) {
+      base = base.filter(
         (o) =>
           o.caller_number?.includes(q) ||
           o.order_json?.customer_name?.toLowerCase().includes(q) ||
           o.call_sid?.toLowerCase().includes(q) ||
           o.order_json?.items?.some((i: any) => i.name?.toLowerCase().includes(q))
-      )
-    );
+      );
+    }
+    setFiltered(base);
     setPage(1);
-  }, [search, orders]);
+  }, [search, orders, failedOnly]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -143,6 +145,9 @@ const OrdersPage = () => {
 
   const totalRevenue = orders.reduce((sum, o) => sum + (o.order_total || 0), 0);
   const avgOrder = orders.length > 0 ? totalRevenue / orders.length : 0;
+  const failedCount = orders.filter(
+    (o) => o.order_json?.state === "DISPATCH_FAILED"
+  ).length;
 
   const handleRefund = async () => {
     if (!selectedOrder) return;
@@ -205,6 +210,32 @@ const OrdersPage = () => {
           Refresh
         </Button>
       </div>
+
+      {/* Dispatch-failure banner — orders that need manual entry (C9-1) */}
+      {failedCount > 0 && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-600">
+              {failedCount} order{failedCount > 1 ? "s" : ""} need manual entry
+            </p>
+            <p className="text-xs text-red-600/80 mt-0.5">
+              These were confirmed with the caller but couldn't be sent to your POS,
+              or the delivery address couldn't be verified. Open each one (look for the
+              red "Failed — enter manually" tag) and enter it into your system so it
+              isn't missed.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-lg border-red-500/30 text-red-600 hover:bg-red-500/10 hover:text-red-700 shrink-0"
+            onClick={() => setFailedOnly((v) => !v)}
+          >
+            {failedOnly ? "Show all" : "Show failed"}
+          </Button>
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
