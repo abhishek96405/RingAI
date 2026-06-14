@@ -12,17 +12,10 @@ interface Props {
   config: any;
   setConfig: (c: any) => void;
   saving: boolean;
-  onSaveRestaurant: () => Promise<void>;
-  onSaveConfig: () => Promise<void>;
+  onSave: () => Promise<void>;
 }
 
-export default function FulfillmentTab({ restaurant, setRestaurant, config, setConfig, saving, onSaveRestaurant, onSaveConfig }: Props) {
-  const handleSave = async () => {
-    // Save both — Fulfillment has fields on both restaurant + config docs
-    await onSaveRestaurant();
-    await onSaveConfig();
-  };
-
+export default function FulfillmentTab({ restaurant, setRestaurant, config, setConfig, saving, onSave }: Props) {
   return (
     <Card className="premium-card p-6 space-y-6">
       <div>
@@ -145,7 +138,7 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
         </div>
       )}
 
-      <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+      <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Fulfillment"}
       </Button>
     </Card>
