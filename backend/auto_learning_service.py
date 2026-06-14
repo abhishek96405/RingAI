@@ -2,7 +2,7 @@
 Auto-Learning Service for RingAI
 
 Enables the AI to improve automatically without manual owner intervention:
-- Tracks recurring menu suggestions and auto-applies aliases
+- Tracks recurring menu suggestions and surfaces them for owner approval
 - Learns from successful order patterns
 - Flags only problematic calls for review
 - Applies rule suggestions after confidence threshold
@@ -13,6 +13,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
+
+from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,10 @@ class AutoLearningService:
         })
         
         if existing:
+            # B5-38: a rejected suggestion stays rejected — don't resurface it or
+            # keep nagging the owner about a phrase they've already dismissed.
+            if existing.get("rejected"):
+                return None
             # Increment occurrence count
             count = existing.get("occurrence_count", 1) + 1
             await self.db.learning_suggestions.update_one(
@@ -151,18 +157,10 @@ class AutoLearningService:
                     "$push": {"call_ids": call_id}
                 }
             )
-            
-            # Check if threshold reached for auto-apply
-            if count >= MENU_ALIAS_THRESHOLD and not existing.get("applied"):
-                applied = await self._apply_menu_alias(
-                    restaurant_id, alias_term, target_item
-                )
-                if applied:
-                    await self.db.learning_suggestions.update_one(
-                        {"_id": existing["_id"]},
-                        {"$set": {"applied": True, "applied_at": datetime.now(timezone.utc).isoformat()}}
-                    )
-                    return {"alias": alias_term, "target": target_item, "auto_applied": True}
+            # B5-38: NO auto-apply. The suggestion accrues occurrences and stays
+            # pending (applied=False) until a human approves it via
+            # POST .../learning/aliases/{id}/approve — approval is what calls
+            # _apply_menu_alias and writes the alias onto the menu.
         else:
             # First occurrence - record it
             await self.db.learning_suggestions.insert_one({
@@ -362,7 +360,13 @@ class AutoLearningService:
             {
                 "$inc": {
                     "total_calls_processed": 1,
-                    "aliases_learned": len(actions.get("aliases_learned", [])),
+                    # B5-38: count only aliases actually applied this call (none now
+                    # that auto-apply is gated) — approvals bump this in
+                    # approve_alias_suggestion. Keeps the "Aliases Learned" tile from
+                    # counting un-applied pending suggestions.
+                    "aliases_learned": sum(
+                        1 for a in actions.get("aliases_learned", []) if a.get("auto_applied")
+                    ),
                     "calls_flagged": 1 if actions.get("flagged_for_review") else 0,
                 },
                 "$set": {
@@ -421,24 +425,33 @@ class AutoLearningService:
         """
         Get pending suggestions that haven't reached threshold yet.
         """
+        # Keep _id so each suggestion carries a stable id the dashboard passes to
+        # the approve/reject endpoints; convert to a JSON-safe string id and drop
+        # the raw ObjectId (not serializable). Exclude rejected suggestions.
         aliases = await (
             self.db.learning_suggestions.find({
                 "restaurant_id": restaurant_id,
                 "type": "menu_alias",
                 "applied": False,
-            }, {"_id": 0})
+                "rejected": {"$ne": True},
+            })
             .to_list(50)
         )
-        
+        for a in aliases:
+            a["id"] = str(a.pop("_id"))
+
         rules = await (
             self.db.learning_suggestions.find({
                 "restaurant_id": restaurant_id,
                 "type": "rule_suggestion",
                 "flagged": True,
-            }, {"_id": 0})
+                "rejected": {"$ne": True},
+            })
             .to_list(20)
         )
-        
+        for r in rules:
+            r["id"] = str(r.pop("_id"))
+
         return {"pending_aliases": aliases, "suggested_rules": rules}
     
     async def get_learning_stats(
@@ -483,6 +496,83 @@ class AutoLearningService:
                 }
             }
         )
+
+    async def approve_alias_suggestion(
+        self,
+        restaurant_id: str,
+        suggestion_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Approve a pending menu-alias suggestion: apply it to the menu and mark it
+        applied. This is the human gate that replaces the old threshold-5
+        auto-apply (B5-38). Returns the applied alias, or None if the id is invalid
+        / it isn't a pending menu alias for this tenant.
+        """
+        try:
+            oid = ObjectId(suggestion_id)
+        except Exception:
+            return None
+
+        doc = await self.db.learning_suggestions.find_one({
+            "_id": oid,
+            "restaurant_id": restaurant_id,
+            "type": "menu_alias",
+        })
+        if not doc or doc.get("applied"):
+            return None
+
+        alias_term = doc.get("alias_term", "")
+        target_item = doc.get("target_item", "")
+        if not alias_term or not target_item:
+            return None
+
+        await self._apply_menu_alias(restaurant_id, alias_term, target_item)
+        await self.db.learning_suggestions.update_one(
+            {"_id": oid},
+            {"$set": {
+                "applied": True,
+                "rejected": False,
+                "applied_at": datetime.now(timezone.utc).isoformat(),
+                "applied_by": "owner",
+            }}
+        )
+        # Bump the learned-alias stat (the per-call path no longer does — B5-38).
+        await self.db.learning_stats.update_one(
+            {"restaurant_id": restaurant_id},
+            {"$inc": {"aliases_learned": 1},
+             "$set": {"last_processed": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+        return {"alias": alias_term, "target": target_item, "applied": True}
+
+    async def reject_alias_suggestion(
+        self,
+        restaurant_id: str,
+        suggestion_id: str,
+    ) -> bool:
+        """
+        Reject a pending menu-alias suggestion: mark it rejected so it leaves the
+        pending list and isn't resurfaced on future calls (B5-38). Returns True if
+        a pending suggestion was rejected.
+        """
+        try:
+            oid = ObjectId(suggestion_id)
+        except Exception:
+            return False
+
+        result = await self.db.learning_suggestions.update_one(
+            {
+                "_id": oid,
+                "restaurant_id": restaurant_id,
+                "type": "menu_alias",
+                "applied": {"$ne": True},
+            },
+            {"$set": {
+                "rejected": True,
+                "rejected_at": datetime.now(timezone.utc).isoformat(),
+            }}
+        )
+        return result.modified_count > 0
 
 
 # Import for regex in _apply_menu_alias
