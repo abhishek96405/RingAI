@@ -40,7 +40,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | A3-1 | 🔴 | OAuth | Google callback uses raw `restaurant_id` as `state` — no validation (CSRF) + unauth callback + plaintext tokens | ✔️ |
 | A6-2 | 🔴 | WebSocket | `/ws/notifications` unauth + unauthorized → live cross-tenant data leak | ✔️ |
 | A1-2 | 🔴 | Ops | No `/health` endpoint (Render health check + readiness probe) | ✔️ |
-| A1-3 | 🟡 | Perf | `get_current_user` does Mongo read+write every request | ⬜ |
+| A1-3 | 🟡 | Perf | `get_current_user` does Mongo read+write every request | ✔️ |
 | A2-1 | 🟡 | Security | Rate limiting applied to 6 of 95 routes | ⬜ |
 | A2-2 | 🟡 | Security/Perf | Public menu page unthrottled + 6 DB queries/hit | ⬜ |
 | A2-3 | 🟡 | Info leak | `detail=str(e)` returns raw exceptions to clients (4×) | ⬜ |
@@ -52,7 +52,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 | A5-3 | 🟡 | Functional | Square OAuth callback stores raw auth code, never exchanges for token | 🔍 |
 | A6-1 | 🟡 | Access ctl | `send_menu_sms_endpoint` no membership check → SMS abuse/spoofing | ⬜ |
 | A1-4 | 🟡 | Tech debt | Data migration runs on every startup | ⬜ |
-| A2-8/A3-3 | 🟡 | Perf | Double restaurant+membership lookup per request (systemic) | ⬜ |
+| A2-8/A3-3 | 🟡 | Perf | Double restaurant+membership lookup per request (systemic) | 🔧 |
 | A1-5 | 🟢 | Ops | `logging.basicConfig` after early log calls | ⬜ |
 | A2-4 | 🟢 | Dead code | `select_restaurant` orphaned + redundant local imports | ⬜ |
 | A2-5 | 🟢 | Logic | Unreachable plan-gating branch in `update_restaurant` | ⬜ |
@@ -114,7 +114,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 **Test:** `unit/test_gemini_service_pos_dispatch.py`, `unit/test_pos_sync_unit.py`.
 
 ## Detail — Medium (`server.py`)
-- **A1-3** — `get_current_user` (`:1043–1057`) does a Mongo read+write on every request. Upsert only when missing/changed; skip the write on the hot path.
+- **A1-3** ✔️ (PR-J/J1) — `get_current_user` did a Mongo read+write on every authenticated request (`updated_at` regenerated each call, so the `$set` always wrote). Now writes only when a Clerk-sourced profile field actually changed, and an absent claim no longer wipes a stored value; the read is retained. Unit-tested in `tests/unit/test_get_current_user_hot_path.py`.
 - **A2-1** — Rate limiting on 6 of 95 routes (`LIMIT_*` mostly unused). Apply to public menu (by IP), bootstrap/auth, all writes, POS/billing. (In-process → fully effective only at 1 instance.)
 - **A2-2** — Public menu page (`:1367`) unauth + 5 collection `find_one`s/hit. IP rate-limit + optional cache. (XSS-safe.)
 - **A2-3** — `detail=str(e)` 4× leaks internal exceptions. Generic 500, log detail to Sentry.
@@ -126,7 +126,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **A5-3** — Square OAuth callback (`:5044–5064`) stores the raw `auth_code` and sets `square_connected=True` but never exchanges it for a token → integration likely non-functional. Exchange + store encrypted token. (Verify in `pos_sync.py`, B-series.)
 - **A6-1** — `send_menu_sms_endpoint` (`:3840`) doesn't enforce membership → SMS cost abuse + spoofing. Use `ensure_restaurant_access`.
 - **A1-4** — Migration runs on every startup (`:382–411`). One-off script then remove the hook (appointment-todo #1).
-- **A2-8 / A3-3** — Double restaurant+membership lookup on most `restaurant_id` routes. Have `ensure_restaurant_access` return `(restaurant, membership)` — fixes the class at once.
+- **A2-8 / A3-3** 🔧 (PR-J/J2 — substantially addressed; long tail tracked) — ~18 `restaurant_id` routes called `ensure_restaurant_access` (which already fetches membership + restaurant) and then re-fetched both — 4 reads where 2 suffice. Instead of changing `ensure_restaurant_access`'s return type (a breaking change to all ~77 call sites), added `resolve_restaurant_access(restaurant_id, user) -> (full_restaurant, membership)` (J2a) and refactored `ensure_restaurant_access` to delegate to it (contract unchanged; unit-tested in `tests/unit/test_resolve_restaurant_access_unit.py`). Migrated the highest-value double-lookups — reservation routes (J2b) + POS routes (J2c), 4→2 reads each. **Remaining ~11 double-lookup routes tracked for opportunistic migration** (helper already in place): 5 config-only sites (save 1 read each — settings/calendar config routes), 2 `coll = get_business_collection` variants, and 4 structural outliers where the access check is separated from the re-fetch (demo-data + manual-booking + available-slots) needing per-site care on auth/error ordering. **Enumerate the remainder anytime:** ``grep -n 'membership = await db.memberships.find_one({"restaurant_id"' backend/server.py`` and keep the hits with an `ensure_restaurant_access` within ~8 lines above. **TRIGGER:** migrate each to `resolve_restaurant_access` when next touching that route.
 
 ## Detail — Medium (`gemini_service.py`)
 - **A7-3** — Clover line-item failures swallowed (`:618–619` logs a warning, continues, returns `success:True`) → an empty/partial order reported as success. Treat line-item failure as order failure (or surface it).
