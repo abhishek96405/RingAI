@@ -140,7 +140,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 ## Detail — Medium (`call_pipeline.py`)
 - **A8-1 (confirmed active bug)** — `restaurant.get("pos_type", "").lower()` (`gemini_service.py` `send_order_to_kitchen:534`, `get_kitchen_queue_depth:653`) raises **TypeError** when `pos_type` is present-but-None: the `""` default only applies when the key is *absent*, so a salon doc with `pos_type: null` → `None.lower()`. This is the memory-flagged salon disconnect crash. Fix: `(restaurant.get("pos_type") or "").lower()`.
 - **A8-2** — `on_disconnect` (`:1971`) runs the restaurant order-dispatch/extraction path for ALL business types → salon/clinic calls hit A8-1 and waste a Gemini extraction. Guard with `business_type == "restaurant"`. (A8-1 + A8-2 = the salon disconnect crash.)
-- **A8-6** — Per-restaurant voice ignored: `create_call_pipeline` (`:1297`) takes a `voice` arg (from `config.voice_id`) but overwrites it with env `GEMINI_VOICE` (`:1318`); all calls use the same voice. The `voice_preview` picker doesn't affect live calls.
+- **A8-6** ✔️ (PR-K/K1) — `create_call_pipeline` took a `voice` arg but immediately overwrote it with env `GEMINI_VOICE`, so every call used the one env voice and the picker was dead. Fixed with `voice = _resolve_voice(voice, session)` — priority: explicit arg → the restaurant's saved `config.voice_id` (session.config) → env `GEMINI_VOICE` → default "Leda". The picker's IDs are real Gemini voice names (Leda/Kore/Aoede/Puck/Zephyr/Orus/Fenrir/Charon) so no mapping is needed. Self-contained in `call_pipeline.py` (no server.py change). Unit-tested in `tests/unit/test_resolve_voice_unit.py` (config-over-env precedence). Closes C12-1.
 - **A8-7** — Appointment dispatch failures silent: `dispatch_booking` (`:1028`) returns `True` on partial/failure with no customer/business alert (A7-1 family). Verify `dispatch_appointment` internals (calendar write + SMS) in `appointment_service.py` (B-series).
 
 ## Detail — Low / polish (`server.py`)
@@ -233,7 +233,7 @@ Three security hotfix efforts have **merged into `ringai-deploy`** and are refle
 - **C16-3 🟡** — `CallsPage` shows `quality_score` / AI-analysis as real, but A7-17 fabricates them. Hide/label until A7-17 is fixed. (Transcript-only, no stored audio — a positive.)
 
 ### Voice / AI / Pro features
-- **C12-1 🟡** — `VoiceAndAITab` voice picker has no live effect (A8-6 env overwrite). Fix A8-6 so the per-restaurant voice is honored.
+- **C12-1 ✔️** (PR-K/K1) — resolved via A8-6: `create_call_pipeline` now honors `config.voice_id` instead of the env voice, so the `VoiceAndAITab` picker drives live calls. No frontend change needed (the picker already persists `config.voice_id`).
 - **C12-2 🟡** — multilingual (te/hi) is advertised but parked/unreliable (VAD wedge, code-mixed trigger mismatches, non-English STT). Keep clearly beta until reliable.
 - **C22-1 🟡** — `RulesTab` free-text `business_rules` / `escalation_rules` are injected into the system prompt **unvalidated** → an owner could override safety guardrails. Ensure hardcoded safety rules take precedence in prompt ordering; validate/escape owner text. (Pairs with `unit/test_gemini_service_prompt_assembly.py` — verify the safety-ordering assertion.)
 - **C24-1 🟡** — `AILearningWidget` shows auto-learned/pending aliases **read-only** — no approve/reject/remove despite `approveLearningAlias` / `rejectLearningAlias` existing in `api.ts` (B5-38). Wire the approve/reject buttons (data + endpoints already exist).
