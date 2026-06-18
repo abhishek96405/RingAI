@@ -6,20 +6,14 @@ import Index from "@/pages/Index";
 describe("Index landing page", () => {
   it("renders the marketing landing page composed of all sections", () => {
     renderWithProviders(<Index />);
-    // Hero
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      /AI Receptionist/i
-    );
-    // Pricing
-    expect(screen.getByText("Starter")).toBeInTheDocument();
-    expect(screen.getByText("Pro")).toBeInTheDocument();
-    // FAQ
-    expect(
-      screen.getByText(/How does Duuutah AI handle phone orders\?/i)
-    ).toBeInTheDocument();
-    // CTA
-    expect(
-      screen.getByRole("heading", { name: /never miss/i })
-    ).toBeInTheDocument();
+    // Hero — single h1, now "Never miss a call."
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/never miss/i);
+    // Pricing — scope to the plan headings (the cost calculator also renders "Starter"/"Pro" labels)
+    expect(screen.getByRole("heading", { name: "Starter" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pro" })).toBeInTheDocument();
+    // FAQ — assert current copy
+    expect(screen.getByText(/which pos systems do you support\?/i)).toBeInTheDocument();
+    // Final CTA — match the full heading so it doesn't collide with the hero h1
+    expect(screen.getByRole("heading", { name: /ready to never miss/i })).toBeInTheDocument();
   });
 });
