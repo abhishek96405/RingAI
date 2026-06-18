@@ -85,7 +85,6 @@ const DashboardLayout = () => {
   const [businessType, setBusinessType] = useState<string>("restaurant");
   const { user } = useUser();
   const isAdmin = ADMIN_CLERK_ID && user?.id === ADMIN_CLERK_ID;
-  console.log("Admin debug:", { ADMIN_CLERK_ID, userId: user?.id, match: user?.id === ADMIN_CLERK_ID });
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const location = useLocation();
