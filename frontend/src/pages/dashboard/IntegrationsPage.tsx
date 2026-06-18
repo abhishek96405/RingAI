@@ -93,45 +93,45 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
   );
 
   return (
-    <Card className="premium-card p-6 space-y-6">
+    <Card className="dash-card p-6 space-y-6">
       {/* Section 1 — Connect your POS (primary path) */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Store className="w-5 h-5 text-primary" />
+          <Store className="w-5 h-5 text-coral" />
           <h3 className="font-display font-bold text-lg">Connect your POS</h3>
         </div>
-        <p className="text-sm text-muted-foreground">Duuutah AI syncs your menu automatically once connected.</p>
+        <p className="text-sm text-ink-soft">Duuutah AI syncs your menu automatically once connected.</p>
 
         <div className="space-y-3">
           {/* Square */}
-          <div className="flex items-center justify-between p-4 rounded-xl border border-border hover:bg-muted/30 transition-colors">
+          <div className="flex items-center justify-between p-4 rounded-xl border border-line hover:bg-cream transition-colors">
             <p className="text-sm font-medium">Square</p>
             {squareConnected ? (
               <ConnectedBadge />
             ) : (
-              <Button onClick={connectSquare} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+              <Button onClick={connectSquare} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
                 Connect with Square
               </Button>
             )}
           </div>
 
           {/* Clover */}
-          <div className="flex items-center justify-between p-4 rounded-xl border border-border hover:bg-muted/30 transition-colors">
+          <div className="flex items-center justify-between p-4 rounded-xl border border-line hover:bg-cream transition-colors">
             <p className="text-sm font-medium">Clover</p>
             {cloverConnected ? (
               <ConnectedBadge />
             ) : (
-              <Button onClick={handleConnectClover} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+              <Button onClick={handleConnectClover} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
                 Connect with Clover
               </Button>
             )}
           </div>
 
           {/* Toast */}
-          <div className="flex items-center justify-between p-4 rounded-xl border border-border hover:bg-muted/30 transition-colors">
+          <div className="flex items-center justify-between p-4 rounded-xl border border-line hover:bg-cream transition-colors">
             <div>
               <p className="text-sm font-medium">Toast</p>
-              <p className="text-xs text-muted-foreground">Toast integration is coming soon.</p>
+              <p className="text-xs text-ink-soft">Toast integration is coming soon.</p>
             </div>
             <Button disabled variant="outline" className="rounded-xl gap-1">
               <Lock className="w-4 h-4" /> Coming soon
@@ -141,11 +141,11 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
       </div>
 
       {/* Section 2 — Advanced: enter credentials manually (collapsed by default) */}
-      <div className="border-t border-border pt-4">
+      <div className="border-t border-line pt-4">
         <button
           type="button"
           onClick={() => setManualOpen((v) => !v)}
-          className="flex w-full items-center justify-between text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          className="flex w-full items-center justify-between text-sm font-medium text-ink-soft hover:text-foreground transition-colors"
           aria-expanded={manualOpen}
         >
           <span>Advanced: enter credentials manually</span>
@@ -156,7 +156,7 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
           <div className="space-y-4 pt-4">
             <div className="space-y-2">
               <Label>POS System</Label>
-              <select value={posType} onChange={e => { setPosType(e.target.value); setTestResult(null); }} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
+              <select value={posType} onChange={e => { setPosType(e.target.value); setTestResult(null); }} className="w-full h-10 rounded-xl border border-line bg-card px-3 text-sm">
                 <option value="clover">Clover</option>
                 <option value="square">Square</option>
                 <option value="toast">Toast</option>
@@ -164,11 +164,11 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
             </div>
             <div className="space-y-2">
               <Label>Environment</Label>
-              <select value={posEnv} onChange={e => setPosEnv(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm">
+              <select value={posEnv} onChange={e => setPosEnv(e.target.value)} className="w-full h-10 rounded-xl border border-line bg-card px-3 text-sm">
                 <option value="sandbox">Sandbox (Testing)</option>
                 <option value="production">Production (Live)</option>
               </select>
-              <p className="text-xs text-muted-foreground">Use Sandbox for testing. Switch to Production only when you have live POS credentials.</p>
+              <p className="text-xs text-ink-soft">Use Sandbox for testing. Switch to Production only when you have live POS credentials.</p>
             </div>
 
             {posType === "clover" && (
@@ -181,7 +181,7 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
                   <Label>Merchant ID</Label>
                   <Input value={cloverMid} onChange={e => setCloverMid(e.target.value)} placeholder="e.g. BP79YX4YNBJW1" className="rounded-xl" />
                 </div>
-                <p className="text-xs text-muted-foreground">Find these in your Clover Developer Dashboard → App Settings → API Credentials.</p>
+                <p className="text-xs text-ink-soft">Find these in your Clover Developer Dashboard → App Settings → API Credentials.</p>
               </>
             )}
 
@@ -195,7 +195,7 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
                   <Label>Location ID</Label>
                   <Input value={squareLocationId} onChange={e => setSquareLocationId(e.target.value)} placeholder="Enter Square Location ID" className="rounded-xl" />
                 </div>
-                <p className="text-xs text-muted-foreground">Find these in your Square Developer Dashboard → Applications → Credentials.</p>
+                <p className="text-xs text-ink-soft">Find these in your Square Developer Dashboard → Applications → Credentials.</p>
               </>
             )}
 
@@ -213,7 +213,7 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
                   <Label>Restaurant GUID</Label>
                   <Input value={toastRestaurantGuid} onChange={e => setToastRestaurantGuid(e.target.value)} placeholder="Enter Toast Restaurant GUID" className="rounded-xl" />
                 </div>
-                <p className="text-xs text-muted-foreground">Find Client ID and Secret in Toast Developer Portal → Credentials. Restaurant GUID is in Toast Web → Admin → General.</p>
+                <p className="text-xs text-ink-soft">Find Client ID and Secret in Toast Developer Portal → Credentials. Restaurant GUID is in Toast Web → Admin → General.</p>
               </>
             )}
 
@@ -227,7 +227,7 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
               <Button variant="outline" onClick={handleTest} disabled={testing} className="rounded-xl flex-1">
                 {testing ? <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Testing...</> : "Test Connection"}
               </Button>
-              <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90 flex-1">
+              <Button onClick={handleSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90 flex-1">
                 {saving ? "Saving..." : "Save Credentials"}
               </Button>
             </div>
@@ -294,17 +294,23 @@ const IntegrationsPage = () => {
     }
   };
 
-  if (loading) return <Card className="premium-card h-48 animate-pulse" />;
+  if (loading) return <div className="dash"><Card className="dash-card h-48 animate-pulse" /></div>;
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="dash space-y-6 max-w-4xl">
+      <div>
+        <p className="eyebrow mb-2">Connections</p>
+        <h1 className="text-2xl font-display font-bold">Integrations</h1>
+        <p className="text-sm text-ink-soft mt-1">Connect your POS and calendar so Duuutah AI stays in sync.</p>
+      </div>
+
       {/* Calendar card: shown for every appointment-based vertical (salon, clinic,
           home_services, legal), hidden only for restaurants. */}
       {businessType !== "restaurant" && (
-        <Card className="premium-card p-6 space-y-4">
+        <Card className="dash-card p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-primary" />
+              <CalendarDays className="w-5 h-5 text-coral" />
               <h3 className="font-display font-bold text-lg">Google Calendar</h3>
             </div>
             {calendarConnected && (
@@ -313,7 +319,7 @@ const IntegrationsPage = () => {
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-soft">
             Sync appointments directly to your Google Calendar. New bookings will appear automatically.
           </p>
           {calendarConnected ? (
@@ -321,7 +327,7 @@ const IntegrationsPage = () => {
               Disconnect Google Calendar
             </Button>
           ) : (
-            <Button className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90" onClick={connectCalendar}>
+            <Button className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90" onClick={connectCalendar}>
               Connect Google Calendar
             </Button>
           )}

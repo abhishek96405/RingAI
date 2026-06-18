@@ -130,8 +130,8 @@ export const AILearningWidget = () => {
 
   if (loading) {
     return (
-      <Card className="p-6">
-        <div className="flex items-center justify-center h-32 text-muted-foreground">
+      <Card className="dash-card p-6">
+        <div className="flex items-center justify-center h-32 text-ink-soft">
           <RefreshCw className="w-5 h-5 animate-spin mr-2" /> Loading AI Learning...
         </div>
       </Card>
@@ -141,11 +141,11 @@ export const AILearningWidget = () => {
   return (
     <div className="space-y-4" data-testid="ai-learning-widget">
       {/* Stats Overview */}
-      <Card>
+      <Card className="dash-card">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Brain className="w-5 h-5 text-primary" />
+              <Brain className="w-5 h-5 text-coral" />
               <CardTitle className="text-lg">AI Auto-Learning</CardTitle>
             </div>
             <Button variant="ghost" size="sm" onClick={fetchData}>
@@ -158,17 +158,17 @@ export const AILearningWidget = () => {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-3 gap-4 text-center">
-            <div className="p-3 rounded-lg bg-muted/50">
-              <div className="text-2xl font-bold text-primary">{stats?.total_calls_processed || 0}</div>
-              <div className="text-xs text-muted-foreground">Calls Processed</div>
+            <div className="p-3 rounded-lg bg-cream">
+              <div className="text-2xl font-bold text-coral">{stats?.total_calls_processed || 0}</div>
+              <div className="text-xs text-ink-soft">Calls Processed</div>
             </div>
-            <div className="p-3 rounded-lg bg-muted/50">
+            <div className="p-3 rounded-lg bg-cream">
               <div className="text-2xl font-bold text-green-600">{stats?.aliases_learned || 0}</div>
-              <div className="text-xs text-muted-foreground">Aliases Learned</div>
+              <div className="text-xs text-ink-soft">Aliases Learned</div>
             </div>
-            <div className="p-3 rounded-lg bg-muted/50">
+            <div className="p-3 rounded-lg bg-cream">
               <div className="text-2xl font-bold text-orange-500">{stats?.calls_flagged || 0}</div>
-              <div className="text-xs text-muted-foreground">Needs Review</div>
+              <div className="text-xs text-ink-soft">Needs Review</div>
             </div>
           </div>
         </CardContent>
@@ -176,7 +176,7 @@ export const AILearningWidget = () => {
 
       {/* Flagged Calls - Exception Only Review */}
       {flaggedCalls.length > 0 && (
-        <Card className="border-orange-200">
+        <Card className="dash-card border-orange-200">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-orange-500" />
@@ -198,12 +198,12 @@ export const AILearningWidget = () => {
                     <Badge variant="secondary" className="bg-orange-100 text-orange-700">
                       Score: {call.quality_score}
                     </Badge>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-ink-soft">
                       {new Date(call.flagged_at).toLocaleDateString()}
                     </span>
                   </div>
                   {call.issues.length > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1 truncate max-w-[250px]">
+                    <p className="text-xs text-ink-soft mt-1 truncate max-w-[250px]">
                       {call.issues[0]}
                     </p>
                   )}
@@ -235,10 +235,10 @@ export const AILearningWidget = () => {
       )}
 
       {/* Learned Aliases */}
-      <Card>
+      <Card className="dash-card">
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
+            <Sparkles className="w-4 h-4 text-coral" />
             Auto-Learned Aliases
           </CardTitle>
           <CardDescription>
@@ -255,7 +255,7 @@ export const AILearningWidget = () => {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="text-sm text-ink-soft mb-4">
               No aliases learned yet. They'll appear automatically as customers order.
             </p>
           )}
@@ -263,7 +263,7 @@ export const AILearningWidget = () => {
           {/* Pending suggestions — approve/reject (C24-1) */}
           {pendingSuggestions.pending_aliases.length > 0 && (
             <div className="mb-4">
-              <p className="text-xs text-muted-foreground mb-2">
+              <p className="text-xs text-ink-soft mb-2">
                 Pending review ({pendingSuggestions.pending_aliases.length}) - approve to add to your menu
               </p>
               <div className="space-y-2">
@@ -275,7 +275,7 @@ export const AILearningWidget = () => {
                   >
                     <div className="min-w-0 text-sm">
                       <span className="font-medium">"{s.alias_term}"</span>
-                      <span className="text-muted-foreground"> → {s.target_item}</span>
+                      <span className="text-ink-soft"> → {s.target_item}</span>
                       <Badge variant="secondary" className="text-xs ml-2">{s.occurrence_count}x</Badge>
                     </div>
                     <div className="flex gap-1 shrink-0">
@@ -331,7 +331,7 @@ export const AILearningWidget = () => {
 
       {/* Suggested Rules */}
       {pendingSuggestions.suggested_rules.length > 0 && (
-        <Card className="border-blue-200">
+        <Card className="dash-card border-blue-200">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Suggested Improvements</CardTitle>
             <CardDescription>
@@ -342,7 +342,7 @@ export const AILearningWidget = () => {
             <ul className="space-y-2 text-sm">
               {pendingSuggestions.suggested_rules.slice(0, 3).map((rule, i) => (
                 <li key={i} className="flex items-start gap-2">
-                  <span className="text-primary">•</span>
+                  <span className="text-coral">•</span>
                   <span>{rule.rule_text}</span>
                   <Badge variant="secondary" className="text-xs ml-auto">
                     {rule.occurrence_count}x

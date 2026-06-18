@@ -52,16 +52,16 @@ export const ReservationsPage = () => {
 
   if (!isProPlan(activeRestaurant?.plan)) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="p-8 text-center max-w-md rounded-xl border border-border bg-card">
-          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mx-auto mb-4">
-            <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+      <div className="dash flex items-center justify-center py-20">
+        <div className="dash-card p-8 text-center max-w-md">
+          <div className="w-10 h-10 rounded-xl bg-coral/10 flex items-center justify-center mx-auto mb-4">
+            <CalendarIcon className="w-5 h-5 text-coral" />
           </div>
           <h3 className="font-display font-bold text-lg mb-2">AI Table Reservations</h3>
-          <p className="text-sm text-muted-foreground mb-4">
+          <p className="text-sm text-ink-soft mb-4">
             Let your AI handle table reservations, manage availability, and book parties automatically.
           </p>
-          <a href="/billing" className="inline-flex items-center justify-center rounded-xl bg-gradient-primary text-primary-foreground px-6 py-2 text-sm font-medium shadow-glow hover:opacity-90">
+          <a href="/dashboard/billing" className="inline-flex items-center justify-center rounded-xl bg-coral text-white px-6 py-2 text-sm font-medium hover:bg-coral-deep">
             Upgrade to Pro
           </a>
         </div>
@@ -187,17 +187,18 @@ export const ReservationsPage = () => {
   };
 
   return (
-    <div className="p-6 space-y-6" data-testid="reservations-page">
+    <div className="dash p-6 space-y-6" data-testid="reservations-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Reservations</h1>
-          <p className="text-muted-foreground">
+          <p className="eyebrow mb-2">Bookings</p>
+          <h1 className="text-2xl font-display font-bold">Reservations</h1>
+          <p className="text-ink-soft">
             Manage table reservations for {format(selectedDate, "MMMM d, yyyy")}
           </p>
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
-            <Button data-testid="create-reservation-btn">
+            <Button data-testid="create-reservation-btn" className="bg-coral hover:bg-coral-deep text-white">
               <Plus className="w-4 h-4 mr-2" /> New Reservation
             </Button>
           </DialogTrigger>
@@ -272,7 +273,7 @@ export const ReservationsPage = () => {
                         </SelectItem>
                       ))}
                       {slots.filter((s) => s.available).length === 0 && (
-                        <div className="p-2 text-sm text-muted-foreground">No available slots</div>
+                        <div className="p-2 text-sm text-ink-soft">No available slots</div>
                       )}
                     </SelectContent>
                   </Select>
@@ -288,7 +289,7 @@ export const ReservationsPage = () => {
                   placeholder="Birthday, allergies, etc."
                 />
               </div>
-              <Button onClick={handleCreate} className="w-full" data-testid="submit-reservation-btn">
+              <Button onClick={handleCreate} className="w-full bg-coral hover:bg-coral-deep text-white" data-testid="submit-reservation-btn">
                 Create Reservation
               </Button>
             </div>
@@ -298,7 +299,7 @@ export const ReservationsPage = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Calendar */}
-        <Card className="lg:col-span-1">
+        <Card className="dash-card lg:col-span-1">
           <CardHeader>
             <CardTitle className="text-lg">Select Date</CardTitle>
           </CardHeader>
@@ -327,7 +328,7 @@ export const ReservationsPage = () => {
         </Card>
 
         {/* Reservations List */}
-        <Card className="lg:col-span-2">
+        <Card className="dash-card lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <CalendarIcon className="w-5 h-5" />
@@ -337,9 +338,9 @@ export const ReservationsPage = () => {
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-center py-8 text-muted-foreground">Loading...</div>
+              <div className="text-center py-8 text-ink-soft">Loading...</div>
             ) : reservations.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-8 text-ink-soft">
                 No reservations for this date
               </div>
             ) : (
@@ -348,7 +349,7 @@ export const ReservationsPage = () => {
                   <div
                     key={res.id}
                     data-testid={`reservation-${res.id}`}
-                    className="p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                    className="p-4 border border-line rounded-lg hover:bg-cream transition-colors"
                   >
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
@@ -358,7 +359,7 @@ export const ReservationsPage = () => {
                             {res.status}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-4 text-sm text-ink-soft">
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {formatTime(res.reservation_time)}
@@ -373,7 +374,7 @@ export const ReservationsPage = () => {
                           </span>
                         </div>
                         {res.special_requests && (
-                          <p className="text-sm text-muted-foreground italic">
+                          <p className="text-sm text-ink-soft italic">
                             "{res.special_requests}"
                           </p>
                         )}
@@ -410,7 +411,7 @@ export const ReservationsPage = () => {
       </div>
 
       {/* Available Slots Overview */}
-      <Card>
+      <Card className="dash-card">
         <CardHeader>
           <CardTitle className="text-lg">Available Time Slots</CardTitle>
         </CardHeader>
@@ -438,7 +439,7 @@ export const ReservationsPage = () => {
               </Badge>
             ))}
             {slots.length === 0 && (
-              <span className="text-muted-foreground">No slots configured</span>
+              <span className="text-ink-soft">No slots configured</span>
             )}
           </div>
         </CardContent>

@@ -49,7 +49,7 @@ describe("IntegrationsPage", () => {
 
   it("renders the POS connect section", async () => {
     renderWithProviders(<Shell />);
-    await waitFor(() => expect(screen.getByText(/Connect your POS/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Connect your POS/i })).toBeInTheDocument());
     expect(screen.getByText("Square")).toBeInTheDocument();
     expect(screen.getByText("Clover")).toBeInTheDocument();
     expect(screen.getByText("Toast")).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("IntegrationsPage", () => {
   it("hides the Google Calendar card for restaurants", async () => {
     mockRestaurant({ business_type: "restaurant" });
     renderWithProviders(<Shell />);
-    await waitFor(() => expect(screen.getByText(/Connect your POS/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Connect your POS/i })).toBeInTheDocument());
     expect(screen.queryByText(/Google Calendar/i)).not.toBeInTheDocument();
   });
 
@@ -79,7 +79,7 @@ describe("IntegrationsPage", () => {
   it("shows a Connected badge for Square when square_connected is true", async () => {
     mockRestaurant({ square_connected: true });
     renderWithProviders(<Shell />);
-    await waitFor(() => expect(screen.getByText(/Connect your POS/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Connect your POS/i })).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /Connect with Square/i })).not.toBeInTheDocument();
     expect(screen.getAllByText(/Connected/i).length).toBeGreaterThan(0);
   });
@@ -94,7 +94,7 @@ describe("IntegrationsPage", () => {
   it("shows a Connected badge for Clover when clover_connected is true", async () => {
     mockRestaurant({ clover_connected: true });
     renderWithProviders(<Shell />);
-    await waitFor(() => expect(screen.getByText(/Connect your POS/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Connect your POS/i })).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /Connect with Clover/i })).not.toBeInTheDocument();
     expect(screen.getAllByText(/Connected/i).length).toBeGreaterThan(0);
   });
@@ -108,7 +108,7 @@ describe("IntegrationsPage", () => {
   // ── Toast (Part D) ──
   it("renders the Toast button as disabled (coming soon)", async () => {
     renderWithProviders(<Shell />);
-    await waitFor(() => expect(screen.getByText(/Connect your POS/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Connect your POS/i })).toBeInTheDocument());
     const toastBtn = screen.getByRole("button", { name: /Coming soon/i });
     expect(toastBtn).toBeDisabled();
   });
@@ -116,7 +116,7 @@ describe("IntegrationsPage", () => {
   // ── Manual accordion (Part D, Section 2) ──
   it("keeps the manual credentials form collapsed by default and expands on toggle", async () => {
     renderWithProviders(<Shell />);
-    await waitFor(() => expect(screen.getByText(/Connect your POS/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Connect your POS/i })).toBeInTheDocument());
 
     const toggle = screen.getByRole("button", { name: /Advanced: enter credentials manually/i });
     // Collapsed: the Save Credentials button is not yet in the DOM.
