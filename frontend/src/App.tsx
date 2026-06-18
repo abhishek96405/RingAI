@@ -32,12 +32,12 @@ const queryClient = new QueryClient();
 
 function FullPageLoader() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-6">
+    <div className="dash dash-surface min-h-screen flex items-center justify-center px-6">
       <div className="text-center space-y-3">
-        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-line border-t-coral" />
         <div>
-          <p className="text-sm font-medium text-foreground">Loading Duuutah AI…</p>
-          <p className="text-xs text-muted-foreground">Syncing your workspace</p>
+          <p className="text-sm font-medium text-ink">Loading Duuutah AI…</p>
+          <p className="text-xs text-ink-soft">Syncing your workspace</p>
         </div>
       </div>
     </div>
@@ -46,18 +46,18 @@ function FullPageLoader() {
 
 function SessionErrorScreen({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-6">
+    <div className="dash dash-surface min-h-screen flex items-center justify-center px-6">
       <div className="text-center space-y-4 max-w-sm">
         <div>
-          <p className="text-sm font-medium text-foreground">Unable to load your workspace</p>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-sm font-medium text-ink">Unable to load your workspace</p>
+          <p className="text-xs text-ink-soft mt-1">
             We could not reach the server. This is usually temporary - please try again.
           </p>
         </div>
         <button
           type="button"
           onClick={onRetry}
-          className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+          className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
         >
           Retry
         </button>

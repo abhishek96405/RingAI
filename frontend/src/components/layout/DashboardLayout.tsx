@@ -43,7 +43,7 @@ const notificationColors: Record<string, string> = {
   order: "text-success bg-success/10",
   alert: "text-warning bg-warning/10",
   info: "text-blue-500 bg-blue-500/10",
-  appointment: "text-purple-500 bg-purple-500/10",
+  appointment: "text-coral bg-coral/10",
   reminder: "text-amber-500 bg-amber-500/10",
   system: "text-gray-500 bg-gray-500/10",
   order_dispatch_failed: "text-destructive bg-destructive/10",

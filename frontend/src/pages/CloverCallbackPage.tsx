@@ -20,7 +20,7 @@ type Phase =
   | "invalid";
 
 const Spinner = () => (
-  <div className="mx-auto h-12 w-12 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+  <div className="mx-auto h-12 w-12 animate-spin rounded-full border-2 border-line border-t-coral" />
 );
 
 /**
@@ -114,12 +114,12 @@ const CloverCallbackPage = () => {
   }, [authLoaded, isSignedIn, bootstrapping, code, merchantId]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center space-y-4 px-6 max-w-sm">
+    <div className="dash dash-surface min-h-screen flex items-center justify-center px-6">
+      <div className="dash-card text-center space-y-4 px-8 py-10 max-w-sm">
         {(phase === "loading" || phase === "exchanging" || phase === "redirecting") && (
           <>
             <Spinner />
-            <h1 className="text-2xl font-bold">
+            <h1 className="text-2xl font-display font-bold">
               {phase === "redirecting"
                 ? "Redirecting to Clover…"
                 : phase === "exchanging"
@@ -131,13 +131,13 @@ const CloverCallbackPage = () => {
 
         {phase === "needauth" && (
           <>
-            <h1 className="text-2xl font-bold">Please sign in to finish connecting Clover</h1>
-            <p className="text-muted-foreground text-sm">
+            <h1 className="text-2xl font-display font-bold">Please sign in to finish connecting Clover</h1>
+            <p className="text-ink-soft text-sm">
               Sign in and reconnect Clover from the Integrations page.
             </p>
             <Link
               to="/login"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Sign in
             </Link>
@@ -149,15 +149,15 @@ const CloverCallbackPage = () => {
             <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center mx-auto">
               <CheckCircle2 className="w-8 h-8 text-success" />
             </div>
-            <h1 className="text-2xl font-bold">Clover connected</h1>
+            <h1 className="text-2xl font-display font-bold">Clover connected</h1>
             {merchant && (
-              <p className="text-muted-foreground text-sm">
+              <p className="text-ink-soft text-sm">
                 Merchant ID: <span className="font-mono">{merchant}</span>
               </p>
             )}
             <Link
               to="/dashboard/integrations"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Back to Integrations
             </Link>
@@ -169,15 +169,15 @@ const CloverCallbackPage = () => {
             <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
               <XCircle className="w-8 h-8 text-destructive" />
             </div>
-            <h1 className="text-2xl font-bold">Clover connection failed</h1>
-            <p className="text-muted-foreground text-sm">
+            <h1 className="text-2xl font-display font-bold">Clover connection failed</h1>
+            <p className="text-ink-soft text-sm">
               {errorDetail
                 ? errorDetail
                 : "The authorization may have expired — please try connecting again from Integrations."}
             </p>
             <Link
               to="/dashboard/integrations"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Back to Integrations
             </Link>
@@ -186,13 +186,13 @@ const CloverCallbackPage = () => {
 
         {phase === "appmarket_no_restaurant" && (
           <>
-            <h1 className="text-2xl font-bold">Almost there</h1>
-            <p className="text-muted-foreground text-sm">
+            <h1 className="text-2xl font-display font-bold">Almost there</h1>
+            <p className="text-ink-soft text-sm">
               Open your Duuutah dashboard and connect Clover from the Integrations page.
             </p>
             <Link
               to="/dashboard/integrations"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Go to Integrations
             </Link>
@@ -201,20 +201,20 @@ const CloverCallbackPage = () => {
 
         {phase === "invalid" && (
           <>
-            <h1 className="text-2xl font-bold">Nothing to connect</h1>
-            <p className="text-muted-foreground text-sm">
+            <h1 className="text-2xl font-display font-bold">Nothing to connect</h1>
+            <p className="text-ink-soft text-sm">
               This page completes a Clover connection. Start one from the Integrations page.
             </p>
             <Link
               to="/dashboard/integrations"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Go to Integrations
             </Link>
           </>
         )}
 
-        <p className="text-xs text-muted-foreground pt-4">Powered by Duuutah AI</p>
+        <p className="text-xs text-ink-soft pt-4">Powered by Duuutah AI</p>
       </div>
     </div>
   );

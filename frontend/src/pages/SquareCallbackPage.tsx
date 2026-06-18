@@ -31,22 +31,22 @@ const SquareCallbackPage = () => {
     "Something went wrong connecting Square. Please try again from Integrations.";
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center space-y-4 px-6 max-w-sm">
+    <div className="dash dash-surface min-h-screen flex items-center justify-center px-6">
+      <div className="dash-card text-center space-y-4 px-8 py-10 max-w-sm">
         {connected ? (
           <>
             <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center mx-auto">
               <CheckCircle2 className="w-8 h-8 text-success" />
             </div>
-            <h1 className="text-2xl font-bold">Square connected</h1>
+            <h1 className="text-2xl font-display font-bold">Square connected</h1>
             {merchantId && (
-              <p className="text-muted-foreground text-sm">
+              <p className="text-ink-soft text-sm">
                 Merchant ID: <span className="font-mono">{merchantId}</span>
               </p>
             )}
             <Link
               to="/dashboard/integrations"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Back to Integrations
             </Link>
@@ -56,18 +56,18 @@ const SquareCallbackPage = () => {
             <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
               <XCircle className="w-8 h-8 text-destructive" />
             </div>
-            <h1 className="text-2xl font-bold">Square connection failed</h1>
-            <p className="text-muted-foreground text-sm">{errorMessage}</p>
+            <h1 className="text-2xl font-display font-bold">Square connection failed</h1>
+            <p className="text-ink-soft text-sm">{errorMessage}</p>
             <Link
               to="/dashboard/integrations"
-              className="inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-deep"
             >
               Back to Integrations
             </Link>
           </>
         )}
 
-        <p className="text-xs text-muted-foreground pt-4">Powered by Duuutah AI</p>
+        <p className="text-xs text-ink-soft pt-4">Powered by Duuutah AI</p>
       </div>
     </div>
   );
