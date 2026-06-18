@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { getCalls, getRestaurantId, refundOrder } from "@/lib/api";
@@ -196,34 +193,34 @@ const OrdersPage = () => {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="dash space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="premium-card h-24 animate-pulse" />
+            <div key={i} className="dash-card h-24 animate-pulse" />
           ))}
         </div>
-        <div className="premium-card h-96 animate-pulse" />
+        <div className="dash-card h-96 animate-pulse" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="dash space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
+          <p className="eyebrow mb-2">Orders</p>
           <h1 className="text-2xl font-display font-bold">Order History</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-soft mt-1">
             All orders placed through your AI phone agent
           </p>
         </div>
-        <Button
-          variant="outline"
-          className="rounded-xl"
+        <button
           onClick={fetchOrders}
+          className="border border-line bg-[#FFFDF9] hover:border-ink/25 px-4 py-2 rounded-xl text-sm font-semibold transition"
         >
           Refresh
-        </Button>
+        </button>
       </div>
 
       {/* Dispatch-failure banner — orders that need manual entry (C9-1) */}
@@ -241,57 +238,45 @@ const OrdersPage = () => {
               isn't missed.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-lg border-red-500/30 text-red-600 hover:bg-red-500/10 hover:text-red-700 shrink-0"
+          <button
+            className="shrink-0 border border-red-300 text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-semibold transition"
             onClick={() => setFailedOnly((v) => !v)}
           >
             {failedOnly ? "Show all" : "Show failed"}
-          </Button>
+          </button>
         </div>
       )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="kpi-card">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <ShoppingBag className="w-5 h-5 text-primary" />
-          </div>
-          <div className="mt-3">
-            <p className="text-2xl font-display font-bold">{orders.length}</p>
-            <p className="text-xs text-muted-foreground">Total Orders</p>
-          </div>
-        </Card>
-        <Card className="kpi-card">
-          <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
-            <DollarSign className="w-5 h-5 text-success" />
-          </div>
-          <div className="mt-3">
-            <p className="text-2xl font-display font-bold">
-              ${(totalRevenue / 100).toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground">Total Revenue</p>
-          </div>
-        </Card>
-        <Card className="kpi-card">
-          <div className="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
-            <Receipt className="w-5 h-5 text-warning" />
-          </div>
-          <div className="mt-3">
-            <p className="text-2xl font-display font-bold">
-              ${(avgOrder / 100).toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground">Average Order Value</p>
-          </div>
-        </Card>
+        <div className="dash-card card-hover p-5">
+          <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F2763E] to-[#E8502E] icon-tile">
+            <ShoppingBag className="w-[18px] h-[18px]" />
+          </span>
+          <p className="font-display font-extrabold text-3xl mt-4">{orders.length}</p>
+          <p className="text-sm text-ink-soft">Total Orders</p>
+        </div>
+        <div className="dash-card card-hover p-5">
+          <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#4FB089] to-[#3E9E78]" style={{ boxShadow: "0 10px 20px -8px rgba(62,158,120,.5)" }}>
+            <DollarSign className="w-[18px] h-[18px]" />
+          </span>
+          <p className="font-display font-extrabold text-3xl mt-4">${(totalRevenue / 100).toFixed(2)}</p>
+          <p className="text-sm text-ink-soft">Total Revenue</p>
+        </div>
+        <div className="dash-card card-hover p-5">
+          <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F6BE5C] to-[#F2A93B]" style={{ boxShadow: "0 10px 20px -8px rgba(242,169,59,.5)" }}>
+            <Receipt className="w-[18px] h-[18px]" />
+          </span>
+          <p className="font-display font-extrabold text-3xl mt-4">${(avgOrder / 100).toFixed(2)}</p>
+          <p className="text-sm text-ink-soft">Average Order Value</p>
+        </div>
       </div>
 
       {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-soft" />
         <Input
-          className="pl-9 h-10 rounded-xl"
+          className="pl-9 h-10 rounded-xl border-line bg-[#FFFDF9] focus-visible:ring-coral/30"
           placeholder="Search by name, phone, order number, or item..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -299,9 +284,9 @@ const OrdersPage = () => {
       </div>
 
       {/* Orders table */}
-      <div className="premium-card p-0 overflow-hidden">
+      <div className="dash-card p-0 overflow-hidden">
         {/* Table header */}
-        <div className="grid grid-cols-12 gap-4 px-5 py-3 bg-muted/30 border-b border-border/50 text-xs font-medium text-muted-foreground">
+        <div className="grid grid-cols-12 gap-4 px-5 py-3 bg-[#FBF4EC] border-b border-line text-xs font-semibold text-ink-soft">
           <div className="col-span-2">Order #</div>
           <div className="col-span-2">Customer</div>
           <div className="col-span-2">Phone</div>
@@ -313,11 +298,11 @@ const OrdersPage = () => {
 
         {paginated.length === 0 ? (
           <div className="py-16 text-center">
-            <ShoppingBag className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">No orders found</p>
+            <ShoppingBag className="w-10 h-10 text-ink-soft/30 mx-auto mb-3" />
+            <p className="text-sm text-ink-soft">No orders found</p>
           </div>
         ) : (
-          <div className="divide-y divide-border/50">
+          <div className="divide-y divide-line">
             {paginated.map((order, i) => {
               const items = order.order_json?.items || [];
               const name = order.order_json?.customer_name || "Unknown";
@@ -326,6 +311,7 @@ const OrdersPage = () => {
                 .map((it: any) => `${it.quantity}x ${it.name}`)
                 .join(", ");
               const extra = items.length > 2 ? ` +${items.length - 2} more` : "";
+              const isDelivery = order.order_json?.order_type?.startsWith("delivery");
 
               return (
                 <motion.div
@@ -333,62 +319,52 @@ const OrdersPage = () => {
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.03 }}
-                  className="grid grid-cols-12 gap-4 px-5 py-4 items-center hover:bg-muted/20 transition-colors cursor-pointer text-sm"
+                  className="grid grid-cols-12 gap-4 px-5 py-4 items-center hover:bg-[#FBF4EC] transition-colors cursor-pointer text-sm"
                   onClick={() => {
                     setSelectedOrder(order);
                     setDrawerOpen(true);
                   }}
                 >
                   <div className="col-span-2">
-                    <Badge
-                      variant="secondary"
-                      className="border-0 bg-primary/10 text-primary font-mono text-xs"
-                    >
-                      {getOrderNumber(order)}
-                    </Badge>
+                    <span className="chip b-coral font-mono">{getOrderNumber(order)}</span>
                     {order.order_json?.state === "DISPATCH_FAILED" && (
-                      <Badge
-                        variant="secondary"
-                        className="border-0 bg-red-500/10 text-red-600 text-[10px] mt-1 block w-fit"
+                      <span
+                        className="chip bg-red-500/10 text-red-600 text-[10px] mt-1 block w-fit"
                         title={order.order_json?.dispatch_failure_reason || "POS dispatch failed"}
                       >
                         Failed — enter manually
-                      </Badge>
+                      </span>
                     )}
                   </div>
                   <div className="col-span-2 flex items-center gap-1.5 min-w-0">
-                    <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <User className="w-3.5 h-3.5 text-ink-soft shrink-0" />
                     <span className="truncate font-medium">{name}</span>
                   </div>
-                  <div className="col-span-2 flex items-center gap-1.5 text-muted-foreground">
+                  <div className="col-span-2 flex items-center gap-1.5 text-ink-soft">
                     <Phone className="w-3.5 h-3.5 shrink-0" />
                     <span className="text-xs">{formatPhone(order.caller_number)}</span>
                   </div>
-                  <div className="col-span-2 text-muted-foreground truncate text-xs">
+                  <div className="col-span-2 text-ink-soft truncate text-xs">
                     {itemSummary}
                     {extra && (
-                      <span className="text-primary font-medium">{extra}</span>
+                      <span className="text-coral font-medium">{extra}</span>
                     )}
                   </div>
                   <div className="col-span-1 flex flex-col items-start gap-0.5">
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${
-                      order.order_json?.order_type?.startsWith("delivery")
-                        ? "bg-blue-500/10 text-blue-500"
-                        : "bg-emerald-500/10 text-emerald-500"
-                    }`}>
+                    <span className={`chip ${isDelivery ? "bg-blue-500/10 text-blue-600" : "b-success"}`}>
                       {orderBaseLabel(order.order_json?.order_type)}
                     </span>
                     {order.order_json?.order_type?.includes("reservation") &&
                       order.order_json?.order_type !== "reservation" && (
-                        <span className="text-[10px] leading-tight text-primary font-medium">
+                        <span className="text-[10px] leading-tight text-coral font-medium">
                           + Reservation
                         </span>
                       )}
                   </div>
-                  <div className="col-span-1 font-semibold text-success">
+                  <div className="col-span-1 font-semibold text-[#2f7d5e]">
                     ${((order.order_total || 0) / 100).toFixed(2)}
                   </div>
-                  <div className="col-span-2 text-xs text-muted-foreground whitespace-nowrap">
+                  <div className="col-span-2 text-xs text-ink-soft whitespace-nowrap">
                     {formatDate(order.started_at)}
                   </div>
                 </motion.div>
@@ -401,84 +377,80 @@ const OrdersPage = () => {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between text-sm">
-          <p className="text-muted-foreground">
+          <p className="text-ink-soft">
             Showing {(page - 1) * PAGE_SIZE + 1}–
             {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
           </p>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8 rounded-lg"
+            <button
+              className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-line bg-[#FFFDF9] hover:border-ink/25 transition disabled:opacity-40"
               disabled={page === 1}
               onClick={() => setPage((p) => p - 1)}
             >
               <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <span className="text-muted-foreground">
+            </button>
+            <span className="text-ink-soft">
               {page} / {totalPages}
             </span>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8 rounded-lg"
+            <button
+              className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-line bg-[#FFFDF9] hover:border-ink/25 transition disabled:opacity-40"
               disabled={page === totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
               <ChevronRight className="w-4 h-4" />
-            </Button>
+            </button>
           </div>
         </div>
       )}
 
       {/* Order detail drawer */}
       <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-        <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+        <SheetContent className="w-full sm:max-w-md overflow-y-auto bg-cream">
           {selectedOrder && (
             <>
               <SheetHeader className="mb-6">
                 <SheetTitle className="font-display">
                   {getOrderNumber(selectedOrder)}
                 </SheetTitle>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-ink-soft">
                   {formatDate(selectedOrder.started_at)}
                 </p>
               </SheetHeader>
 
               <div className="space-y-5">
                 {/* Customer info */}
-                <div className="premium-card p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <div className="dash-card p-4 space-y-3">
+                  <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
                     Customer
                   </p>
                   <div className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-muted-foreground" />
+                    <User className="w-4 h-4 text-ink-soft" />
                     <span className="text-sm font-medium">
                       {selectedOrder.order_json?.customer_name || "Unknown"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Phone className="w-4 h-4 text-muted-foreground" />
+                    <Phone className="w-4 h-4 text-ink-soft" />
                     <span className="text-sm">
                       {formatPhone(selectedOrder.caller_number)}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-muted-foreground" />
+                    <Clock className="w-4 h-4 text-ink-soft" />
                     <span className="text-sm">
                       {orderTypeLabel(selectedOrder.order_json?.order_type)}
                     </span>
                   </div>
                   {selectedOrder.order_json?.delivery_address && (
-                    <p className="text-sm text-muted-foreground pl-6">
+                    <p className="text-sm text-ink-soft pl-6">
                       {selectedOrder.order_json.delivery_address}
                     </p>
                   )}
                 </div>
 
                 {/* Items */}
-                <div className="premium-card p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <div className="dash-card p-4 space-y-3">
+                  <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
                     Items Ordered
                   </p>
                   <div className="space-y-2">
@@ -489,18 +461,18 @@ const OrdersPage = () => {
                           className="flex items-start justify-between gap-2"
                         >
                           <div className="flex items-start gap-2 min-w-0">
-                            <span className="text-sm font-medium text-muted-foreground shrink-0">
+                            <span className="text-sm font-medium text-ink-soft shrink-0">
                               {item.quantity}×
                             </span>
                             <div className="min-w-0">
                               <p className="text-sm font-medium">{item.name}</p>
                               {item.modifiers?.length > 0 && (
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-xs text-ink-soft">
                                   {item.modifiers.join(", ")}
                                 </p>
                               )}
                               {item.special_instructions && (
-                                <p className="text-xs text-muted-foreground italic">
+                                <p className="text-xs text-ink-soft italic">
                                   {item.special_instructions}
                                 </p>
                               )}
@@ -516,9 +488,9 @@ const OrdersPage = () => {
                     )}
                   </div>
 
-                  <div className="border-t border-border/50 pt-3 flex items-center justify-between">
+                  <div className="border-t border-line pt-3 flex items-center justify-between">
                     <span className="text-sm font-semibold">Total</span>
-                    <span className="text-lg font-display font-bold text-success">
+                    <span className="text-lg font-display font-bold text-[#2f7d5e]">
                       ${((selectedOrder.order_total || 0) / 100).toFixed(2)}
                     </span>
                   </div>
@@ -526,8 +498,8 @@ const OrdersPage = () => {
 
                 {/* Special instructions */}
                 {selectedOrder.order_json?.special_instructions && (
-                  <div className="premium-card p-4 space-y-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <div className="dash-card p-4 space-y-2">
+                    <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
                       Special Instructions
                     </p>
                     <p className="text-sm">
@@ -537,55 +509,48 @@ const OrdersPage = () => {
                 )}
 
                 {/* Order meta */}
-                <div className="premium-card p-4 space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <div className="dash-card p-4 space-y-2">
+                  <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
                     Order Details
                   </p>
                   <div className="space-y-1.5 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Order #</span>
+                      <span className="text-ink-soft">Order #</span>
                       <span className="font-mono text-xs">
                         {getOrderNumber(selectedOrder)}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Call SID</span>
+                      <span className="text-ink-soft">Call SID</span>
                       <span className="font-mono text-xs truncate max-w-[180px]">
                         {selectedOrder.call_sid}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Status</span>
-                      <Badge
-                        variant="secondary"
-                        className="border-0 bg-success/10 text-success text-xs"
-                      >
-                        {selectedOrder.status}
-                      </Badge>
+                    <div className="flex justify-between items-center">
+                      <span className="text-ink-soft">Status</span>
+                      <span className="chip b-success">{selectedOrder.status}</span>
                     </div>
                     {selectedOrder.order_json?.state === "DISPATCH_FAILED" && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Dispatch</span>
-                        <Badge
-                          variant="secondary"
-                          className="border-0 bg-red-500/10 text-red-600 text-xs"
+                      <div className="flex justify-between items-center">
+                        <span className="text-ink-soft">Dispatch</span>
+                        <span
+                          className="chip bg-red-500/10 text-red-600"
                           title={selectedOrder.order_json?.dispatch_failure_reason || "POS dispatch failed"}
                         >
                           Failed — enter manually
-                        </Badge>
+                        </span>
                       </div>
                     )}
                     {selectedOrder.payment_status && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Payment</span>
-                        <Badge
-                          variant="secondary"
-                          className={`border-0 text-xs ${
+                      <div className="flex justify-between items-center">
+                        <span className="text-ink-soft">Payment</span>
+                        <span
+                          className={`chip ${
                             selectedOrder.payment_status === "paid"
-                              ? "bg-success/10 text-success"
+                              ? "b-success"
                               : selectedOrder.payment_status === "refunded"
                               ? "bg-orange-500/10 text-orange-600"
-                              : "bg-muted text-muted-foreground"
+                              : "b-muted"
                           }`}
                         >
                           {selectedOrder.payment_status === "paid"
@@ -593,7 +558,7 @@ const OrdersPage = () => {
                             : selectedOrder.payment_status === "refunded"
                             ? "Refunded"
                             : selectedOrder.payment_status}
-                        </Badge>
+                        </span>
                       </div>
                     )}
                   </div>
@@ -601,17 +566,16 @@ const OrdersPage = () => {
 
                 {/* Refund action */}
                 {selectedOrder.payment_status === "paid" && (
-                  <Button
-                    variant="outline"
-                    className="w-full rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  <button
+                    className="w-full rounded-xl border border-red-300 text-red-600 hover:bg-red-50 px-4 py-2.5 text-sm font-semibold transition disabled:opacity-50"
                     onClick={handleRefund}
                     disabled={refunding}
                   >
                     {refunding ? "Processing Refund..." : "Refund Order"}
-                  </Button>
+                  </button>
                 )}
                 {selectedOrder.payment_status === "refunded" && (
-                  <div className="text-center text-sm text-muted-foreground py-2">
+                  <div className="text-center text-sm text-ink-soft py-2">
                     This order has been refunded
                   </div>
                 )}
