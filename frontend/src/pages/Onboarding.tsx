@@ -373,7 +373,7 @@ export default function Onboarding() {
           <div className="space-y-6">
             <div className="text-center mb-6">
               <h3 className="text-lg font-semibold mb-2">What type of business are you?</h3>
-              <p className="text-sm text-muted-foreground">This helps us customize the AI assistant for your needs</p>
+              <p className="text-sm text-ink-soft">This helps us customize the AI assistant for your needs</p>
             </div>
             <div className="grid gap-3">
               {businessTypeOptions.map((option) => {
@@ -387,17 +387,17 @@ export default function Onboarding() {
                     className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all text-left ${
                       isSelected
                         ? "border-primary bg-primary/10"
-                        : "border-border hover:border-primary/40 bg-muted/30"
+                        : "border-line hover:border-primary/40 bg-cream"
                     }`}
                   >
                     <div className={`p-3 rounded-lg ${isSelected ? "bg-primary/20" : "bg-muted/50"}`}>
-                      <Icon className={`w-6 h-6 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                      <Icon className={`w-6 h-6 ${isSelected ? "text-primary" : "text-ink-soft"}`} />
                     </div>
                     <div className="flex-1">
                       <div className={`font-medium ${isSelected ? "text-foreground" : "text-foreground/80"}`}>
                         {option.label}
                       </div>
-                      <div className="text-sm text-muted-foreground">{option.description}</div>
+                      <div className="text-sm text-ink-soft">{option.description}</div>
                     </div>
                     {isSelected && <Check className="w-5 h-5 text-primary" />}
                   </button>
@@ -447,7 +447,7 @@ export default function Onboarding() {
               <div className="space-y-2">
                 <Label>Business Phone</Label>
                 <Input value={restaurantData.business_phone} onChange={(e) => setRestaurantData({ ...restaurantData, business_phone: e.target.value })} className="h-11 rounded-xl" />
-                <p className="text-xs text-muted-foreground">We'll forward calls from this number to your Duuutah AI line. You can set up forwarding instructions in Settings after onboarding.</p>
+                <p className="text-xs text-ink-soft">We'll forward calls from this number to your Duuutah AI line. You can set up forwarding instructions in Settings after onboarding.</p>
               </div>
               <div className="space-y-2">
                 <Label>Billing Email</Label>
@@ -482,10 +482,10 @@ export default function Onboarding() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Timezone</Label>
-                <div className="h-11 rounded-xl bg-muted/30 border border-border/50 flex items-center px-3 text-sm text-muted-foreground">
+                <div className="h-11 rounded-xl bg-cream border border-line flex items-center px-3 text-sm text-ink-soft">
                   Auto-detected from address
                 </div>
-              </div>-
+              </div>
               <div className="space-y-2">
                 <Label>Primary Language</Label>
                 <Select value={restaurantData.primary_language} onValueChange={(v) => setRestaurantData({ ...restaurantData, primary_language: v })}>
@@ -513,7 +513,7 @@ export default function Onboarding() {
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
                   {[["pickup_enabled", "Pickup Enabled"], ["dine_in_enabled", "Dine-in Enabled"]].map(([key, label]) => (
-                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-cream">
                       <span className="text-sm">{label}</span>
                       <input type="checkbox" className="accent-primary" checked={restaurantData[key]} onChange={(e) => setRestaurantData({ ...restaurantData, [key]: e.target.checked })} />
                     </div>
@@ -522,11 +522,11 @@ export default function Onboarding() {
                     { key: "offers_delivery", label: "Does your restaurant offer delivery?" },
                     { key: "offers_reservations", label: "Does your restaurant take reservations?" },
                   ].map(({ key, label }) => (
-                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-cream">
                       <span className="text-sm">{label}</span>
                       <div className="flex gap-2">
-                        <button type="button" onClick={() => setRestaurantData({ ...restaurantData, [key]: true })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurantData[key] ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Yes</button>
-                        <button type="button" onClick={() => setRestaurantData({ ...restaurantData, [key]: false })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${!restaurantData[key] ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>No</button>
+                        <button type="button" onClick={() => setRestaurantData({ ...restaurantData, [key]: true })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurantData[key] ? "bg-primary text-primary-foreground" : "bg-line text-ink-soft"}`}>Yes</button>
+                        <button type="button" onClick={() => setRestaurantData({ ...restaurantData, [key]: false })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${!restaurantData[key] ? "bg-primary text-primary-foreground" : "bg-line text-ink-soft"}`}>No</button>
                       </div>
                     </div>
                   ))}
@@ -558,14 +558,14 @@ export default function Onboarding() {
             </Button>
 
             {parsedItems.length > 0 && (
-              <Card className="p-0 overflow-hidden border-border">
-                <div className="p-3 bg-muted/30 text-sm font-medium">{parsedItems.length} items parsed</div>
+              <Card className="p-0 overflow-hidden border-line">
+                <div className="p-3 bg-cream text-sm font-medium">{parsedItems.length} items parsed</div>
                 <div className="divide-y divide-border max-h-72 overflow-y-auto">
                   {parsedItems.map((item: any, i: number) => (
                     <div key={i} className="flex items-center justify-between px-4 py-3 text-sm">
                       <div>
                         <p className="font-medium">{item.name}</p>
-                        <p className="text-xs text-muted-foreground">{item.category}</p>
+                        <p className="text-xs text-ink-soft">{item.category}</p>
                       </div>
                       <span>{item.price ? `$${(item.price / 100).toFixed(2)}` : "--"}</span>
                     </div>
@@ -624,18 +624,18 @@ export default function Onboarding() {
             <div className="space-y-2">
               <Label>Escalation Phone Number</Label>
               <Input value={aiConfig.escalation_phone_number} onChange={(e) => setAiConfig({ ...aiConfig, escalation_phone_number: e.target.value })} className="h-11 rounded-xl" />
-              <p className="text-xs text-muted-foreground">This is the phone inside your business that rings when the AI hands off to a human. Must be different from your business phone.</p>
+              <p className="text-xs text-ink-soft">This is the phone inside your business that rings when the AI hands off to a human. Must be different from your business phone.</p>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">
               {/* Upselling — restaurant only */}
               {!isAppointmentBusiness && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-cream">
                   <span className="text-sm">Enable Upselling</span>
                   <input type="checkbox" className="accent-primary" checked={aiConfig.upsell_enabled} onChange={(e) => setAiConfig({ ...aiConfig, upsell_enabled: e.target.checked })} />
                 </div>
               )}
-              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-cream">
                 <span className="text-sm">Voicemail Enabled</span>
                 <input type="checkbox" className="accent-primary" checked={aiConfig.voicemail_enabled} onChange={(e) => setAiConfig({ ...aiConfig, voicemail_enabled: e.target.checked })} />
               </div>
@@ -647,14 +647,14 @@ export default function Onboarding() {
                 {days.map(([key, label]) => {
                   const day = aiConfig.operating_hours[key];
                   return (
-                    <div key={key} className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-muted/20">
+                    <div key={key} className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-cream">
                       <div className="col-span-3"><p className="text-sm font-medium">{label}</p></div>
                       <div className="col-span-2 flex items-center gap-2">
                         <input type="checkbox" className="accent-primary" checked={day.closed} onChange={(e) => updateHours(key, "closed", e.target.checked)} />
-                        <span className="text-xs text-muted-foreground">Closed</span>
+                        <span className="text-xs text-ink-soft">Closed</span>
                       </div>
                       <div className="col-span-3"><Input type="time" value={day.open} disabled={day.closed} onChange={(e) => updateHours(key, "open", e.target.value)} /></div>
-                      <div className="col-span-1 text-center text-xs text-muted-foreground">to</div>
+                      <div className="col-span-1 text-center text-xs text-ink-soft">to</div>
                       <div className="col-span-3"><Input type="time" value={day.close} disabled={day.closed} onChange={(e) => updateHours(key, "close", e.target.value)} /></div>
                     </div>
                   );
@@ -670,15 +670,15 @@ export default function Onboarding() {
           <div className="space-y-5">
             <div className="grid sm:grid-cols-2 gap-4">
               {[
-                { key: "STARTER" as const, name: "Starter", price: 199, calls: "500", overage: "0.25", features: ["AI order taking", "1 AI voice", "POS integration", "SMS confirmations", "Analytics dashboard", "Email support"] },
-                { key: "PRO" as const, name: "Pro", price: 349, calls: "1,000", overage: "0.20", popular: true, features: ["Everything in Starter, plus:", "Delivery handling", "Table reservations", "AI upselling", "Customer recognition", "Auto AI learning", "8 voices + multi-language", "Priority support"] },
+                { key: "STARTER" as const, name: "Starter", price: 199, calls: "500", overage: "0.30", features: ["AI order taking", "1 AI voice", "POS integration", "SMS confirmations", "Analytics dashboard", "Email support"] },
+                { key: "PRO" as const, name: "Pro", price: 349, calls: "1,000", overage: "0.25", popular: true, features: ["Everything in Starter, plus:", "Delivery handling", "Table reservations", "AI upselling", "Customer recognition", "Auto AI learning", "8 AI voices (multi-language coming soon)", "Priority support"] },
               ].map((plan) => (
                 <Card
                   key={plan.key}
                   className={`relative p-5 cursor-pointer transition-all ${
                     selectedPlan === plan.key
                       ? "border-primary shadow-glow ring-2 ring-primary/20"
-                      : "border-border/50 hover:border-primary/30"
+                      : "border-line hover:border-primary/30"
                   }`}
                   onClick={() => setSelectedPlan(plan.key)}
                 >
@@ -695,26 +695,26 @@ export default function Onboarding() {
                   </div>
                   <div className="mb-3">
                     <span className="text-3xl font-display font-bold">${plan.price}</span>
-                    <span className="text-sm text-muted-foreground">/month</span>
+                    <span className="text-sm text-ink-soft">/month</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mb-3">{plan.calls} calls/mo · ${plan.overage}/call overage</p>
+                  <p className="text-xs text-ink-soft mb-3">{plan.calls} calls/mo · ${plan.overage}/call overage</p>
                   <div className="space-y-1.5">
                     {plan.features.map((f, i) => (
                       <div key={i} className="flex items-start gap-2 text-xs">
                         <Check className="w-3.5 h-3.5 text-success mt-0.5 shrink-0" />
-                        <span className="text-muted-foreground">{f}</span>
+                        <span className="text-ink-soft">{f}</span>
                       </div>
                     ))}
                   </div>
                 </Card>
               ))}
             </div>
-            <Card className="premium-card p-4 bg-primary/5 border-primary/20">
+            <Card className="dash-card p-4 bg-primary/5 border-primary/20">
               <div className="flex items-center gap-3">
                 <Zap className="w-5 h-5 text-primary" />
                 <div>
                   <p className="text-sm font-medium">7-day free trial · No charge today</p>
-                  <p className="text-xs text-muted-foreground">Cancel anytime during the trial — you won't be billed</p>
+                  <p className="text-xs text-ink-soft">Cancel anytime during the trial — you won't be billed</p>
                 </div>
               </div>
             </Card>
@@ -727,26 +727,26 @@ export default function Onboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-surface flex flex-col">
-      <div className="border-b border-border/50 bg-card/80 backdrop-blur-xl">
+    <div className="dash dash-surface min-h-screen flex flex-col">
+      <div className="border-b border-line bg-card/80 backdrop-blur-xl">
         <div className="container-tight flex items-center justify-between h-16">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-gradient-primary flex items-center justify-center">
               <Phone className="w-4 h-4 text-primary-foreground" />
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">
+              <span className="text-sm text-ink-soft">
                 Step {currentStep + 1} of {steps.length}
               </span>
               <SignOutButton redirectUrl="/">
-                <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <button className="flex items-center gap-1.5 text-xs text-ink-soft hover:text-foreground transition-colors">
                   <LogOut className="w-3.5 h-3.5" />
                   Switch account
                 </button>
               </SignOutButton>
             </div>
           </div>
-          <span className="text-sm text-muted-foreground">
+          <span className="text-sm text-ink-soft">
             Step {currentStep + 1} of {steps.length}
           </span>
         </div>
@@ -761,12 +761,12 @@ export default function Onboarding() {
                   className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                     i <= currentStep
                       ? "bg-gradient-primary text-primary-foreground shadow-glow"
-                      : "bg-muted text-muted-foreground"
+                      : "bg-line text-ink-soft"
                   }`}
                 >
                   {i < currentStep ? <Check className="w-5 h-5" /> : <step.icon className="w-5 h-5" />}
                 </div>
-                <span className={`text-xs font-medium hidden sm:block ${i <= currentStep ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className={`text-xs font-medium hidden sm:block ${i <= currentStep ? "text-foreground" : "text-ink-soft"}`}>
                   {step.label}
                 </span>
               </div>
@@ -780,9 +780,10 @@ export default function Onboarding() {
       </div>
 
       <div className="container-tight flex-1 pb-8">
-        <div className="premium-card p-8">
+        <div className="dash-card p-8">
+          <p className="eyebrow mb-2">Setup</p>
           <h2 className="font-display font-bold text-xl mb-1">{steps[currentStep].label}</h2>
-          <p className="text-sm text-muted-foreground mb-6">
+          <p className="text-sm text-ink-soft mb-6">
             {currentStep === 0 && "Select your business type to customize your AI experience."}
             {currentStep === 1 && `Tell us about your ${getBusinessLabel().toLowerCase()} so we can personalize your AI.`}
             {currentStep === 2 && `${isAppointmentBusiness ? "List your services so the AI knows what to book." : "Paste your menu so the AI knows what to offer callers."}`}
@@ -802,7 +803,7 @@ export default function Onboarding() {
             </motion.div>
           </AnimatePresence>
 
-          <div className="flex justify-between mt-8 pt-6 border-t border-border/50">
+          <div className="flex justify-between mt-8 pt-6 border-t border-line">
             <Button
               type="button"
               variant="ghost"
