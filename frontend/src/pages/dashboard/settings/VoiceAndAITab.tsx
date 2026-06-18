@@ -58,10 +58,10 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
   };
 
   return (
-    <Card className="premium-card p-6 space-y-6">
+    <Card className="dash-card p-6 space-y-6">
       <div>
         <h3 className="font-display font-bold text-lg mb-1">Voice & AI</h3>
-        <p className="text-sm text-muted-foreground">How the AI sounds and behaves during calls.</p>
+        <p className="text-sm text-ink-soft">How the AI sounds and behaves during calls.</p>
       </div>
 
       {/* Persona */}
@@ -85,33 +85,33 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
             const isVoiceLocked = !isProPlan(restaurant?.plan) && voice.id !== "Leda";
             return (
               <div key={voice.id} onClick={() => !isVoiceLocked && setConfig({ ...config, voice_id: voice.id })}
-                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${isVoiceLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${config?.voice_id === voice.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
-                <Volume2 className="w-4 h-4 text-muted-foreground" />
+                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${isVoiceLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${config?.voice_id === voice.id ? "border-coral bg-coral/5" : "border-line hover:border-coral/30"}`}>
+                <Volume2 className="w-4 h-4 text-ink-soft" />
                 <div className="flex-1">
                   <p className="text-sm font-medium">{voice.name}</p>
-                  <p className="text-xs text-muted-foreground">{voice.accent}</p>
+                  <p className="text-xs text-ink-soft">{voice.accent}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {config?.voice_id === voice.id && <span className="text-xs bg-primary/10 text-primary rounded-full px-2 py-0.5">Selected</span>}
-                  <button onClick={(e) => { e.stopPropagation(); playVoicePreview(voice.id); }} className="text-muted-foreground hover:text-primary transition-colors" title="Preview voice">
+                  {config?.voice_id === voice.id && <span className="text-xs bg-coral/10 text-coral rounded-full px-2 py-0.5">Selected</span>}
+                  <button onClick={(e) => { e.stopPropagation(); playVoicePreview(voice.id); }} className="text-ink-soft hover:text-coral transition-colors" title="Preview voice">
                     <Volume2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                {isVoiceLocked && <span className="text-xs text-muted-foreground">Pro</span>}
+                {isVoiceLocked && <span className="text-xs text-ink-soft">Pro</span>}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Custom Greeting — Collapsible */}
+      {/* Custom Greeting â€” Collapsible */}
       <Collapsible open={greetingOpen} onOpenChange={setGreetingOpen}>
-        <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+        <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-ink-soft hover:text-foreground transition-colors">
           <ChevronDown className={`w-4 h-4 transition-transform ${greetingOpen ? "rotate-180" : ""}`} />
           Customize greeting
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-2 pt-3">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ink-soft">
             The opening line the AI says at the start of every call. Leave blank to use the default friendly greeting.
           </p>
           <Textarea
@@ -124,12 +124,12 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
       </Collapsible>
 
       {/* Language Support */}
-      <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
+      <div className="space-y-4 p-4 rounded-lg border border-coral/20 bg-coral/5">
         <div>
           <h4 className="text-sm font-semibold mb-1">Language Support</h4>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ink-soft">
             {isProPlan(restaurant?.plan)
-              ? "Configure the AI's spoken language. With multilingual on, callers press a digit at the start to pick a language. Returning callers skip the menu — their last choice is remembered."
+              ? "Configure the AI's spoken language. With multilingual on, callers press a digit at the start to pick a language. Returning callers skip the menu â€” their last choice is remembered."
               : "Upgrade to Pro to let callers choose their language via IVR. Starter plans use the primary language only."}
           </p>
         </div>
@@ -144,16 +144,16 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">The default for all calls. On Pro, also used as the fallback if a caller doesn't pick a digit at the IVR.</p>
+          <p className="text-xs text-ink-soft">The default for all calls. On Pro, also used as the fallback if a caller doesn't pick a digit at the IVR.</p>
         </div>
 
-        <div className="flex items-center justify-between p-3 rounded-lg bg-card border border-border">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-card border border-line">
           <div>
             <p className="text-sm font-medium">
               Multilingual IVR
-              {!isProPlan(restaurant?.plan) && <span className="ml-2 text-xs text-muted-foreground font-normal">(Pro)</span>}
+              {!isProPlan(restaurant?.plan) && <span className="ml-2 text-xs text-ink-soft font-normal">(Pro)</span>}
             </p>
-            <p className="text-xs text-muted-foreground">Callers hear a menu and press a digit to choose their language</p>
+            <p className="text-xs text-ink-soft">Callers hear a menu and press a digit to choose their language</p>
           </div>
           <Switch
             checked={config?.multilingual_enabled || false}
@@ -165,7 +165,7 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
         {config?.multilingual_enabled && isProPlan(restaurant?.plan) && (
           <div className="space-y-2">
             <Label>Additional Languages</Label>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-ink-soft">
               Each selected language becomes an IVR option. "1" is always the primary; additional ones get "2", "3", etc. in the order shown.
             </p>
             <div className="grid sm:grid-cols-2 gap-2">
@@ -175,11 +175,11 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
                   <label
                     key={lang.code}
                     className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                      selected ? "border-primary bg-primary/10" : "border-border hover:border-primary/30 bg-card"
+                      selected ? "border-coral bg-coral/10" : "border-line hover:border-coral/30 bg-card"
                     }`}
                   >
                     <input
-                      type="checkbox" className="accent-primary" checked={selected}
+                      type="checkbox" className="accent-coral" checked={selected}
                       onChange={(e) => {
                         const current: string[] = config?.additional_languages || [];
                         const updated = e.target.checked ? [...current, lang.code] : current.filter((c) => c !== lang.code);
@@ -192,25 +192,25 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
               })}
             </div>
             {(config?.additional_languages?.length ?? 0) === 0 && (
-              <p className="text-xs text-warning">⚠ Select at least one additional language, or turn multilingual off.</p>
+              <p className="text-xs text-[#a26d0d]">âš  Select at least one additional language, or turn multilingual off.</p>
             )}
           </div>
         )}
       </div>
 
       {/* Upsell */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+      <div className="flex items-center justify-between p-3 rounded-lg bg-cream">
         <div className="flex items-center gap-2">
           <div>
             <p className="text-sm font-medium">Upselling</p>
-            <p className="text-xs text-muted-foreground">Suggest add-ons after the main order</p>
+            <p className="text-xs text-ink-soft">Suggest add-ons after the main order</p>
           </div>
-          {!isProPlan(restaurant?.plan) && <span className="text-xs text-muted-foreground">(Pro)</span>}
+          {!isProPlan(restaurant?.plan) && <span className="text-xs text-ink-soft">(Pro)</span>}
         </div>
         <Switch checked={config?.upsell_enabled || false} disabled={!isProPlan(restaurant?.plan)} onCheckedChange={(v) => setConfig({ ...config, upsell_enabled: v })} />
       </div>
 
-      <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+      <Button onClick={onSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Voice & AI"}
       </Button>
     </Card>

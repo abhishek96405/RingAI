@@ -17,10 +17,10 @@ interface Props {
 
 export default function FulfillmentTab({ restaurant, setRestaurant, config, setConfig, saving, onSave }: Props) {
   return (
-    <Card className="premium-card p-6 space-y-6">
+    <Card className="dash-card p-6 space-y-6">
       <div>
         <h3 className="font-display font-bold text-lg mb-1">Fulfillment</h3>
-        <p className="text-sm text-muted-foreground">How orders are fulfilled — pickup, delivery, reservations, and payment.</p>
+        <p className="text-sm text-ink-soft">How orders are fulfilled â€” pickup, delivery, reservations, and payment.</p>
       </div>
 
       {/* Capability toggles */}
@@ -28,10 +28,10 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
         {[["pickup_enabled", "Pickup Enabled"], ["delivery_enabled", "Delivery Enabled"], ["reservations_enabled", "Reservations Enabled"]].map(([key, label]) => {
           const isGated = (key === "delivery_enabled" || key === "reservations_enabled") && !isProPlan(restaurant?.plan);
           return (
-            <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+            <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-cream">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium">{label}</p>
-                {isGated && <span className="text-xs text-muted-foreground">(Pro)</span>}
+                {isGated && <span className="text-xs text-ink-soft">(Pro)</span>}
               </div>
               <Switch checked={restaurant?.[key] ?? false} disabled={isGated} onCheckedChange={(v) => setRestaurant({ ...restaurant, [key]: v })} />
             </div>
@@ -42,11 +42,11 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
           { key: "offers_delivery", label: "Does your restaurant offer delivery?" },
           { key: "offers_reservations", label: "Does your restaurant take reservations?" },
         ].map(({ key, label }) => (
-          <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+          <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-cream">
             <span className="text-sm">{label}</span>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setRestaurant({ ...restaurant, [key]: true })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurant?.[key] !== false ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Yes</button>
-              <button type="button" onClick={() => setRestaurant({ ...restaurant, [key]: false })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurant?.[key] === false ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>No</button>
+              <button type="button" onClick={() => setRestaurant({ ...restaurant, [key]: true })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurant?.[key] !== false ? "bg-coral text-white" : "bg-cream text-ink-soft"}`}>Yes</button>
+              <button type="button" onClick={() => setRestaurant({ ...restaurant, [key]: false })} className={`px-3 py-1 text-xs rounded-lg font-medium transition-colors ${restaurant?.[key] === false ? "bg-coral text-white" : "bg-cream text-ink-soft"}`}>No</button>
             </div>
           </div>
         ))}
@@ -62,13 +62,13 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
             onChange={(e) => setRestaurant({ ...restaurant, avg_prep_time_minutes: Number(e.target.value || 0) })}
             className="h-11 rounded-xl"
           />
-          <p className="text-xs text-muted-foreground">Used to estimate pickup and delivery ETAs.</p>
+          <p className="text-xs text-ink-soft">Used to estimate pickup and delivery ETAs.</p>
         </div>
       </div>
 
       {/* Reservation Settings */}
       {restaurant?.reservations_enabled && (
-        <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
+        <div className="space-y-4 p-4 rounded-lg border border-coral/20 bg-coral/5">
           <h4 className="font-medium text-sm">Reservation Settings</h4>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -85,7 +85,7 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
               <Label className="text-xs">Slot Duration (minutes)</Label>
               <select value={restaurant?.reservation_slot_duration || 30}
                 onChange={(e) => setRestaurant({ ...restaurant, reservation_slot_duration: parseInt(e.target.value) })}
-                className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm">
+                className="w-full h-9 rounded-lg border border-line bg-card px-3 text-sm">
                 <option value={15}>15 min</option><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option>
               </select>
             </div>
@@ -100,7 +100,7 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
 
       {/* Delivery Settings */}
       {restaurant?.delivery_enabled && (
-        <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-primary/5">
+        <div className="space-y-4 p-4 rounded-lg border border-coral/20 bg-coral/5">
           <h4 className="font-medium text-sm">Delivery Settings</h4>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -133,12 +133,12 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
             <Input value={(restaurant?.delivery_zip_codes || []).join(", ")}
               onChange={(e) => setRestaurant({ ...restaurant, delivery_zip_codes: e.target.value.split(",").map((z: string) => z.trim()).filter(Boolean) })}
               placeholder="60540, 60563, 60564" className="h-9" />
-            <p className="text-xs text-muted-foreground">AI will only accept delivery orders from these zip codes. Leave empty to accept all areas.</p>
+            <p className="text-xs text-ink-soft">AI will only accept delivery orders from these zip codes. Leave empty to accept all areas.</p>
           </div>
         </div>
       )}
 
-      <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+      <Button onClick={onSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Fulfillment"}
       </Button>
     </Card>

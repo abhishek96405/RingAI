@@ -105,7 +105,7 @@ export default function PhoneForwardingTab({
       await navigator.clipboard.writeText(aiNumber);
       toast.success("AI number copied to clipboard");
     } catch {
-      toast.error("Could not copy — please copy manually");
+      toast.error("Could not copy â€” please copy manually");
     }
   };
 
@@ -114,7 +114,7 @@ export default function PhoneForwardingTab({
     setShowEmptyWarning(!businessPhone?.trim());
 
     if (!restaurantId) {
-      toast.error("No active restaurant — refresh and try again");
+      toast.error("No active restaurant â€” refresh and try again");
       return;
     }
 
@@ -159,12 +159,12 @@ export default function PhoneForwardingTab({
   return (
     <div className="space-y-6">
       {/* ----------------------------------------------------------------- */}
-      {/* Section 1 — Your phone numbers                                    */}
+      {/* Section 1 â€” Your phone numbers                                    */}
       {/* ----------------------------------------------------------------- */}
-      <Card className="premium-card p-6 space-y-5">
+      <Card className="dash-card p-6 space-y-5">
         <div>
           <h3 className="font-display font-bold text-lg mb-1">Your phone numbers</h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-soft">
             Three distinct numbers power your AI assistant. The AI number is the line
             we provision for you; your business and escalation numbers are yours.
           </p>
@@ -178,7 +178,7 @@ export default function PhoneForwardingTab({
           </Alert>
         )}
 
-        {/* AI number — read-only with copy */}
+        {/* AI number â€” read-only with copy */}
         <div className="space-y-2">
           <Label htmlFor="ai-number">Duuutah AI number (read-only)</Label>
           <div className="flex gap-2">
@@ -206,13 +206,13 @@ export default function PhoneForwardingTab({
               Copy
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ink-soft">
             The line your AI assistant answers. Type this into your carrier's
             call-forwarding setup so calls to your business phone route here.
           </p>
         </div>
 
-        {/* Business phone — editable */}
+        {/* Business phone â€” editable */}
         <div className="space-y-2">
           <Label htmlFor="business-phone">Business phone</Label>
           <Input
@@ -231,13 +231,13 @@ export default function PhoneForwardingTab({
                 : ""
             }`}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ink-soft">
             The number customers call. You'll forward this line to your AI number
             using the instructions below.
           </p>
         </div>
 
-        {/* Escalation phone — editable, optional */}
+        {/* Escalation phone â€” editable, optional */}
         <div className="space-y-2">
           <Label htmlFor="escalation-phone">Escalation phone</Label>
           <Input
@@ -255,7 +255,7 @@ export default function PhoneForwardingTab({
                 : ""
             }`}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ink-soft">
             A separate phone inside your business that rings when the AI hands off
             to a human. Must be different from your AI and business numbers. Optional.
           </p>
@@ -274,7 +274,7 @@ export default function PhoneForwardingTab({
         <Button
           onClick={handleSave}
           disabled={saving}
-          className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90"
+          className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90"
         >
           <Save className="w-4 h-4 mr-2" />
           {saving ? "Saving..." : "Save Changes"}
@@ -282,22 +282,22 @@ export default function PhoneForwardingTab({
       </Card>
 
       {/* ----------------------------------------------------------------- */}
-      {/* Section 2 — Set up call forwarding                                */}
+      {/* Section 2 â€” Set up call forwarding                                */}
       {/* ----------------------------------------------------------------- */}
-      <Card className="premium-card p-6 space-y-5">
+      <Card className="dash-card p-6 space-y-5">
         <div>
           <h3 className="font-display font-bold text-lg mb-1 flex items-center gap-2">
             <PhoneForwarded className="w-5 h-5" />
             Set up call forwarding
           </h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-soft">
             To use your AI assistant, forward calls from your business phone to your
             Duuutah AI number. Choose your carrier below for step-by-step instructions.
           </p>
         </div>
 
         <Tabs value={carrierId} onValueChange={setCarrierId} className="space-y-4">
-          <TabsList className="bg-muted/50 rounded-xl p-1 h-auto flex-wrap">
+          <TabsList className="bg-cream rounded-xl p-1 h-auto flex-wrap">
             {CARRIERS.map((c) => (
               <TabsTrigger
                 key={c.id}
@@ -340,14 +340,14 @@ export default function PhoneForwardingTab({
       </Card>
 
       {/* ----------------------------------------------------------------- */}
-      {/* Section 3 — Verify your forwarding works                          */}
+      {/* Section 3 â€” Verify your forwarding works                          */}
       {/* ----------------------------------------------------------------- */}
-      <Card className="premium-card p-6 space-y-4">
+      <Card className="dash-card p-6 space-y-4">
         <div>
           <h3 className="font-display font-bold text-lg mb-1">
             Verify your forwarding works
           </h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-soft">
             Run through this checklist after you set up forwarding on your carrier.
           </p>
         </div>
@@ -371,9 +371,9 @@ export default function PhoneForwardingTab({
               You should hear: <em>"Welcome to {businessName}!"</em> or your AI's
               configured greeting.
             </li>
-            <li>If you hear the AI greeting — forwarding is working.</li>
+            <li>If you hear the AI greeting â€” forwarding is working.</li>
             <li>
-              If your business phone rings normally — forwarding isn't set up
+              If your business phone rings normally â€” forwarding isn't set up
               correctly. Try the carrier steps again or contact your carrier.
             </li>
           </ol>

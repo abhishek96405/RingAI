@@ -33,10 +33,10 @@ export default function BusinessTab({
   };
 
   return (
-    <Card className="premium-card p-6 space-y-5">
+    <Card className="dash-card p-6 space-y-5">
       <div>
         <h3 className="font-display font-bold text-lg mb-1">Business Details</h3>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-ink-soft">
           Your {getBusinessLabel(businessType).toLowerCase()}'s identity, contact, and forwarding number.
         </p>
       </div>
@@ -73,7 +73,7 @@ export default function BusinessTab({
         <div className="space-y-2">
           <Label>Business Phone</Label>
           <Input value={restaurant?.business_phone || ""} onChange={(e) => setRestaurant({ ...restaurant, business_phone: e.target.value })} className="h-11 rounded-xl" />
-          <p className="text-xs text-muted-foreground">Set up call forwarding for this number in Settings → Phone & Forwarding.</p>
+          <p className="text-xs text-ink-soft">Set up call forwarding for this number in Settings â†’ Phone & Forwarding.</p>
         </div>
         <div className="space-y-2"><Label>Billing Email</Label><Input value={restaurant?.billing_email || ""} onChange={(e) => setRestaurant({ ...restaurant, billing_email: e.target.value })} className="h-11 rounded-xl" /></div>
 
@@ -138,7 +138,7 @@ export default function BusinessTab({
 
       </div>
 
-      <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+      <Button onClick={onSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Changes"}
       </Button>
     </Card>

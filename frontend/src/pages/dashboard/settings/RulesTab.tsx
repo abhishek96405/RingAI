@@ -32,15 +32,15 @@ export default function RulesTab({ config, setConfig, saving, onSave }: Props) {
 
   return (
     <div className="space-y-4">
-      <Card className="premium-card p-6 space-y-4">
+      <Card className="dash-card p-6 space-y-4">
         <div>
           <h3 className="font-display font-bold text-lg mb-1">Business Rules</h3>
-          <p className="text-sm text-muted-foreground">Rules the AI will follow when handling calls.</p>
+          <p className="text-sm text-ink-soft">Rules the AI will follow when handling calls.</p>
         </div>
         <div className="space-y-2">
           {(config?.business_rules || []).map((rule: string, i: number) => (
-            <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30">
-              <span className="text-xs text-muted-foreground w-5">{i + 1}.</span>
+            <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg bg-cream">
+              <span className="text-xs text-ink-soft w-5">{i + 1}.</span>
               <span className="text-sm flex-1">{rule}</span>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeRule(i)}><X className="w-3 h-3" /></Button>
             </div>
@@ -52,15 +52,15 @@ export default function RulesTab({ config, setConfig, saving, onSave }: Props) {
         </div>
       </Card>
 
-      <Card className="premium-card p-6 space-y-4">
+      <Card className="dash-card p-6 space-y-4">
         <div>
           <h3 className="font-display font-bold text-lg mb-1 flex items-center gap-2"><ShieldAlert className="w-4 h-4" />Escalation Triggers</h3>
-          <p className="text-sm text-muted-foreground">Situations where the AI should transfer to a human.</p>
+          <p className="text-sm text-ink-soft">Situations where the AI should transfer to a human.</p>
         </div>
         <div className="space-y-2">
           {(config?.escalation_rules || []).map((rule: string, i: number) => (
-            <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg bg-warning/5">
-              <AlertTriangle className="w-3.5 h-3.5 text-warning shrink-0" />
+            <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg bg-honey/5">
+              <AlertTriangle className="w-3.5 h-3.5 text-[#a26d0d] shrink-0" />
               <span className="text-sm flex-1">{rule}</span>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeEscalation(i)}><X className="w-3 h-3" /></Button>
             </div>
@@ -72,7 +72,7 @@ export default function RulesTab({ config, setConfig, saving, onSave }: Props) {
         </div>
       </Card>
 
-      <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+      <Button onClick={onSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Rules"}
       </Button>
     </div>

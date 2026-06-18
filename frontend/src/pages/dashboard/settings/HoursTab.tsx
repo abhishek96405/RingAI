@@ -18,10 +18,10 @@ export default function HoursTab({ config, setConfig, saving, onSave }: Props) {
     setConfig({ ...config, operating_hours: { ...config.operating_hours, [dayKey]: { ...config.operating_hours[dayKey], [field]: value } } });
 
   return (
-    <Card className="premium-card p-6 space-y-6">
+    <Card className="dash-card p-6 space-y-6">
       <div>
         <h3 className="font-display font-bold text-lg mb-1">Hours & Availability</h3>
-        <p className="text-sm text-muted-foreground">When you're open, and what the AI does when you're not.</p>
+        <p className="text-sm text-ink-soft">When you're open, and what the AI does when you're not.</p>
       </div>
 
       <div>
@@ -30,14 +30,14 @@ export default function HoursTab({ config, setConfig, saving, onSave }: Props) {
           {days.map(([key, label]) => {
             const day = config?.operating_hours?.[key] || defaultHours[key];
             return (
-              <div key={key} className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-muted/20">
+              <div key={key} className="grid grid-cols-12 gap-2 items-center p-3 rounded-lg bg-cream/20">
                 <div className="col-span-3"><p className="text-sm font-medium">{label}</p></div>
                 <div className="col-span-2 flex items-center gap-2">
-                  <input type="checkbox" className="accent-primary" checked={day.closed} onChange={(e) => updateHours(key, "closed", e.target.checked)} />
-                  <span className="text-xs text-muted-foreground">Closed</span>
+                  <input type="checkbox" className="accent-coral" checked={day.closed} onChange={(e) => updateHours(key, "closed", e.target.checked)} />
+                  <span className="text-xs text-ink-soft">Closed</span>
                 </div>
                 <div className="col-span-3"><Input type="time" value={day.open} disabled={day.closed} onChange={(e) => updateHours(key, "open", e.target.value)} /></div>
-                <div className="col-span-1 text-center text-xs text-muted-foreground">to</div>
+                <div className="col-span-1 text-center text-xs text-ink-soft">to</div>
                 <div className="col-span-3"><Input type="time" value={day.close} disabled={day.closed} onChange={(e) => updateHours(key, "close", e.target.value)} /></div>
               </div>
             );
@@ -55,12 +55,12 @@ export default function HoursTab({ config, setConfig, saving, onSave }: Props) {
             <SelectItem value="forward">Forward to escalation number</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-ink-soft">
           What the AI does when a call comes in outside operating hours. "Forward" uses the Escalation Phone Number from the Business tab.
         </p>
       </div>
 
-      <Button onClick={onSave} disabled={saving} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+      <Button onClick={onSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white rounded-xl hover:opacity-90">
         <Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save Hours"}
       </Button>
     </Card>

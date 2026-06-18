@@ -114,7 +114,7 @@ const SettingsPage = () => {
         payload.reservation_advance_booking_days = Number(restaurant?.reservation_advance_booking_days || 7);
       }
       await updateRestaurant(restaurantId, payload);
-      // Escalation phone is owned by the Phone & Forwarding tab — it
+      // Escalation phone is owned by the Phone & Forwarding tab â€” it
       // persists to RestaurantConfig directly and is not part of this save.
       await refreshSession(restaurantId);
       toast.success(`${getBusinessLabel(businessType)} info saved!`);
@@ -147,7 +147,7 @@ const SettingsPage = () => {
         payload.delivery_enabled = config?.delivery_enabled;
         payload.delivery_minimum = Number(config?.delivery_minimum || 0);
       }
-      // Slot scheduling intentionally NOT sent — managed in the Appointments section.
+      // Slot scheduling intentionally NOT sent â€” managed in the Appointments section.
       await updateConfig(restaurantId, payload);
       await refreshSession(restaurantId);
       toast.success("Settings saved!");
@@ -159,7 +159,7 @@ const SettingsPage = () => {
   };
 
   // Fulfillment spans two docs (restaurant + config). One atomic backend call
-  // writes both or neither — no silent partial save (C21-4).
+  // writes both or neither â€” no silent partial save (C21-4).
   const saveFulfillment = async () => {
     setSaving(true);
     try {
@@ -196,12 +196,17 @@ const SettingsPage = () => {
     }
   };
 
-  if (loading) return <div className="space-y-4">{[...Array(3)].map((_, i) => <Card key={i} className="premium-card h-40 animate-pulse" />)}</div>;
+  if (loading) return <div className="dash max-w-5xl space-y-4">{[...Array(3)].map((_, i) => <Card key={i} className="dash-card h-40 animate-pulse" />)}</div>;
 
   return (
-    <div className="max-w-5xl">
+    <div className="dash max-w-5xl space-y-6">
+      <div>
+        <p className="eyebrow mb-2">Workspace</p>
+        <h1 className="text-2xl font-display font-bold">Settings</h1>
+        <p className="text-sm text-ink-soft mt-1">Your business details, hours, phone forwarding, and how your AI sounds and behaves.</p>
+      </div>
       <Tabs defaultValue="business" className="space-y-6">
-        <TabsList className="bg-muted/50 rounded-xl p-1 h-auto flex-wrap">
+        <TabsList className="bg-cream rounded-xl p-1 h-auto flex-wrap">
           <TabsTrigger value="business" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Building2 className="w-4 h-4 mr-2" />Business
           </TabsTrigger>
