@@ -126,7 +126,7 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
     <div className="space-y-4">
       <div className="flex flex-wrap gap-4">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-soft" />
           <Input
             placeholder="Search by name, phone, or service..."
             value={searchQuery}
@@ -152,19 +152,19 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <Loader2 className="w-6 h-6 animate-spin text-ink-soft" />
         </div>
       ) : filtered.length === 0 ? (
-        <Card className="p-8 text-center">
-          <Calendar className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-          <p className="text-muted-foreground">
+        <Card className="dash-card p-8 text-center">
+          <Calendar className="w-12 h-12 mx-auto text-ink-soft mb-4" />
+          <p className="text-ink-soft">
             {searchQuery || statusFilter !== "ALL" ? "No appointments match your filters" : "No appointments yet"}
           </p>
         </Card>
       ) : (
         <div className="space-y-3">
           {filtered.map((apt) => (
-            <Card key={apt.id} className="p-4">
+            <Card key={apt.id} className="dash-card p-4">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex-1 min-w-[200px]">
                   <div className="flex items-center gap-2 mb-2">
@@ -173,12 +173,12 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
                     </span>
                   </div>
                   <h3 className="font-semibold text-lg mb-1">{apt.service_name}</h3>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-soft">
                     <div className="flex items-center gap-1.5"><User className="w-4 h-4" /><span>{apt.customer_name}</span></div>
                     <div className="flex items-center gap-1.5"><Phone className="w-4 h-4" /><span>{apt.customer_phone}</span></div>
                   </div>
                   {apt.special_instructions && (
-                    <p className="text-sm text-muted-foreground mt-2 italic">"{apt.special_instructions}"</p>
+                    <p className="text-sm text-ink-soft mt-2 italic">"{apt.special_instructions}"</p>
                   )}
                   {apt.status === "conflict" && (
                     <p className="text-xs text-orange-500 mt-1">⚠ Double-booking detected — review manually</p>
@@ -187,10 +187,10 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
                 <div className="flex flex-col items-end gap-2">
                   <div className="text-right">
                     <div className="flex items-center gap-1.5 text-sm font-medium">
-                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      <Calendar className="w-4 h-4 text-ink-soft" />
                       <span>{formatDate(apt.scheduled_date)}</span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-1.5 text-sm text-ink-soft">
                       <Clock className="w-4 h-4" />
                       <span>{apt.scheduled_time} ({apt.duration_minutes}min)</span>
                     </div>
@@ -217,7 +217,7 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
           <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="text-sm text-muted-foreground">Page {page} of {totalPages}</span>
+          <span className="text-sm text-ink-soft">Page {page} of {totalPages}</span>
           <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
             <ChevronRight className="w-4 h-4" />
           </Button>
@@ -300,7 +300,7 @@ function AvailabilityTab({ restaurantId }: { restaurantId: string }) {
           <ChevronLeft className="w-4 h-4" />
         </Button>
         <div className="flex items-center gap-2 flex-1">
-          <Calendar className="w-4 h-4 text-muted-foreground" />
+          <Calendar className="w-4 h-4 text-ink-soft" />
           <span className="font-medium">{displayDate}</span>
         </div>
         <Input
@@ -315,7 +315,7 @@ function AvailabilityTab({ restaurantId }: { restaurantId: string }) {
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+      <div className="flex flex-wrap gap-4 text-xs text-ink-soft">
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />Available</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />Booked</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />Blocked</span>
@@ -324,13 +324,13 @@ function AvailabilityTab({ restaurantId }: { restaurantId: string }) {
       {/* Slot grid */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <Loader2 className="w-6 h-6 animate-spin text-ink-soft" />
         </div>
       ) : slots.length === 0 ? (
-        <Card className="p-8 text-center">
-          <Clock className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground text-sm">No slots configured for this day.</p>
-          <p className="text-xs text-muted-foreground mt-1">Check operating hours and slot interval in Settings → Voice & AI.</p>
+        <Card className="dash-card p-8 text-center">
+          <Clock className="w-10 h-10 mx-auto text-ink-soft mb-3" />
+          <p className="text-ink-soft text-sm">No slots configured for this day.</p>
+          <p className="text-xs text-ink-soft mt-1">Check operating hours and slot interval in Settings → Voice & AI.</p>
         </Card>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
@@ -338,20 +338,20 @@ function AvailabilityTab({ restaurantId }: { restaurantId: string }) {
             const busy = actionSlot === slot.slot_time;
             const dot = slot.blocked ? "bg-red-500" : slot.booked >= slot.capacity ? "bg-amber-500" : "bg-emerald-500";
             return (
-              <Card key={slot.slot_time} className={`p-3 flex flex-col gap-2 ${slot.blocked ? "opacity-60" : ""}`}>
+              <Card key={slot.slot_time} className={`dash-card p-3 flex flex-col gap-2 ${slot.blocked ? "opacity-60" : ""}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <span className={`w-2 h-2 rounded-full ${dot}`} />
                     <span className="text-sm font-medium">{slot.display_time}</span>
                   </div>
-                  <span className="text-xs text-muted-foreground">{slot.booked}/{slot.capacity}</span>
+                  <span className="text-xs text-ink-soft">{slot.booked}/{slot.capacity}</span>
                 </div>
                 {slot.blocked ? (
                   <Button variant="outline" size="sm" className="w-full h-7 text-xs" disabled={busy} onClick={() => handleUnblock(slot)}>
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Unlock className="w-3 h-3 mr-1" />Unblock</>}
                   </Button>
                 ) : (
-                  <Button variant="outline" size="sm" className="w-full h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => handleBlock(slot)}>
+                  <Button variant="outline" size="sm" className="w-full h-7 text-xs text-ink-soft" disabled={busy} onClick={() => handleBlock(slot)}>
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Lock className="w-3 h-3 mr-1" />Block</>}
                   </Button>
                 )}
@@ -371,16 +371,17 @@ export default function AppointmentsPage() {
   const restaurantId = activeRestaurant?.id ?? "";
 
   return (
-    <div className="space-y-6" data-testid="appointments-page">
+    <div className="dash space-y-6" data-testid="appointments-page">
       <div>
+        <p className="eyebrow mb-2">Schedule</p>
         <h1 className="text-2xl font-display font-bold">Appointments</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-sm text-ink-soft mt-1">
           View appointments and manage daily availability
         </p>
       </div>
 
       <Tabs defaultValue="list">
-        <TabsList className="bg-muted/50 rounded-xl p-1 h-auto">
+        <TabsList className="bg-cream rounded-xl p-1 h-auto">
           <TabsTrigger value="list" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <User className="w-4 h-4 mr-2" />Bookings
           </TabsTrigger>

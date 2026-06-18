@@ -37,7 +37,7 @@ const AdminPage = () => {
 
   if (loading) return (
     <div className="flex items-center justify-center py-20">
-      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      <Loader2 className="w-6 h-6 animate-spin text-ink-soft" />
     </div>
   );
 
@@ -45,7 +45,7 @@ const AdminPage = () => {
     <div className="flex flex-col items-center justify-center py-20 gap-4">
       <ShieldAlert className="w-12 h-12 text-destructive/50" />
       <h2 className="font-display font-bold text-xl">Access Denied</h2>
-      <p className="text-sm text-muted-foreground">This page is restricted to administrators.</p>
+      <p className="text-sm text-ink-soft">This page is restricted to administrators.</p>
     </div>
   );
 
@@ -54,11 +54,12 @@ const AdminPage = () => {
   const { overall, per_restaurant } = data;
 
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="dash space-y-6 max-w-6xl">
       <div className="flex items-center justify-between">
         <div>
+          <p className="eyebrow mb-2">Internal</p>
           <h1 className="text-2xl font-display font-bold">Admin — Cost Analytics</h1>
-          <p className="text-sm text-muted-foreground mt-1">Internal COGS tracking — not visible to business owners</p>
+          <p className="text-sm text-ink-soft mt-1">Internal COGS tracking — not visible to business owners</p>
         </div>
         <Select value={days} onValueChange={setDays}>
           <SelectTrigger className="w-32 h-9 rounded-xl">
@@ -74,81 +75,81 @@ const AdminPage = () => {
 
       {/* Overall Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card className="premium-card p-4">
+        <Card className="dash-card p-4">
           <div className="flex items-center gap-2 mb-2">
-            <Phone className="w-4 h-4 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">Total Calls</p>
+            <Phone className="w-4 h-4 text-ink-soft" />
+            <p className="text-xs text-ink-soft font-medium">Total Calls</p>
           </div>
           <p className="text-2xl font-display font-bold">{overall.total_calls}</p>
         </Card>
-        <Card className="premium-card p-4">
+        <Card className="dash-card p-4">
           <div className="flex items-center gap-2 mb-2">
             <DollarSign className="w-4 h-4 text-destructive" />
-            <p className="text-xs text-muted-foreground font-medium">Total COGS</p>
+            <p className="text-xs text-ink-soft font-medium">Total COGS</p>
           </div>
           <p className="text-2xl font-display font-bold">${overall.total_cost_dollars.toFixed(2)}</p>
-          <p className="text-xs text-muted-foreground">${(overall.avg_cost_per_call_cents / 100).toFixed(3)}/call avg</p>
+          <p className="text-xs text-ink-soft">${(overall.avg_cost_per_call_cents / 100).toFixed(3)}/call avg</p>
         </Card>
-        <Card className="premium-card p-4">
+        <Card className="dash-card p-4">
           <div className="flex items-center gap-2 mb-2">
             <DollarSign className="w-4 h-4 text-emerald-500" />
-            <p className="text-xs text-muted-foreground font-medium">AI Revenue</p>
+            <p className="text-xs text-ink-soft font-medium">AI Revenue</p>
           </div>
           <p className="text-2xl font-display font-bold">${overall.total_revenue_dollars.toFixed(2)}</p>
-          <p className="text-xs text-muted-foreground">from orders/bookings</p>
+          <p className="text-xs text-ink-soft">from orders/bookings</p>
         </Card>
-        <Card className="premium-card p-4">
+        <Card className="dash-card p-4">
           <div className="flex items-center gap-2 mb-2">
             {overall.gross_margin_pct > 80
               ? <TrendingUp className="w-4 h-4 text-emerald-500" />
               : <TrendingDown className="w-4 h-4 text-destructive" />
             }
-            <p className="text-xs text-muted-foreground font-medium">Gross Margin</p>
+            <p className="text-xs text-ink-soft font-medium">Gross Margin</p>
           </div>
           <p className="text-2xl font-display font-bold">{overall.gross_margin_pct.toFixed(1)}%</p>
-          <p className="text-xs text-muted-foreground">{overall.total_sms_sent} SMS sent</p>
+          <p className="text-xs text-ink-soft">{overall.total_sms_sent} SMS sent</p>
         </Card>
       </div>
 
       {/* Cost Breakdown */}
-      <Card className="premium-card p-6">
+      <Card className="dash-card p-6">
         <h3 className="font-display font-bold text-lg mb-4">Per Business Breakdown</h3>
         {per_restaurant.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No call data yet for this period.</p>
+          <p className="text-sm text-ink-soft text-center py-8">No call data yet for this period.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border/50">
-                  <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Business</th>
-                  <th className="text-right py-2 px-3 font-medium text-muted-foreground">Calls</th>
-                  <th className="text-right py-2 px-3 font-medium text-muted-foreground">Voice Cost</th>
-                  <th className="text-right py-2 px-3 font-medium text-muted-foreground">SMS Cost</th>
-                  <th className="text-right py-2 px-3 font-medium text-muted-foreground">AI Cost</th>
-                  <th className="text-right py-2 px-3 font-medium text-muted-foreground">Total COGS</th>
-                  <th className="text-right py-2 px-3 font-medium text-muted-foreground">Revenue</th>
-                  <th className="text-right py-2 pl-3 font-medium text-muted-foreground">Avg Duration</th>
+                <tr className="border-b border-line">
+                  <th className="text-left py-2 pr-4 font-medium text-ink-soft">Business</th>
+                  <th className="text-right py-2 px-3 font-medium text-ink-soft">Calls</th>
+                  <th className="text-right py-2 px-3 font-medium text-ink-soft">Voice Cost</th>
+                  <th className="text-right py-2 px-3 font-medium text-ink-soft">SMS Cost</th>
+                  <th className="text-right py-2 px-3 font-medium text-ink-soft">AI Cost</th>
+                  <th className="text-right py-2 px-3 font-medium text-ink-soft">Total COGS</th>
+                  <th className="text-right py-2 px-3 font-medium text-ink-soft">Revenue</th>
+                  <th className="text-right py-2 pl-3 font-medium text-ink-soft">Avg Duration</th>
                 </tr>
               </thead>
               <tbody>
                 {per_restaurant.map((r: any) => (
-                  <tr key={r.restaurant_id} className="border-b border-border/30 hover:bg-muted/20 transition-colors">
+                  <tr key={r.restaurant_id} className="border-b border-line hover:bg-cream transition-colors">
                     <td className="py-3 pr-4">
                       <p className="font-medium">{r.restaurant_name}</p>
-                      <p className="text-xs text-muted-foreground">{r.sms_count} SMS</p>
+                      <p className="text-xs text-ink-soft">{r.sms_count} SMS</p>
                     </td>
                     <td className="text-right py-3 px-3">{r.total_calls}</td>
-                    <td className="text-right py-3 px-3 text-muted-foreground">${r.voice_cost_dollars.toFixed(3)}</td>
-                    <td className="text-right py-3 px-3 text-muted-foreground">${r.sms_cost_dollars.toFixed(3)}</td>
-                    <td className="text-right py-3 px-3 text-muted-foreground">${r.gemini_cost_dollars.toFixed(4)}</td>
+                    <td className="text-right py-3 px-3 text-ink-soft">${r.voice_cost_dollars.toFixed(3)}</td>
+                    <td className="text-right py-3 px-3 text-ink-soft">${r.sms_cost_dollars.toFixed(3)}</td>
+                    <td className="text-right py-3 px-3 text-ink-soft">${r.gemini_cost_dollars.toFixed(4)}</td>
                     <td className="text-right py-3 px-3 font-medium text-destructive">${r.cost_dollars.toFixed(3)}</td>
                     <td className="text-right py-3 px-3 font-medium text-emerald-600">${r.revenue_dollars.toFixed(2)}</td>
-                    <td className="text-right py-3 pl-3 text-muted-foreground">{r.avg_duration_seconds}s</td>
+                    <td className="text-right py-3 pl-3 text-ink-soft">{r.avg_duration_seconds}s</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-border">
+                <tr className="border-t-2 border-line">
                   <td className="py-3 pr-4 font-bold">Total</td>
                   <td className="text-right py-3 px-3 font-bold">{overall.total_calls}</td>
                   <td className="text-right py-3 px-3"></td>
@@ -165,23 +166,23 @@ const AdminPage = () => {
       </Card>
 
       {/* Cost per call benchmark */}
-      <Card className="premium-card p-6">
+      <Card className="dash-card p-6">
         <h3 className="font-display font-bold text-lg mb-2">Cost Benchmarks</h3>
         <div className="grid sm:grid-cols-3 gap-4 mt-4">
-          <div className="p-4 rounded-xl bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Telnyx Voice Rate</p>
+          <div className="p-4 rounded-xl bg-cream">
+            <p className="text-xs text-ink-soft mb-1">Telnyx Voice Rate</p>
             <p className="font-display font-bold">$0.0085/min</p>
-            <p className="text-xs text-muted-foreground mt-1">inbound US local</p>
+            <p className="text-xs text-ink-soft mt-1">inbound US local</p>
           </div>
-          <div className="p-4 rounded-xl bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Telnyx SMS Rate</p>
+          <div className="p-4 rounded-xl bg-cream">
+            <p className="text-xs text-ink-soft mb-1">Telnyx SMS Rate</p>
             <p className="font-display font-bold">$0.0083/msg</p>
-            <p className="text-xs text-muted-foreground mt-1">US outbound</p>
+            <p className="text-xs text-ink-soft mt-1">US outbound</p>
           </div>
-          <div className="p-4 rounded-xl bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Gemini Live</p>
+          <div className="p-4 rounded-xl bg-cream">
+            <p className="text-xs text-ink-soft mb-1">Gemini Live</p>
             <p className="font-display font-bold">$0.00</p>
-            <p className="text-xs text-muted-foreground mt-1">free preview</p>
+            <p className="text-xs text-ink-soft mt-1">free preview</p>
           </div>
         </div>
       </Card>

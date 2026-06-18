@@ -151,7 +151,7 @@ export default function CreateAppointmentDialog({
                   </SelectItem>
                 ))}
                 {services.length === 0 && (
-                  <div className="p-2 text-sm text-muted-foreground">No services configured</div>
+                  <div className="p-2 text-sm text-ink-soft">No services configured</div>
                 )}
               </SelectContent>
             </Select>
@@ -183,7 +183,7 @@ export default function CreateAppointmentDialog({
                     </SelectItem>
                   ))}
                   {!slotsLoading && availableSlots.length === 0 && (
-                    <div className="p-2 text-sm text-muted-foreground">No available slots</div>
+                    <div className="p-2 text-sm text-ink-soft">No available slots</div>
                   )}
                 </SelectContent>
               </Select>

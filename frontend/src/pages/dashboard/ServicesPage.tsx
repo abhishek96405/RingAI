@@ -141,11 +141,12 @@ export default function ServicesPage() {
   };
 
   return (
-    <div className="space-y-6" data-testid="services-page">
+    <div className="dash space-y-6" data-testid="services-page">
       <div className="flex items-center justify-between">
         <div>
+          <p className="eyebrow mb-2">Catalog</p>
           <h1 className="text-2xl font-display font-bold">Services</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-sm text-ink-soft mt-1">
             Manage the services you offer for appointment booking
           </p>
         </div>
@@ -198,7 +199,7 @@ export default function ServicesPage() {
               <div className="space-y-2">
                 <Label>Price (optional)</Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft">$</span>
                   <Input
                     type="number"
                     value={formData.price_cents ? (formData.price_cents / 100).toFixed(2) : ""}
@@ -250,11 +251,11 @@ export default function ServicesPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <Loader2 className="w-6 h-6 animate-spin text-ink-soft" />
         </div>
       ) : services.length === 0 ? (
-        <Card className="p-8 text-center">
-          <p className="text-muted-foreground mb-4">No services yet</p>
+        <Card className="dash-card p-8 text-center">
+          <p className="text-ink-soft mb-4">No services yet</p>
           <Button onClick={openCreateDialog}>
             <Plus className="w-4 h-4 mr-2" />
             Add Your First Service
@@ -265,7 +266,7 @@ export default function ServicesPage() {
           {services.map((service) => (
             <Card
               key={service.id}
-              className={`p-4 relative ${!service.available ? "opacity-60" : ""}`}
+              className={`dash-card p-4 relative ${!service.available ? "opacity-60" : ""}`}
               data-testid={`service-card-${service.id}`}
             >
               <div className="flex items-start justify-between mb-3">
@@ -298,17 +299,17 @@ export default function ServicesPage() {
               </div>
 
               {service.description && (
-                <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                <p className="text-sm text-ink-soft mb-3 line-clamp-2">
                   {service.description}
                 </p>
               )}
 
               <div className="flex items-center gap-4 text-sm">
-                <div className="flex items-center gap-1.5 text-muted-foreground">
+                <div className="flex items-center gap-1.5 text-ink-soft">
                   <Clock className="w-4 h-4" />
                   <span>{formatDuration(service.duration_minutes)}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-muted-foreground">
+                <div className="flex items-center gap-1.5 text-ink-soft">
                   <DollarSign className="w-4 h-4" />
                   <span>{formatPrice(service.price_cents)}</span>
                 </div>
