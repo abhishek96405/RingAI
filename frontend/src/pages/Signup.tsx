@@ -62,7 +62,7 @@ const Signup = () => {
   const BusinessIcon = selectedBusinessConfig?.icon || Briefcase;
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex bg-cream">
       <div className="flex-1 flex items-start lg:items-center justify-center px-6 py-8 md:px-8 md:py-10 overflow-y-auto">
         <div className="w-full max-w-sm">
           <motion.div
@@ -79,7 +79,7 @@ const Signup = () => {
                 <Phone className="w-4 h-4 text-primary-foreground" />
               </motion.div>
               <span className="font-display font-bold text-xl">
-                Duuutah <span className="text-gradient">AI</span>
+                Duuutah <span className="text-coral">AI</span>
               </span>
             </Link>
           </motion.div>
@@ -177,7 +177,7 @@ const Signup = () => {
             transition={{ delay: 0.5, duration: 0.6 }}
             className="font-display font-bold text-2xl text-primary-foreground mb-3"
           >
-            Join Thousands of Businesses Using AI
+            Your phone, answered start to finish.
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 15 }}
@@ -185,8 +185,7 @@ const Signup = () => {
             transition={{ delay: 0.65, duration: 0.6 }}
             className="text-primary-foreground/60 text-sm"
           >
-            Set up your premium AI receptionist and monitor the entire
-            operation from one dashboard.
+            Set up your AI receptionist and run the whole operation from one dashboard.
           </motion.p>
         </motion.div>
       </div>

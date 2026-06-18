@@ -27,7 +27,7 @@ describe("Login page", () => {
   it("renders the marketing panel content on wider viewports", () => {
     renderWithProviders(<Login />);
     expect(
-      screen.getByRole("heading", { name: /Your AI Receptionist Awaits/i })
+      screen.getByRole("heading", { name: /Your front desk, always answered/i })
     ).toBeInTheDocument();
   });
 });

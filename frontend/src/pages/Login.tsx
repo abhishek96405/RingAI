@@ -37,7 +37,7 @@ const clerkAppearance = {
 
 const Login = () => {
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex bg-cream">
       <div className="flex-1 flex items-start lg:items-center justify-center px-6 py-8 md:px-8 md:py-10">
         <div className="w-full max-w-sm">
           <motion.div
@@ -54,7 +54,7 @@ const Login = () => {
                 <Phone className="w-4 h-4 text-primary-foreground" />
               </motion.div>
               <span className="font-display font-bold text-xl">
-                Duuutah <span className="text-gradient">AI</span>
+                Duuutah <span className="text-coral">AI</span>
               </span>
             </Link>
           </motion.div>
@@ -119,7 +119,7 @@ const Login = () => {
             transition={{ delay: 0.5, duration: 0.6 }}
             className="font-display font-bold text-2xl text-primary-foreground mb-3"
           >
-            Your AI Receptionist Awaits
+            Your front desk, always answered.
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 15 }}
