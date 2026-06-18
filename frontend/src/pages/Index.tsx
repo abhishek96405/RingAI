@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 /* ──────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ const faqs = [
 
 function Waveform({ color = "#fff", bars = 48 }: { color?: string; bars?: number }) {
   return (
-    <div className="wf" style={{ ["--wc" as string]: color } as React.CSSProperties}>
+    <div className="wf" style={{ ["--wc" as string]: color } as CSSProperties}>
       {Array.from({ length: bars }).map((_, i) => {
         const env = 0.3 + 0.7 * Math.sin((i / (bars - 1)) * Math.PI);
         return (
@@ -128,7 +128,7 @@ function PricingCalculator() {
   const starterHi = s <= p;
   const proHi = p < s;
 
-  let rec: React.ReactNode;
+  let rec: ReactNode;
   if (Math.abs(s - p) < 0.5) {
     rec = "Right at the crossover — both plans cost the same around 1,000 calls/month.";
   } else if (s < p) {
