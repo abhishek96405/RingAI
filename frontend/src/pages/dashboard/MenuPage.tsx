@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -155,26 +154,26 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-display font-bold text-lg">Modifier Library</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Create reusable modifier groups — Size, Spice Level, Toppings — then assign them to menu items.</p>
+          <p className="text-sm text-ink-soft mt-0.5">Create reusable modifier groups — Size, Spice Level, Toppings — then assign them to menu items.</p>
         </div>
-        <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+        <Button onClick={openAdd} className="bg-coral hover:bg-coral-deep text-white rounded-xl">
           <Plus className="w-4 h-4 mr-2" /> New Group
         </Button>
       </div>
 
       {loading ? (
-        <div className="grid sm:grid-cols-2 gap-4">{[...Array(4)].map((_, i) => <div key={i} className="premium-card h-32 animate-pulse" />)}</div>
+        <div className="grid sm:grid-cols-2 gap-4">{[...Array(4)].map((_, i) => <div key={i} className="dash-card h-32 animate-pulse" />)}</div>
       ) : groups.length === 0 ? (
-        <Card className="p-12 text-center">
-          <Settings2 className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+        <div className="dash-card p-12 text-center">
+          <Settings2 className="w-10 h-10 mx-auto text-ink-soft/30 mb-3" />
           <h3 className="font-display font-semibold mb-1">No modifier groups yet</h3>
-          <p className="text-sm text-muted-foreground mb-4">Create groups like "Size", "Spice Level", or "Toppings" and assign them to menu items.</p>
+          <p className="text-sm text-ink-soft mb-4">Create groups like "Size", "Spice Level", or "Toppings" and assign them to menu items.</p>
           <Button onClick={openAdd} variant="outline">Create First Group</Button>
-        </Card>
+        </div>
       ) : (
         <div className="grid sm:grid-cols-2 gap-4">
           {groups.map((group) => (
-            <Card key={group.id} className={`p-4 ${!group.active ? "opacity-50" : ""}`}>
+            <div key={group.id} className={`dash-card p-4 ${!group.active ? "opacity-50" : ""}`}>
               <div className="flex items-start justify-between mb-2">
                 <div>
                   <div className="flex items-center gap-2">
@@ -182,7 +181,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                     {group.required && <Badge className="text-xs bg-destructive/10 text-destructive border-0">Required</Badge>}
                     {!group.active && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                  <p className="text-xs text-ink-soft mt-0.5">
                     {group.selection_type === "single" ? "Single select" : "Multi select"}
                     {group.required ? ` · min ${group.min_selections}` : " · optional"}
                     {group.max_selections > 1 ? ` · max ${group.max_selections}` : ""}
@@ -199,12 +198,12 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
               </div>
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {group.options.map((opt: any) => (
-                  <span key={opt.id} className={`text-xs px-2 py-0.5 rounded-full border ${!opt.in_stock ? "opacity-40 line-through" : ""} bg-muted/50`}>
+                  <span key={opt.id} className={`text-xs px-2 py-0.5 rounded-full border ${!opt.in_stock ? "opacity-40 line-through" : ""} bg-cream`}>
                     {opt.name}{opt.price_delta > 0 ? ` +$${(opt.price_delta / 100).toFixed(2)}` : ""}
                   </span>
                 ))}
               </div>
-            </Card>
+            </div>
           ))}
         </div>
       )}
@@ -239,7 +238,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                   <Label>Required?</Label>
                   <div className="flex items-center gap-2 h-9">
                     <Switch checked={form.required} onCheckedChange={(v) => setForm((p: any) => ({ ...p, required: v, min_selections: v ? 1 : 0 }))} />
-                    <span className="text-sm text-muted-foreground">{form.required ? "Required" : "Optional"}</span>
+                    <span className="text-sm text-ink-soft">{form.required ? "Required" : "Optional"}</span>
                   </div>
                 </div>
               </div>
@@ -269,14 +268,14 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 {form.options.length > 0 && (
                   <div className="space-y-1.5 mb-2">
                     {form.options.map((opt: any) => (
-                      <div key={opt.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/30 border border-border/50">
+                      <div key={opt.id} className="flex items-center gap-2 p-2 rounded-lg bg-cream border border-line">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className={`text-sm font-medium ${!opt.in_stock ? "line-through text-muted-foreground" : ""}`}>{opt.name}</span>
+                            <span className={`text-sm font-medium ${!opt.in_stock ? "line-through text-ink-soft" : ""}`}>{opt.name}</span>
                             {opt.price_delta > 0 && <span className="text-xs text-emerald-600">+${(opt.price_delta / 100).toFixed(2)}</span>}
                           </div>
                           {opt.ai_aliases?.length > 0 && (
-                            <p className="text-xs text-muted-foreground">aliases: {opt.ai_aliases.join(", ")}</p>
+                            <p className="text-xs text-ink-soft">aliases: {opt.ai_aliases.join(", ")}</p>
                           )}
                         </div>
                         <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => toggleOptionStock(opt.id)} title="Toggle stock">
@@ -291,7 +290,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 )}
 
                 {/* Add option form */}
-                <div className="border border-dashed border-border/50 rounded-lg p-3 space-y-2">
+                <div className="border border-dashed border-line rounded-lg p-3 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <Input
                       value={newOptionName}
@@ -325,7 +324,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
           </ScrollArea>
           <DialogFooter className="pt-4 border-t">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground">
+            <Button onClick={handleSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white">
               {saving ? "Saving..." : editingGroup ? "Update Group" : "Create Group"}
             </Button>
           </DialogFooter>
@@ -551,10 +550,10 @@ const MenuPage = () => {
   }, {}), [filteredItems]);
 
   return (
-    <div className="space-y-6">
+    <div className="dash space-y-6">
       <Tabs defaultValue="items">
         <div className="flex flex-col sm:flex-row gap-4 justify-between items-start">
-          <TabsList className="bg-muted/50 rounded-xl p-1 h-auto">
+          <TabsList className="bg-cream rounded-xl p-1 h-auto">
             <TabsTrigger value="items" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-card data-[state=active]:shadow-sm">
               <UtensilsCrossed className="w-4 h-4 mr-2" />Menu Items
             </TabsTrigger>
@@ -568,8 +567,8 @@ const MenuPage = () => {
                 <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
                 {syncing ? "Syncing..." : "Sync from POS"}
               </Button>
-              {lastSync && <span className="text-xs text-muted-foreground">Last synced: {lastSync}</span>}
-              <Button onClick={openAdd} className="bg-gradient-primary text-primary-foreground rounded-xl shadow-glow hover:opacity-90">
+              {lastSync && <span className="text-xs text-ink-soft">Last synced: {lastSync}</span>}
+              <Button onClick={openAdd} className="bg-coral hover:bg-coral-deep text-white rounded-xl">
                 <Plus className="w-4 h-4 mr-2" /> Add Item
               </Button>
             </div>
@@ -580,7 +579,7 @@ const MenuPage = () => {
           {/* Category filter */}
           <div className="flex gap-2 overflow-x-auto pb-1">
             {["all", ...categories].map((cat) => (
-              <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted"}`}>
+              <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${activeCategory === cat ? "bg-coral text-white" : "bg-cream hover:bg-line/60"}`}>
                 {cat === "all" ? "All Items" : cat}
               </button>
             ))}
@@ -588,39 +587,39 @@ const MenuPage = () => {
 
           {/* Search */}
           <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-soft" />
             <Input placeholder="Search menu items..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-10 rounded-xl" />
           </div>
 
           {loading ? (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="premium-card h-44 animate-pulse" />)}</div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="dash-card h-44 animate-pulse" />)}</div>
           ) : Object.keys(groupedItems).length === 0 ? (
             <div className="text-center py-20">
-              <UtensilsCrossed className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+              <UtensilsCrossed className="w-12 h-12 text-ink-soft/30 mx-auto mb-4" />
               <h3 className="font-display font-semibold text-lg mb-1">No menu items found</h3>
-              <p className="text-sm text-muted-foreground">Try a different search or add new items.</p>
+              <p className="text-sm text-ink-soft">Try a different search or add new items.</p>
             </div>
           ) : Object.entries(groupedItems).map(([category, catItems]) => (
             <div key={category}>
               <h3 className="font-display font-bold text-lg mb-4">{category}</h3>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {(catItems as any[]).map((item, i) => (
-                  <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="premium-card p-5">
+                  <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="dash-card p-5">
                     <div className="flex justify-between items-start mb-3 gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-display font-semibold truncate">{item.name}</h4>
                           {!item.available && <span className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-xs font-medium">Unavailable</span>}
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                        <p className="text-sm text-ink-soft mt-1">{item.description}</p>
                         {item.allergens?.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
-                            {item.allergens.map((a: string) => <Badge key={a} variant="secondary" className="text-xs border-0 bg-warning/10 text-warning">{a}</Badge>)}
+                            {item.allergens.map((a: string) => <Badge key={a} variant="secondary" className="text-xs border-0 bg-honey/15 text-[#a26d0d]">{a}</Badge>)}
                           </div>
                         )}
                         {item.modifier_group_assignments?.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
-                            <Badge variant="secondary" className="text-xs border-0 bg-primary/10 text-primary">
+                            <Badge variant="secondary" className="text-xs border-0 bg-coral/10 text-coral">
                               <Settings2 className="w-2.5 h-2.5 mr-1" />{item.modifier_group_assignments.length} modifier{item.modifier_group_assignments.length > 1 ? "s" : ""}
                             </Badge>
                           </div>
@@ -691,7 +690,7 @@ const MenuPage = () => {
                     placeholder="0 = default"
                     className="h-9"
                   />
-                  <p className="text-xs text-muted-foreground">Leave at 0 to use restaurant default. Set for slow items like Biryani (25 min).</p>
+                  <p className="text-xs text-ink-soft">Leave at 0 to use restaurant default. Set for slow items like Biryani (25 min).</p>
                 </div>
               </div>
 
@@ -700,7 +699,7 @@ const MenuPage = () => {
                 <Label>Allergens</Label>
                 <div className="flex flex-wrap gap-2">
                   {allergenOptions.map((a) => (
-                    <button key={a} onClick={() => toggleAllergen(a)} className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${formData.allergens.includes(a) ? "bg-warning/20 border-warning text-warning" : "bg-muted/50 border-border/50 text-muted-foreground hover:border-border"}`}>
+                    <button key={a} onClick={() => toggleAllergen(a)} className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${formData.allergens.includes(a) ? "bg-honey/20 border-honey text-[#a26d0d]" : "bg-cream border-line text-ink-soft hover:border-border"}`}>
                       {a}
                     </button>
                   ))}
@@ -711,21 +710,21 @@ const MenuPage = () => {
               <div className="space-y-2">
                 <Label>Modifier Groups</Label>
                 {modifierGroups.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No modifier groups yet. Create them in the Modifier Library tab first.</p>
+                  <p className="text-xs text-ink-soft">No modifier groups yet. Create them in the Modifier Library tab first.</p>
                 ) : (
                   <div className="space-y-1.5">
                     {modifierGroups.filter(g => g.active).map((group) => (
                       <div
                         key={group.id}
                         onClick={() => toggleModifierGroupAssignment(group.id)}
-                        className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${isGroupAssigned(group.id) ? "border-primary/50 bg-primary/5" : "border-border/50 hover:border-border"}`}
+                        className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${isGroupAssigned(group.id) ? "border-coral/50 bg-coral/5" : "border-line hover:border-border"}`}
                       >
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium">{group.name}</span>
                             {group.required && <Badge className="text-xs bg-destructive/10 text-destructive border-0 h-4">Required</Badge>}
                           </div>
-                          <p className="text-xs text-muted-foreground">{group.options.map((o: any) => o.name).join(", ")}</p>
+                          <p className="text-xs text-ink-soft">{group.options.map((o: any) => o.name).join(", ")}</p>
                         </div>
                         <Switch checked={isGroupAssigned(group.id)} onCheckedChange={() => toggleModifierGroupAssignment(group.id)} onClick={(e) => e.stopPropagation()} />
                       </div>
@@ -735,10 +734,10 @@ const MenuPage = () => {
               </div>
 
               {/* Special Instructions toggle */}
-              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-cream border border-line">
                 <div>
                   <p className="text-sm font-medium">Special Instructions</p>
-                  <p className="text-xs text-muted-foreground">Allow customers to add free-text notes</p>
+                  <p className="text-xs text-ink-soft">Allow customers to add free-text notes</p>
                 </div>
                 <Switch
                   checked={formData.special_instructions_enabled !== false}
@@ -755,7 +754,7 @@ const MenuPage = () => {
           </ScrollArea>
           <DialogFooter className="pt-4 border-t">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving} className="bg-gradient-primary text-primary-foreground">
+            <Button onClick={handleSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white">
               {saving ? "Saving..." : editingItem ? "Update Item" : "Add Item"}
             </Button>
           </DialogFooter>
