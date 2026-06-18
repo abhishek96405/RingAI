@@ -20,20 +20,21 @@ describe("DashboardHome page (Duuutah AI overview)", () => {
     localStorage.setItem("ringai.activeRestaurantId", "tenant_a_restaurant");
   });
 
-  it("renders the dashboard heading and weekly/monthly toggle", async () => {
+  it("renders the daily-briefing hero and weekly/monthly toggle", async () => {
     renderWithProviders(<Shell />);
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /^dashboard$/i })).toBeInTheDocument()
+      expect(screen.getByText(/your daily briefing/i)).toBeInTheDocument()
     );
     expect(screen.getByRole("button", { name: /weekly/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /monthly/i })).toBeInTheDocument();
   });
 
-  it("shows the 'no real call data' card when total_calls === 0", async () => {
+  it("shows the empty-state briefing and 'all clear' when there are no calls", async () => {
     renderWithProviders(<Shell />);
     await waitFor(() =>
-      expect(screen.getByText(/No real call data yet/i)).toBeInTheDocument()
+      expect(screen.getByText(/no calls yet this week/i)).toBeInTheDocument()
     );
+    expect(screen.getByText(/all clear/i)).toBeInTheDocument();
   });
 
   it("renders KPI stat cards when analytics return real numbers", async () => {
@@ -45,14 +46,15 @@ describe("DashboardHome page (Duuutah AI overview)", () => {
 
     renderWithProviders(<Shell />);
     await waitFor(() => {
-      expect(screen.getByText(/Total Calls This Week/i)).toBeInTheDocument();
-      expect(screen.getByText(/Revenue This Week/i)).toBeInTheDocument();
-      expect(screen.getByText(/Avg Quality Score/i)).toBeInTheDocument();
-      expect(screen.getByText(/AI Containment Rate/i)).toBeInTheDocument();
+      expect(screen.getByText(/Revenue captured/i)).toBeInTheDocument();
+      expect(screen.getByText(/Avg quality score/i)).toBeInTheDocument();
+      // "handled by AI" also appears in the hero chip, so match all
+      expect(screen.getAllByText(/Handled by AI/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/Escalated to a human/i)).toBeInTheDocument();
     });
   });
 
-  it("renders recent calls when present in the analytics payload", async () => {
+  it("summarizes call volume and escalations in the briefing", async () => {
     server.use(
       http.get("*/api/restaurants/:id/analytics/summary", () =>
         HttpResponse.json(SAMPLE_ANALYTICS_SUMMARY)
@@ -61,7 +63,24 @@ describe("DashboardHome page (Duuutah AI overview)", () => {
 
     renderWithProviders(<Shell />);
     await waitFor(() =>
-      expect(screen.getByText(/Alice Customer/i)).toBeInTheDocument()
+      expect(screen.getByText(/Duuutah answered 18 calls this week/i)).toBeInTheDocument()
+    );
+    // 4 escalated calls surface in the "Needs you" section
+    expect(
+      screen.getByText(/needed a human this week/i)
+    ).toBeInTheDocument();
+  });
+
+  it("renders top items when present in the analytics payload", async () => {
+    server.use(
+      http.get("*/api/restaurants/:id/analytics/summary", () =>
+        HttpResponse.json(SAMPLE_ANALYTICS_SUMMARY)
+      )
+    );
+
+    renderWithProviders(<Shell />);
+    await waitFor(() =>
+      expect(screen.getByText(/Margherita Pizza/i)).toBeInTheDocument()
     );
   });
 
@@ -80,9 +99,9 @@ describe("DashboardHome page (Duuutah AI overview)", () => {
     );
 
     renderWithProviders(<Shell />);
-    // Dashboard heading still renders; toast error is fired internally
+    // Briefing hero still renders; toast error is fired internally
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /^dashboard$/i })).toBeInTheDocument()
+      expect(screen.getByText(/your daily briefing/i)).toBeInTheDocument()
     );
   });
 

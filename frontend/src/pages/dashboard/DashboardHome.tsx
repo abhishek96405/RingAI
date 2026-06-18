@@ -1,44 +1,53 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { activateRestaurant, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { AlertTriangle, AudioLines, CheckCircle2, DollarSign, Download, ShieldCheck, Sparkles, Star } from "lucide-react";
+import { activateRestaurant, exportAnalytics, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowUpRight, DollarSign, Phone, PhoneCall, ShieldCheck, Star } from "lucide-react";
-import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { exportAnalytics } from "@/lib/api";
-import { Download } from "lucide-react";
 
-function StatCard({ icon: Icon, label, value, subtext, iconColor }: any) {
-  return (
-    <Card className="kpi-card">
-      <div className="flex items-start justify-between">
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${iconColor || "bg-primary/10 text-primary"}`}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <Badge variant="secondary" className="text-xs border-0 bg-success/10 text-success">
-          <ArrowUpRight className="w-3 h-3 mr-0.5" /> Live
-        </Badge>
-      </div>
-      <div className="mt-3">
-        <p className="text-2xl font-display font-bold">{value}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-      </div>
-      {subtext && <p className="text-xs text-muted-foreground mt-2">{subtext}</p>}
-    </Card>
-  );
+function formatHour(h: unknown): string | null {
+  if (h === null || h === undefined || h === "") return null;
+  const n = Number(h);
+  if (Number.isNaN(n)) return String(h);
+  const hr = ((n + 11) % 12) + 1;
+  return `${hr} ${n < 12 ? "AM" : "PM"}`;
+}
+
+function buildBriefing(calls: number, escalated: number, busiest: string | null, periodWord: string) {
+  if (!calls) {
+    return `No calls yet this ${periodWord}. Your briefing fills in as Duuutah starts answering.`;
+  }
+  let s = `Duuutah answered ${calls} call${calls === 1 ? "" : "s"} this ${periodWord}`;
+  if (busiest) s += `, busiest around ${busiest}`;
+  s += ". ";
+  s += escalated > 0
+    ? `${escalated} ${escalated === 1 ? "call needed" : "calls needed"} a human hand-off.`
+    : "Every one was handled without a hand-off.";
+  return s;
+}
+
+function sparkPoints(values: number[], w = 100, h = 26, pad = 3) {
+  if (!values || values.length < 2) return "";
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const span = max - min || 1;
+  return values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - pad - ((v - min) / span) * (h - 2 * pad);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
 }
 
 function CustomTooltip({ active, payload, label }: any) {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-card border border-border rounded-lg p-3 shadow-md">
-        <p className="text-sm font-medium">{label}</p>
+      <div className="rounded-xl border border-line bg-[#FFFDF9] p-3 shadow-lg">
+        <p className="text-sm font-semibold">{label}</p>
         {payload.map((entry: any, i: number) => (
-          <p key={i} className="text-xs text-muted-foreground mt-1">
+          <p key={i} className="text-xs text-ink-soft mt-1">
             <span className="font-medium" style={{ color: entry.color }}>{entry.name}:</span>{" "}
             {entry.name === "revenue" ? `$${Number(entry.value).toFixed(0)}` : entry.value}
           </p>
@@ -49,10 +58,20 @@ function CustomTooltip({ active, payload, label }: any) {
   return null;
 }
 
+const WAVE_DELAYS = [0, 0.1, 0.2, 0.3, 0.15, 0.25, 0.35, 0.05, 0.2, 0.3, 0.12, 0.28];
+
 const DashboardHome = () => {
   const { activeRestaurant } = useAppSession();
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
+  const [exporting, setExporting] = useState(false);
+  const [exportStart, setExportStart] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [exportEnd, setExportEnd] = useState(() => new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     if (searchParams.get("billing") !== "success") return;
@@ -62,15 +81,7 @@ const DashboardHome = () => {
       .then(() => toast.success("Your AI phone agent is live!"))
       .catch(() => {});
     setSearchParams({}, { replace: true });
-  }, [searchParams, activeRestaurant]);
-  const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
-  const [exporting, setExporting] = useState(false);
-  const [exportStart, setExportStart] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7);
-    return d.toISOString().slice(0, 10);
-  });
-  const [exportEnd, setExportEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  }, [searchParams, activeRestaurant, setSearchParams]);
 
   const handleExport = async () => {
     try {
@@ -92,10 +103,7 @@ const DashboardHome = () => {
   const fetchData = useCallback(async () => {
     try {
       const restaurantId = getRestaurantId();
-      if (!restaurantId) {
-        setData(null);
-        return;
-      }
+      if (!restaurantId) { setData(null); return; }
       const res = await getAnalyticsSummary(restaurantId);
       setData(res.data);
     } catch (err) {
@@ -106,147 +114,193 @@ const DashboardHome = () => {
     }
   }, []);
 
-  
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30_000);
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") fetchData();
-    };
+    const handleVisibility = () => { if (document.visibilityState === "visible") fetchData(); };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [fetchData]);
-  
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <div key={i} className="premium-card h-32 animate-pulse" />)}
+      <div className="dash space-y-6">
+        <div className="dash-hero rounded-[2rem] h-48 animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {[...Array(4)].map((_, i) => <div key={i} className="dash-card h-32 animate-pulse" />)}
         </div>
       </div>
     );
   }
 
+  const d = data || {};
+  const periodWord = period === "weekly" ? "week" : "month";
+  const calls = Number(period === "weekly" ? d.calls_this_week : d.calls_this_month) || 0;
+  const revenue = Math.round((Number(period === "weekly" ? d.revenue_this_week : d.revenue_this_month) || 0) / 100);
+  const quality = Number(d.avg_quality_score) || 0;
+  const containment = Number(d.ai_containment_rate) || 0;
+  const escalated = Number(d.escalated_calls) || 0;
+  const chartData = (period === "weekly" ? d.daily_call_data : d.monthly_call_data) || [];
+  const topItems = d.top_items || [];
+  const maxCount = topItems.length ? Math.max(...topItems.map((t: any) => Number(t.count) || 0), 1) : 1;
+
+  const hourly = (d.hourly_distribution || []).filter((h: any) => (Number(h.calls) || 0) > 0);
+  const busiest = hourly.length
+    ? formatHour(hourly.reduce((a: any, b: any) => ((Number(b.calls) || 0) > (Number(a.calls) || 0) ? b : a)).hour)
+    : null;
+
+  const briefing = buildBriefing(calls, escalated, busiest, periodWord);
+  const dateLabel = new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  const revSpark = sparkPoints((chartData as any[]).map((x) => Number(x.revenue) || 0));
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-display font-bold">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Overview of your AI phone agent performance</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex rounded-xl border border-border overflow-hidden">
-            <button onClick={() => setPeriod("weekly")} className={`px-3 py-1.5 text-sm ${period === "weekly" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>Weekly</button>
-            <button onClick={() => setPeriod("monthly")} className={`px-3 py-1.5 text-sm ${period === "monthly" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>Monthly</button>
+    <div className="dash space-y-8">
+      {/* AI BRIEFING HERO */}
+      <section className="dash-hero rounded-[2rem] p-7 lg:p-9 relative overflow-hidden">
+        <AudioLines className="absolute -right-8 -bottom-12 w-72 h-72 text-coral/[0.07]" strokeWidth={1.5} />
+        <div className="relative">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <p className="eyebrow">Your daily briefing · {dateLabel}</p>
+            <span className="ai-tag"><Sparkles className="w-3 h-3" />AI summary</span>
           </div>
-          <div className="flex items-center gap-2">
-            <input type="date" value={exportStart} onChange={e => setExportStart(e.target.value)} className="text-sm border border-border rounded-xl px-2 py-1.5 bg-card text-foreground" />
-            <span className="text-sm text-muted-foreground">to</span>
-            <input type="date" value={exportEnd} onChange={e => setExportEnd(e.target.value)} className="text-sm border border-border rounded-xl px-2 py-1.5 bg-card text-foreground" />
-            <Button variant="outline" size="sm" className="rounded-xl" disabled={exporting} onClick={handleExport}>
-              <Download className="w-3.5 h-3.5 mr-1" />Export
-            </Button>
+          <p className="font-display font-semibold mt-5 max-w-2xl leading-snug tracking-tight text-xl lg:text-2xl">{briefing}</p>
+
+          <div className="mt-8 flex flex-wrap items-end gap-x-12 gap-y-6">
+            <div className="flex items-end gap-4">
+              <span className="relative font-display font-extrabold leading-[0.9]" style={{ fontSize: "clamp(3rem,6.5vw,4.75rem)" }}>
+                {calls}
+                <svg className="absolute left-0 -bottom-2 w-full" style={{ height: 12, overflow: "visible" }} viewBox="0 0 200 12" preserveAspectRatio="none" fill="none">
+                  <path d="M3,8 C56,2 150,2 197,7" stroke="#E8502E" strokeWidth={3.5} strokeLinecap="round" fill="none" vectorEffect="non-scaling-stroke" />
+                </svg>
+              </span>
+              <div className="mb-1.5">
+                <p className="text-sm font-semibold leading-tight">calls answered</p>
+                <span className="chip b-coral mt-1 inline-block">{containment}% handled by AI</span>
+              </div>
+            </div>
+
+            <div className="flex gap-9">
+              <div><p className="font-display font-extrabold text-2xl">${revenue.toLocaleString()}</p><p className="text-xs text-ink-soft mt-0.5">Revenue</p></div>
+              <div><p className="font-display font-extrabold text-2xl">{quality}<span className="text-base text-ink-soft">/100</span></p><p className="text-xs text-ink-soft mt-0.5">Quality</p></div>
+              <div><p className="font-display font-extrabold text-2xl">{escalated}</p><p className="text-xs text-ink-soft mt-0.5">Escalated</p></div>
+            </div>
+
+            <div className="flex items-center gap-3 ml-auto">
+              <div className="wf w-24">
+                {WAVE_DELAYS.map((delay, i) => <span key={i} style={{ animationDelay: `-${delay}s` }} />)}
+              </div>
+              <div className="text-right">
+                <span className="text-xs font-bold b-coral px-2 py-0.5 rounded-full inline-flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-coral animate-pulse" />LIVE</span>
+                <p className="text-xs text-ink-soft mt-1">Answering 24/7</p>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {data && data.total_calls === 0 && (
-        <Card className="premium-card p-5">
-          <h3 className="text-sm font-semibold">No real call data yet</h3>
-          <p className="text-sm text-muted-foreground mt-1">Your dashboard will populate after real calls are received by your AI phone agent.</p>
-        </Card>
-      )}
+      {/* NEEDS YOU */}
+      <section>
+        <p className="eyebrow mb-4">Needs you</p>
+        {escalated > 0 ? (
+          <div className="dash-card card-hover p-5 flex items-start gap-3.5" style={{ borderLeft: "4px solid #F2A93B" }}>
+            <span className="h-9 w-9 rounded-xl flex items-center justify-center b-honey shrink-0"><AlertTriangle className="w-4 h-4" /></span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">{escalated} call{escalated === 1 ? "" : "s"} needed a human this {periodWord}</p>
+              <p className="text-xs text-ink-soft mt-0.5">Review the transcripts to see what those callers needed.</p>
+            </div>
+            <Link to="/dashboard/calls" className="text-xs font-semibold text-coral hover:text-coral-deep shrink-0">Review →</Link>
+          </div>
+        ) : (
+          <div className="dash-card p-5 flex items-center gap-3.5">
+            <span className="h-9 w-9 rounded-xl flex items-center justify-center b-success shrink-0"><CheckCircle2 className="w-4 h-4" /></span>
+            <div>
+              <p className="text-sm font-semibold">All clear</p>
+              <p className="text-xs text-ink-soft mt-0.5">Nothing needs your attention right now.</p>
+            </div>
+          </div>
+        )}
+      </section>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Phone} label={`Total Calls This ${period === "weekly" ? "Week" : "Month"}`} value={period === "weekly" ? data?.calls_this_week || 0 : data?.calls_this_month || 0} iconColor="bg-primary/10 text-primary" />
-        <StatCard icon={DollarSign} label={`Revenue This ${period === "weekly" ? "Week" : "Month"}`} value={`$${((period === "weekly" ? data?.revenue_this_week || 0 : data?.revenue_this_month || 0) / 100).toFixed(0)}`} iconColor="bg-success/10 text-success" />
-        <StatCard icon={Star} label="Avg Quality Score" value={`${data?.avg_quality_score || 0}/100`} subtext="Based on AI analysis" iconColor="bg-warning/10 text-warning" />
-        <StatCard icon={ShieldCheck} label="AI Containment Rate" value={`${data?.ai_containment_rate || 0}%`} subtext={`${data?.escalated_calls || 0} escalated`} iconColor="bg-primary/10 text-primary" />
-      </div>
+      {/* AT A GLANCE */}
+      <section>
+        <p className="eyebrow mb-4">At a glance · this {periodWord}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="dash-card card-hover p-5">
+            <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#4FB089] to-[#3E9E78]" style={{ boxShadow: "0 10px 20px -8px rgba(62,158,120,.5)" }}><DollarSign className="w-[18px] h-[18px]" /></span>
+            <p className="font-display font-extrabold text-3xl mt-4">${revenue.toLocaleString()}</p>
+            <p className="text-sm text-ink-soft">Revenue captured</p>
+            {revSpark && <svg className="mt-3 w-full" height="26" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points={revSpark} fill="none" stroke="#3E9E78" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          </div>
+          <div className="dash-card card-hover p-5">
+            <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F6BE5C] to-[#F2A93B]" style={{ boxShadow: "0 10px 20px -8px rgba(242,169,59,.5)" }}><Star className="w-[18px] h-[18px]" /></span>
+            <p className="font-display font-extrabold text-3xl mt-4">{quality}<span className="text-lg text-ink-soft font-bold">/100</span></p>
+            <p className="text-sm text-ink-soft">Avg quality score</p>
+            <div className="track mt-4"><div className="fill" style={{ width: `${Math.min(quality, 100)}%`, background: "linear-gradient(90deg,#F6BE5C,#F2A93B)" }} /></div>
+          </div>
+          <div className="dash-card card-hover p-5">
+            <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#3A2C22] to-[#1E1813]" style={{ boxShadow: "0 10px 20px -8px rgba(30,24,19,.45)" }}><ShieldCheck className="w-[18px] h-[18px]" /></span>
+            <p className="font-display font-extrabold text-3xl mt-4">{containment}<span className="text-lg text-ink-soft font-bold">%</span></p>
+            <p className="text-sm text-ink-soft">Handled by AI</p>
+            <div className="track mt-4"><div className="fill" style={{ width: `${Math.min(containment, 100)}%` }} /></div>
+          </div>
+          <div className="dash-card card-hover p-5">
+            <span className={`h-10 w-10 rounded-2xl flex items-center justify-center ${escalated > 0 ? "b-honey" : "b-muted"}`}><AlertTriangle className="w-[18px] h-[18px]" /></span>
+            <p className="font-display font-extrabold text-3xl mt-4">{escalated}</p>
+            <p className="text-sm text-ink-soft">Escalated to a human</p>
+            <p className="text-xs text-ink-soft/80 mt-3">{escalated > 0 ? "Tap a call to read the transcript" : "No hand-offs needed"}</p>
+          </div>
+        </div>
+      </section>
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 premium-card p-6">
-          <div className="mb-6">
-            <h3 className="font-display font-bold text-lg">Call Volume & Revenue</h3>
-            <p className="text-sm text-muted-foreground">Last {period === "weekly" ? "7" : "30"} days</p>
+      {/* CHART + TOP ITEMS */}
+      <section className="grid lg:grid-cols-3 gap-6">
+        <div className="dash-card card-hover p-6 lg:col-span-2">
+          <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+            <div><p className="eyebrow mb-2">Calls & revenue</p><h3 className="font-display font-bold text-lg">Last {period === "weekly" ? "7 days" : "30 days"}</h3></div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex rounded-xl border border-line overflow-hidden bg-[#FFFDF9]">
+                <button onClick={() => setPeriod("weekly")} className={period === "weekly" ? "px-3 py-1.5 text-sm font-semibold bg-coral text-white" : "px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-line/40"}>Weekly</button>
+                <button onClick={() => setPeriod("monthly")} className={period === "monthly" ? "px-3 py-1.5 text-sm font-semibold bg-coral text-white" : "px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-line/40"}>Monthly</button>
+              </div>
+              <input type="date" value={exportStart} onChange={(e) => setExportStart(e.target.value)} className="text-sm border border-line rounded-xl px-2 py-1.5 bg-[#FFFDF9]" />
+              <span className="text-sm text-ink-soft">to</span>
+              <input type="date" value={exportEnd} onChange={(e) => setExportEnd(e.target.value)} className="text-sm border border-line rounded-xl px-2 py-1.5 bg-[#FFFDF9]" />
+              <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-1.5 border border-line bg-[#FFFDF9] hover:border-ink/25 px-3 py-1.5 rounded-xl text-sm font-semibold transition disabled:opacity-50"><Download className="w-3.5 h-3.5" />Export</button>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-ink-soft mb-4">
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-coral" />Calls</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-success" />Revenue</span>
           </div>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={period === "weekly" ? data?.daily_call_data || [] : data?.monthly_call_data || []} barGap={4}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-              <YAxis yAxisId="left" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar yAxisId="left" dataKey="calls" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} name="calls" />
-              <Bar yAxisId="right" dataKey="revenue" fill="hsl(var(--success))" radius={[6, 6, 0, 0]} name="revenue" />
+            <BarChart data={chartData} barGap={4}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#EBE2D8" />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#6F6259" }} stroke="#EBE2D8" />
+              <YAxis yAxisId="left" tick={{ fontSize: 12, fill: "#6F6259" }} stroke="#EBE2D8" />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12, fill: "#6F6259" }} stroke="#EBE2D8" />
+              <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(232,80,46,0.06)" }} />
+              <Bar yAxisId="left" dataKey="calls" fill="#E8502E" radius={[6, 6, 0, 0]} name="calls" />
+              <Bar yAxisId="right" dataKey="revenue" fill="#3E9E78" radius={[6, 6, 0, 0]} name="revenue" />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        <div className="premium-card p-6">
-          <div className="mb-6">
-            <h3 className="font-display font-bold text-lg">Call Distribution</h3>
-            <p className="text-sm text-muted-foreground">By hour of day</p>
-          </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={(data?.hourly_distribution || []).filter((h: any) => h.calls > 0)}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="hour" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-              <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-              <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="calls" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.15)" name="calls" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 premium-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display font-bold text-lg">Recent Calls</h3>
-            <Button variant="ghost" size="sm" asChild><Link to="/dashboard/calls">View All</Link></Button>
-          </div>
-          <div className="space-y-3">
-            {(data?.recent_calls || []).map((call: any, i: number) => (
-              <motion.div key={call.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 hover:bg-muted/50 transition-colors">
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${call.status === "COMPLETED" ? "bg-success/10 text-success" : call.status === "ESCALATED" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"}`}>
-                  <PhoneCall className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{call.caller_name || call.caller_number}</p>
-                  <p className="text-xs text-muted-foreground">{call.duration_seconds ? `${Math.floor(call.duration_seconds / 60)}m ${call.duration_seconds % 60}s` : "--"}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-medium">{call.order_total ? `$${(call.order_total / 100).toFixed(2)}` : "--"}</p>
-                  <Badge variant="secondary" className={`text-xs border-0 ${call.status === "COMPLETED" ? "bg-success/10 text-success" : call.status === "ESCALATED" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"}`}>{call.status}</Badge>
-                </div>
-              </motion.div>
-            ))}
-            {(!data?.recent_calls || data.recent_calls.length === 0) && <p className="text-sm text-muted-foreground text-center py-8">No calls yet</p>}
-          </div>
-        </div>
-
-        <div className="premium-card p-6">
-          <h3 className="font-display font-bold text-lg mb-4">Top Ordered Items</h3>
-          <div className="space-y-3">
-            {(data?.top_items || []).slice(0, 8).map((item: any, i: number) => (
-              <div key={item.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="text-xs font-medium text-muted-foreground w-5">{i + 1}.</span>
-                  <span className="text-sm truncate">{item.name}</span>
-                </div>
-                <Badge variant="secondary" className="text-xs border-0">{item.count}x</Badge>
+        <div className="dash-card card-hover p-6">
+          <p className="eyebrow mb-2">What they're ordering</p>
+          <h3 className="font-display font-bold text-lg mb-5">Top items</h3>
+          <div className="space-y-4">
+            {topItems.length ? topItems.slice(0, 6).map((it: any) => (
+              <div key={it.name}>
+                <div className="flex justify-between text-sm mb-1.5"><span className="font-medium truncate pr-2">{it.name}</span><span className="text-ink-soft">{it.count}</span></div>
+                <div className="track"><div className="fill" style={{ width: `${Math.round(((Number(it.count) || 0) / maxCount) * 100)}%` }} /></div>
               </div>
-            ))}
-            {(!data?.top_items || data.top_items.length === 0) && <p className="text-sm text-muted-foreground text-center py-4">No order data yet</p>}
+            )) : <p className="text-sm text-ink-soft text-center py-6">No order data yet</p>}
           </div>
         </div>
-      </div>
-
+      </section>
     </div>
   );
 };

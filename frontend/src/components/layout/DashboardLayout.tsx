@@ -182,7 +182,7 @@ const DashboardLayout = () => {
       <div className="h-16 flex items-center px-4 border-b border-border/50">
         <Link to="/dashboard" className="flex items-center gap-2.5 overflow-hidden">
           <img src="/icon-192x192.png" alt="Duuutah AI" className="w-9 h-9 rounded-xl shrink-0" />
-          {!collapsed && <span className="font-display font-bold text-lg whitespace-nowrap">Duuutah <span className="text-gradient">AI</span></span>}
+          {!collapsed && <span className="font-display font-bold text-lg whitespace-nowrap">Duuutah <span className="text-coral">AI</span></span>}
         </Link>
       </div>
 
@@ -193,7 +193,7 @@ const DashboardLayout = () => {
               key={item.path}
               to={item.path}
               onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive(item.path) ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive(item.path) ? "bg-coral text-white shadow-[0_12px_24px_-10px_rgba(232,80,46,0.6)]" : "text-ink-soft hover:text-ink hover:bg-coral/5"}`}
             >
               <item.icon className="w-5 h-5 shrink-0" />
               {!collapsed && <span>{item.label}</span>}
@@ -223,7 +223,7 @@ const DashboardLayout = () => {
   const currentLabel = navItems.find((n) => isActive(n.path))?.label || "Dashboard";
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="dash-surface min-h-screen flex">
       <aside className={`${collapsed ? "w-[72px]" : "w-60"} hidden lg:flex border-r border-border/50 bg-card flex-col transition-all duration-300 shrink-0`}>
         {sidebar}
       </aside>
