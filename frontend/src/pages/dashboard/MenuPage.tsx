@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,7 +14,7 @@ import {
   updateItemModifierAssignments, syncMenuFromPOS
 } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
-import { DollarSign, Edit2, Plus, Search, Trash2, UtensilsCrossed, X, Settings2, ChevronDown, ChevronUp, GripVertical, RefreshCw } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, DollarSign, Edit2, GripVertical, Layers, Plus, RefreshCw, Search, Settings2, Trash2, UtensilsCrossed, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -165,10 +164,12 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
         <div className="grid sm:grid-cols-2 gap-4">{[...Array(4)].map((_, i) => <div key={i} className="dash-card h-32 animate-pulse" />)}</div>
       ) : groups.length === 0 ? (
         <div className="dash-card p-12 text-center">
-          <Settings2 className="w-10 h-10 mx-auto text-ink-soft/30 mb-3" />
+          <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-coral/10 text-coral">
+            <Settings2 className="w-7 h-7" />
+          </span>
           <h3 className="font-display font-semibold mb-1">No modifier groups yet</h3>
-          <p className="text-sm text-ink-soft mb-4">Create groups like "Size", "Spice Level", or "Toppings" and assign them to menu items.</p>
-          <Button onClick={openAdd} variant="outline">Create First Group</Button>
+          <p className="text-sm text-ink-soft mb-4 max-w-sm mx-auto">Create groups like "Size", "Spice Level", or "Toppings" and assign them to menu items.</p>
+          <Button onClick={openAdd} className="bg-coral hover:bg-coral-deep text-white rounded-xl">Create First Group</Button>
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 gap-4">
@@ -178,8 +179,8 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 <div>
                   <div className="flex items-center gap-2">
                     <h4 className="font-display font-semibold">{group.name}</h4>
-                    {group.required && <Badge className="text-xs bg-destructive/10 text-destructive border-0">Required</Badge>}
-                    {!group.active && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                    {group.required && <span className="chip b-honey">Required</span>}
+                    {!group.active && <span className="chip b-muted">Inactive</span>}
                   </div>
                   <p className="text-xs text-ink-soft mt-0.5">
                     {group.selection_type === "single" ? "Single select" : "Multi select"}
@@ -549,8 +550,22 @@ const MenuPage = () => {
     return acc;
   }, {}), [filteredItems]);
 
+  const menuStats = useMemo(() => {
+    const total = items.length;
+    const available = items.filter((i: any) => i.available).length;
+    const withModifiers = items.filter((i: any) => (i.modifier_group_assignments?.length || 0) > 0).length;
+    const categoryCount = new Set(items.map((i: any) => i.category)).size;
+    return { total, available, withModifiers, categoryCount };
+  }, [items]);
+
   return (
     <div className="dash space-y-6">
+      <div>
+        <p className="eyebrow mb-2">Menu</p>
+        <h1 className="text-2xl font-display font-bold">Your menu</h1>
+        <p className="text-sm text-ink-soft mt-1">Manage the items, modifiers, and allergens your AI uses on every call.</p>
+      </div>
+
       <Tabs defaultValue="items">
         <div className="flex flex-col sm:flex-row gap-4 justify-between items-start">
           <TabsList className="bg-cream rounded-xl p-1 h-auto">
@@ -576,6 +591,40 @@ const MenuPage = () => {
         </div>
 
         <TabsContent value="items" className="mt-4 space-y-4">
+          {/* Menu at a glance */}
+          {!loading && menuStats.total > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="dash-card card-hover p-5">
+                <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F2763E] to-[#E8502E] icon-tile">
+                  <UtensilsCrossed className="w-[18px] h-[18px]" />
+                </span>
+                <p className="font-display font-extrabold text-3xl mt-4">{menuStats.total}</p>
+                <p className="text-sm text-ink-soft">Menu items</p>
+              </div>
+              <div className="dash-card card-hover p-5">
+                <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#4FB089] to-[#3E9E78]" style={{ boxShadow: "0 10px 20px -8px rgba(62,158,120,.5)" }}>
+                  <CheckCircle2 className="w-[18px] h-[18px]" />
+                </span>
+                <p className="font-display font-extrabold text-3xl mt-4">{menuStats.available}<span className="text-lg text-ink-soft font-bold"> / {menuStats.total}</span></p>
+                <p className="text-sm text-ink-soft">Available</p>
+              </div>
+              <div className="dash-card card-hover p-5">
+                <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F6BE5C] to-[#F2A93B]" style={{ boxShadow: "0 10px 20px -8px rgba(242,169,59,.5)" }}>
+                  <Settings2 className="w-[18px] h-[18px]" />
+                </span>
+                <p className="font-display font-extrabold text-3xl mt-4">{menuStats.withModifiers}</p>
+                <p className="text-sm text-ink-soft">With modifiers</p>
+              </div>
+              <div className="dash-card card-hover p-5">
+                <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#3A2C22] to-[#1E1813]" style={{ boxShadow: "0 10px 20px -8px rgba(30,24,19,.45)" }}>
+                  <Layers className="w-[18px] h-[18px]" />
+                </span>
+                <p className="font-display font-extrabold text-3xl mt-4">{menuStats.categoryCount}</p>
+                <p className="text-sm text-ink-soft">Categories</p>
+              </div>
+            </div>
+          )}
+
           {/* Category filter */}
           <div className="flex gap-2 overflow-x-auto pb-1">
             {["all", ...categories].map((cat) => (
@@ -594,17 +643,23 @@ const MenuPage = () => {
           {loading ? (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="dash-card h-44 animate-pulse" />)}</div>
           ) : Object.keys(groupedItems).length === 0 ? (
-            <div className="text-center py-20">
-              <UtensilsCrossed className="w-12 h-12 text-ink-soft/30 mx-auto mb-4" />
-              <h3 className="font-display font-semibold text-lg mb-1">No menu items found</h3>
-              <p className="text-sm text-ink-soft">Try a different search or add new items.</p>
+            <div className="dash-card p-12 text-center">
+              <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-coral/10 text-coral">
+                <UtensilsCrossed className="w-7 h-7" />
+              </span>
+              <h3 className="font-display font-semibold text-lg mb-1">{search || activeCategory !== "all" ? "No items match your filters" : "Your menu is empty"}</h3>
+              <p className="text-sm text-ink-soft mb-5 max-w-sm mx-auto">{search || activeCategory !== "all" ? "Try a different search or category." : "Add your first item, or sync your menu straight from your POS."}</p>
+              <div className="flex items-center justify-center gap-2">
+                <button onClick={openAdd} className="inline-flex items-center gap-2 bg-coral hover:bg-coral-deep text-white px-4 py-2 rounded-xl text-sm font-semibold transition"><Plus className="w-4 h-4" />Add item</button>
+                <button onClick={handlePOSSync} disabled={syncing} className="inline-flex items-center gap-2 border border-line bg-[#FFFDF9] hover:border-ink/25 px-4 py-2 rounded-xl text-sm font-semibold transition disabled:opacity-50"><RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} />Sync from POS</button>
+              </div>
             </div>
           ) : Object.entries(groupedItems).map(([category, catItems]) => (
             <div key={category}>
               <h3 className="font-display font-bold text-lg mb-4">{category}</h3>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {(catItems as any[]).map((item, i) => (
-                  <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="dash-card p-5">
+                  <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="dash-card card-hover p-5">
                     <div className="flex justify-between items-start mb-3 gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -614,21 +669,21 @@ const MenuPage = () => {
                         <p className="text-sm text-ink-soft mt-1">{item.description}</p>
                         {item.allergens?.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
-                            {item.allergens.map((a: string) => <Badge key={a} variant="secondary" className="text-xs border-0 bg-honey/15 text-[#a26d0d]">{a}</Badge>)}
+                            {item.allergens.map((a: string) => <span key={a} className="chip bg-honey/15 text-[#a26d0d]">{a}</span>)}
                           </div>
                         )}
                         {item.modifier_group_assignments?.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
-                            <Badge variant="secondary" className="text-xs border-0 bg-coral/10 text-coral">
-                              <Settings2 className="w-2.5 h-2.5 mr-1" />{item.modifier_group_assignments.length} modifier{item.modifier_group_assignments.length > 1 ? "s" : ""}
-                            </Badge>
+                            <span className="chip b-coral inline-flex items-center gap-1">
+                              <Settings2 className="w-2.5 h-2.5" />{item.modifier_group_assignments.length} modifier{item.modifier_group_assignments.length > 1 ? "s" : ""}
+                            </span>
                           </div>
                         )}
                       </div>
                       <Switch checked={item.available} onCheckedChange={() => handleToggle(item.id)} />
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="flex items-center text-lg font-display font-bold"><DollarSign className="w-4 h-4 mr-0.5" />{(item.price / 100).toFixed(2)}</span>
+                      <span className="flex items-center text-xl font-display font-extrabold"><DollarSign className="w-4 h-4 mr-0.5" />{(item.price / 100).toFixed(2)}</span>
                       <div className="flex gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)}><Edit2 className="w-3.5 h-3.5" /></Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(item.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
@@ -722,7 +777,7 @@ const MenuPage = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium">{group.name}</span>
-                            {group.required && <Badge className="text-xs bg-destructive/10 text-destructive border-0 h-4">Required</Badge>}
+                            {group.required && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-honey/20 text-[#a26d0d]">Required</span>}
                           </div>
                           <p className="text-xs text-ink-soft">{group.options.map((o: any) => o.name).join(", ")}</p>
                         </div>
