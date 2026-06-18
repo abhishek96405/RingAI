@@ -18,6 +18,12 @@ export default {
         body: ['Inter', 'sans-serif'],
       },
       colors: {
+        // Duuutah landing-page brand palette
+        cream: "#FBF7F2",
+        ink: { DEFAULT: "#1E1813", soft: "#6F6259" },
+        coral: { DEFAULT: "#E8502E", deep: "#C63F1E", tint: "#FBE7DD" },
+        honey: "#F2A93B",
+        line: "#EBE2D8",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

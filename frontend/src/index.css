@@ -425,3 +425,84 @@
 .ringai-clerk-social-btn {
   width: 100%;
 }
+
+/* ============================================================
+   Duuutah landing / marketing page — APPEND this to the END of
+   frontend/src/index.css. Everything is scoped under `.landing`,
+   so none of it affects the app/dashboard.
+   ============================================================ */
+.landing {
+  /* Vite serves /public at the site root, so /hero.jpg resolves to public/hero.jpg */
+  --hero-photo: url('/hero.jpg');
+  font-family: var(--font-body);
+  color: #1E1813;
+  background-color: #FBF7F2;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='p' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.01' numOctaves='5' seed='4' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' lighting-color='%23ffffff' surfaceScale='4.5' diffuseConstant='1.5'%3E%3CfeDistantLight azimuth='235' elevation='38'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='600' height='600' filter='url(%23p)'/%3E%3C/svg%3E");
+  background-size: 600px 600px;
+  background-blend-mode: multiply;
+}
+.landing .font-display { font-family: var(--font-display); }
+
+/* plain, clean cards (no texture) */
+.landing .card,
+.landing .paper { background-color: #FFFDF9; }
+.landing .card { border-radius: 1.5rem; }
+
+/* hero: dark→light overlay over the photo, with a warm-gradient fallback */
+.landing .hero-bg {
+  background-image:
+    linear-gradient(100deg, rgba(16,10,6,.95) 0%, rgba(16,10,6,.78) 34%, rgba(16,10,6,.42) 62%, rgba(16,10,6,.20) 100%),
+    var(--hero-photo, none),
+    linear-gradient(115deg,#46291a 0%,#23150c 55%,#120b06 100%);
+  background-size: cover;
+  background-position: center right;
+  background-repeat: no-repeat;
+}
+@media (max-width: 640px) {
+  .landing .hero-bg {
+    background-image:
+      linear-gradient(180deg, rgba(16,10,6,.82), rgba(16,10,6,.62)),
+      var(--hero-photo, none),
+      linear-gradient(115deg,#46291a,#23150c 55%,#120b06);
+    background-position: center;
+  }
+}
+
+.landing .btn-lift { transition: transform .2s ease, box-shadow .2s ease; }
+.landing .btn-lift:hover { transform: translateY(-2px); }
+
+.landing .marquee-wrap { overflow: hidden; }
+.landing .marquee { display: flex; width: max-content; animation: duuutah-marquee 34s linear infinite; }
+.landing .marquee-wrap:hover .marquee { animation-play-state: paused; }
+@keyframes duuutah-marquee { to { transform: translateX(-50%); } }
+
+.landing .eyebrow { display: inline-flex; align-items: center; gap: .7rem; font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .18em; color: #6F6259; }
+.landing .eyebrow::before { content: ""; width: 32px; height: 2px; background: #E8502E; }
+.landing .eyebrow.light { color: rgba(251,247,242,.65); }
+
+.landing .shadow-soft { box-shadow: 0 10px 30px -14px rgba(60,30,15,.16); }
+.landing .shadow-warm { box-shadow: 0 26px 64px -28px rgba(60,30,15,.32); }
+
+.landing input[type=range].cal { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 99px; background: #EBE2D8; outline: none; }
+.landing input[type=range].cal::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 26px; height: 26px; border-radius: 50%; background: #E8502E; border: 4px solid #fff; box-shadow: 0 2px 8px rgba(60,30,15,.3); cursor: pointer; }
+.landing input[type=range].cal::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #E8502E; border: 4px solid #fff; cursor: pointer; }
+
+.landing details.faq { border-bottom: 1px solid #EBE2D8; }
+.landing details.faq summary { cursor: pointer; list-style: none; padding: 1.25rem 0; display: flex; justify-content: space-between; align-items: center; gap: 1rem; font-weight: 600; font-size: 1.05rem; }
+.landing details.faq summary::-webkit-details-marker { display: none; }
+.landing details.faq .chev { transition: transform .25s ease; flex-shrink: 0; color: #E8502E; }
+.landing details.faq[open] .chev { transform: rotate(45deg); }
+.landing details.faq .ans { padding: 0 0 1.25rem; color: #6F6259; line-height: 1.65; max-width: 62ch; }
+
+.landing .wf { display: flex; align-items: center; justify-content: center; gap: 4px; height: 60px; overflow: hidden; }
+.landing .wf span { flex: 1; min-width: 2px; max-width: 5px; border-radius: 99px; background: var(--wc, #fff); transform: scaleY(.22); animation: duuutah-wave 1.3s ease-in-out infinite; }
+@keyframes duuutah-wave { 0%, 100% { transform: scaleY(.2); } 50% { transform: scaleY(1); } }
+
+.landing .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+.landing .reveal.in { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .landing .marquee { animation: none; }
+  .landing .wf span { animation: none; }
+  .landing .reveal { opacity: 1; transform: none; }
+}
