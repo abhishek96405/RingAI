@@ -480,8 +480,8 @@ const Index = () => {
             <div>
               <p className="text-xs uppercase tracking-[0.14em] text-cream/40 mb-4">Legal</p>
               <div className="flex flex-col gap-2.5 text-sm">
-                <a href="#" className="hover:text-cream transition">Privacy</a>
-                <a href="#" className="hover:text-cream transition">Terms</a>
+                <Link to="/privacy" className="hover:text-cream transition">Privacy Policy</Link>
+                <Link to="/terms" className="hover:text-cream transition">Terms of Service</Link>
               </div>
             </div>
           </div>
