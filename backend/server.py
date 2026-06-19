@@ -1586,7 +1586,7 @@ async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_curr
         return {"audio_base64": audio_b64, "format": "wav"}
     except Exception as e:
         logger.error(f"Voice preview error for {voice_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Voice preview failed")
 
 # ---------------------------------------------------------------------------
 # PUBLIC MENU PAGE (no auth required)
