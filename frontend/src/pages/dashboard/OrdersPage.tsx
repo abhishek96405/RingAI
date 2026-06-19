@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { getCalls, getRestaurantId, refundOrder } from "@/lib/api";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 import {
   Search,
   ShoppingBag,
@@ -183,8 +184,8 @@ const OrdersPage = () => {
           o.call_sid === callSid ? { ...o, payment_status: "refunded" } : o
         )
       );
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || "Refund failed";
+    } catch (err) {
+      const msg = getApiErrorMessage(err, "Refund failed");
       toast.error(msg);
     } finally {
       setRefunding(false);

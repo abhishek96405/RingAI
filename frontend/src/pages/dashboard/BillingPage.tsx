@@ -14,6 +14,7 @@ import {
   Loader2
 } from "lucide-react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 
 const plans = [
   {
@@ -94,8 +95,8 @@ const BillingPage = () => {
         return;
       }
       window.location.href = url;
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to start checkout");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to start checkout"));
     } finally {
       setUpgrading(null);
     }
@@ -108,8 +109,8 @@ const BillingPage = () => {
       const url = res?.data?.portal_url;
       if (!url) return toast.error("Billing portal not available");
       window.location.href = url;
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to open billing portal");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to open billing portal"));
     }
   };
 

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CheckCircle2, CalendarDays, Store, Loader2, Lock, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 
 function POSCard({ restaurantId, squareConnected, cloverConnected }: { restaurantId: string; squareConnected: boolean; cloverConnected: boolean }) {
   const [manualOpen, setManualOpen] = useState(false);
@@ -31,8 +32,8 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
       const url = res?.data?.connect_url;
       if (!url) return toast.error("Square connect URL not available");
       window.location.href = url;
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to start Square connection");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to start Square connection"));
     }
   };
 
@@ -43,8 +44,8 @@ function POSCard({ restaurantId, squareConnected, cloverConnected }: { restauran
       const url = res?.data?.connect_url;
       if (!url) return toast.error("Clover connect URL not available");
       window.location.href = url;
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to start Clover connection");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to start Clover connection"));
     }
   };
 
@@ -277,8 +278,8 @@ const IntegrationsPage = () => {
       const url = res?.data?.authorization_url;
       if (!url) return toast.error("Google Calendar connect URL not available");
       window.location.href = url;
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Google Calendar not configured — check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Google Calendar not configured — check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render"));
     }
   };
 
@@ -289,8 +290,8 @@ const IntegrationsPage = () => {
       await disconnectGoogleCalendar(restaurantId);
       setCalendarConnected(false);
       toast.success("Google Calendar disconnected");
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to disconnect");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to disconnect"));
     }
   };
 
