@@ -174,8 +174,6 @@ export const createBillingCheckout = (payload: unknown) => api.post(`/billing/cr
 
 export const createBillingPortal = (payload: unknown) => api.post(`/billing/portal`, payload);
 
-export const getPlanFeatures = (restaurantId: string) => api.get(`/restaurants/${restaurantId}/plan-features`);
-
 export const getInvoices = (restaurantId: string) => api.get(`/billing/invoices`, { params: { restaurant_id: restaurantId } });
 
 export const getSquareConnectUrl = (restaurantId?: string | null) =>
