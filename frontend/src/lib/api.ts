@@ -155,19 +155,6 @@ export const exportAnalytics = (startDate: string, endDate: string, id?: string 
   api.get(`/restaurants/${requireRestaurantId(id)}/analytics/export?start_date=${startDate}&end_date=${endDate}`, { responseType: "blob" });
 
 export const getStatus = () => api.get(`/status`);
-export const getTestModeStatus = () => api.get(`/test-mode/status`);
-export const getTestScenarios = () => api.get(`/test-mode/scenarios`);
-
-export const runTestScenario = (id: string | null | undefined, scenarioId: number) =>
-  api.post(`/test-mode/run-scenario`, null, {
-    params: { restaurant_id: requireRestaurantId(id), scenario_id: scenarioId },
-  });
-
-export const simulateCall = (id?: string | null) =>
-  api.post(`/demo/simulate-call`, null, { params: { restaurant_id: requireRestaurantId(id) } });
-
-export const seedData = (id?: string | null) =>
-  api.post(`/demo/seed`, null, { params: { restaurant_id: requireRestaurantId(id) } });
 
 export const parseMenu = (data: unknown) => api.post(`/onboarding/menu/parse`, data);
 
