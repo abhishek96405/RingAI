@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { Plus, Pencil, Trash2, Clock, DollarSign, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 
 interface ServiceItem {
   id: string;
@@ -110,8 +111,8 @@ export default function ServicesPage() {
       }
       setDialogOpen(false);
       fetchServices();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save service");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to save service"));
     } finally {
       setSaving(false);
     }
@@ -123,8 +124,8 @@ export default function ServicesPage() {
       await deleteService(service.id);
       toast.success("Service deleted");
       fetchServices();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to delete service");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to delete service"));
     }
   };
 

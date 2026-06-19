@@ -41,6 +41,7 @@ import {
 import { SignOutButton } from "@clerk/clerk-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 
 // Business type options for horizontal platform
 const businessTypeOptions = [
@@ -237,8 +238,8 @@ export default function Onboarding() {
 
       toast.success(`${getBusinessLabel()} created!`);
       setCurrentStep(2);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || `Failed to create ${getBusinessLabel().toLowerCase()}`);
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, `Failed to create ${getBusinessLabel().toLowerCase()}`));
     } finally {
       setSubmitting(false);
     }
@@ -265,8 +266,8 @@ export default function Onboarding() {
       } else {
         toast.warning("No items could be parsed. Try a different format.");
       }
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to parse");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to parse"));
     } finally {
       setParsing(false);
     }
@@ -288,8 +289,8 @@ export default function Onboarding() {
       await confirmMenu(restaurantId, parsedItems);
       toast.success(`${isAppointmentBusiness ? "Services" : "Menu"} saved!`);
       setCurrentStep(3);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || `Failed to save ${isAppointmentBusiness ? "services" : "menu"}`);
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, `Failed to save ${isAppointmentBusiness ? "services" : "menu"}`));
     } finally {
       setSubmitting(false);
     }
@@ -307,8 +308,8 @@ export default function Onboarding() {
       await updateConfig(restaurantId, aiConfig);
       toast.success("AI configuration saved!");
       setCurrentStep(4);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save config");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to save config"));
     } finally {
       setSubmitting(false);
     }
@@ -329,8 +330,8 @@ export default function Onboarding() {
         source: "onboarding",
       });
       window.location.href = res.data.checkout_url;
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to start checkout");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to start checkout"));
       setActivating(false);
     }
   };

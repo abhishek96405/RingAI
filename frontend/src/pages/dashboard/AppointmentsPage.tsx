@@ -16,6 +16,7 @@ import {
   ChevronLeft, ChevronRight, Lock, Unlock, Check,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 import CreateAppointmentDialog from "./CreateAppointmentDialog";
 
 interface Appointment {
@@ -91,8 +92,8 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
       await cancelAppointment(apt.id);
       toast.success("Appointment cancelled");
       fetchAppointments();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to cancel");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to cancel"));
     }
   };
 
@@ -101,8 +102,8 @@ function AppointmentsList({ restaurantId }: { restaurantId: string }) {
       await confirmAppointment(apt.id);
       toast.success("Appointment confirmed");
       fetchAppointments();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to confirm");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to confirm"));
     }
   };
 

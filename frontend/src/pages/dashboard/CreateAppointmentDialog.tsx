@@ -11,6 +11,7 @@ import {
 import { Plus, Loader2 } from "lucide-react";
 import { getServices, getAvailableSlots, bookAppointment } from "@/lib/api";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 
 interface Service {
   id: string;
@@ -117,8 +118,8 @@ export default function CreateAppointmentDialog({
       setOpen(false);
       setForm({ ...emptyForm });
       onCreated();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to book appointment");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to book appointment"));
     } finally {
       setSubmitting(false);
     }

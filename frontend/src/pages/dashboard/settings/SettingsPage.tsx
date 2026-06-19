@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Building2, Clock, PhoneForwarded, ShoppingBag, Mic, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/errors";
 import { APPOINTMENT_TYPES, defaultHours, getBusinessLabel, type FieldErrors } from "./constants";
 import BusinessTab from "./BusinessTab";
 import PhoneForwardingTab from "./PhoneForwardingTab";
@@ -118,8 +119,8 @@ const SettingsPage = () => {
       // persists to RestaurantConfig directly and is not part of this save.
       await refreshSession(restaurantId);
       toast.success(`${getBusinessLabel(businessType)} info saved!`);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -151,8 +152,8 @@ const SettingsPage = () => {
       await updateConfig(restaurantId, payload);
       await refreshSession(restaurantId);
       toast.success("Settings saved!");
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -189,8 +190,8 @@ const SettingsPage = () => {
       await updateFulfillment(restaurantId, { restaurant: restaurantFields, config: configFields });
       await refreshSession(restaurantId);
       toast.success("Fulfillment saved!");
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save Fulfillment");
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to save Fulfillment"));
     } finally {
       setSaving(false);
     }
