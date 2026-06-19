@@ -70,7 +70,12 @@ const requireRestaurantId = (restaurantId?: string | null) => {
   return resolved;
 };
 
-const syncRestaurantFromBootstrap = (payload: any) => {
+interface BootstrapPayload {
+  active_restaurant?: { id?: string | null } | null;
+  restaurants?: unknown[];
+}
+
+const syncRestaurantFromBootstrap = (payload: BootstrapPayload) => {
   const activeRestaurantId = sanitizeRestaurantId(payload?.active_restaurant?.id);
 
   if (activeRestaurantId) {
@@ -148,7 +153,7 @@ export const getAnalyticsSummary = (id?: string | null) =>
 export const syncMenuFromPOS = (id?: string | null) =>
   api.post(`/restaurants/${requireRestaurantId(id)}/pos/sync`);
 
-export const savePOSCredentials = (data: any, id?: string | null) =>
+export const savePOSCredentials = (data: unknown, id?: string | null) =>
   api.post(`/restaurants/${requireRestaurantId(id)}/pos/credentials`, data);
 
 export const exportAnalytics = (startDate: string, endDate: string, id?: string | null) =>
@@ -271,16 +276,16 @@ export const unblockSlot = (restaurantId: string, slotId: string) =>
 export const getModifierGroups = (restaurantId: string) =>
   api.get(`/restaurants/${restaurantId}/modifier-groups`);
 
-export const createModifierGroup = (restaurantId: string, data: any) =>
+export const createModifierGroup = (restaurantId: string, data: unknown) =>
   api.post(`/restaurants/${restaurantId}/modifier-groups`, data);
 
-export const updateModifierGroup = (groupId: string, data: any) =>
+export const updateModifierGroup = (groupId: string, data: unknown) =>
   api.put(`/modifier-groups/${groupId}`, data);
 
 export const deleteModifierGroup = (groupId: string) =>
   api.delete(`/modifier-groups/${groupId}`);
 
-export const updateItemModifierAssignments = (itemId: string, assignments: any[]) =>
+export const updateItemModifierAssignments = (itemId: string, assignments: unknown[]) =>
   api.put(`/menu/${itemId}/modifier-assignments`, assignments);
 
 export const getVoicePreview = (voiceName: string) =>
