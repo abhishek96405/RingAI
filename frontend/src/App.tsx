@@ -25,6 +25,7 @@ import NotFound from "./pages/NotFound";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import CloverCallbackPage from "./pages/CloverCallbackPage";
 import SquareCallbackPage from "./pages/SquareCallbackPage";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
 
@@ -238,6 +239,7 @@ const AppRoutes = () => (
       <Route path="admin" element={<AdminPage />} />
     </Route>
     <Route path="/payment-success" element={<PaymentSuccessPage />} />
+    <Route path="/privacy" element={<PrivacyPolicy />} />
     {/* Clover OAuth callback. Top-level (NOT under /dashboard) so the path
         matches CLOVER_REDIRECT_URI exactly. Deliberately NOT wrapped in
         ProtectedAppRoute/PublicAuthRoute — the page handles its own auth states;
