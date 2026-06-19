@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import axios from "axios";
 import { useAppSession } from "@/context/AppSessionContext";
 import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,25 +50,8 @@ const statusColors: Record<string, string> = {
 
 export const ReservationsPage = () => {
   const { activeRestaurant } = useAppSession();
+  const isPro = isProPlan(activeRestaurant?.plan);
 
-  if (!isProPlan(activeRestaurant?.plan)) {
-    return (
-      <div className="dash flex items-center justify-center py-20">
-        <div className="dash-card p-8 text-center max-w-md">
-          <div className="w-10 h-10 rounded-xl bg-coral/10 flex items-center justify-center mx-auto mb-4">
-            <CalendarIcon className="w-5 h-5 text-coral" />
-          </div>
-          <h3 className="font-display font-bold text-lg mb-2">AI Table Reservations</h3>
-          <p className="text-sm text-ink-soft mb-4">
-            Let your AI handle table reservations, manage availability, and book parties automatically.
-          </p>
-          <a href="/dashboard/billing" className="inline-flex items-center justify-center rounded-xl bg-coral text-white px-6 py-2 text-sm font-medium hover:bg-coral-deep">
-            Upgrade to Pro
-          </a>
-        </div>
-      </div>
-    );
-  }
   const [searchParams] = useSearchParams();
   const restaurantId = searchParams.get("restaurant_id") || getRestaurantId() || "";
 
@@ -88,7 +72,7 @@ export const ReservationsPage = () => {
     special_requests: "",
   });
 
-  const fetchReservations = async () => {
+  const fetchReservations = useCallback(async () => {
     try {
       setLoading(true);
       const dateStr = format(selectedDate, "yyyy-MM-dd");
@@ -104,9 +88,9 @@ export const ReservationsPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [restaurantId, selectedDate, statusFilter]);
 
-  const fetchSlots = async () => {
+  const fetchSlots = useCallback(async () => {
     try {
       const dateStr = format(selectedDate, "yyyy-MM-dd");
       const res = await api.get(`/restaurants/${restaurantId}/reservation-slots`, {
@@ -116,14 +100,14 @@ export const ReservationsPage = () => {
     } catch (err) {
       console.error("Failed to fetch slots", err);
     }
-  };
+  }, [restaurantId, selectedDate]);
 
   useEffect(() => {
-    if (restaurantId) {
+    if (isPro && restaurantId) {
       fetchReservations();
       fetchSlots();
     }
-  }, [restaurantId, selectedDate, statusFilter]);
+  }, [isPro, restaurantId, fetchReservations, fetchSlots]);
 
   const handleCreate = async () => {
     if (!formData.customer_name || !formData.customer_phone || !formData.reservation_time) {
@@ -148,8 +132,9 @@ export const ReservationsPage = () => {
       });
       fetchReservations();
       fetchSlots();
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to create reservation");
+    } catch (err) {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      toast.error(detail || "Failed to create reservation");
     }
   };
 
@@ -185,6 +170,25 @@ export const ReservationsPage = () => {
       return time;
     }
   };
+
+  if (!isPro) {
+    return (
+      <div className="dash flex items-center justify-center py-20">
+        <div className="dash-card p-8 text-center max-w-md">
+          <div className="w-10 h-10 rounded-xl bg-coral/10 flex items-center justify-center mx-auto mb-4">
+            <CalendarIcon className="w-5 h-5 text-coral" />
+          </div>
+          <h3 className="font-display font-bold text-lg mb-2">AI Table Reservations</h3>
+          <p className="text-sm text-ink-soft mb-4">
+            Let your AI handle table reservations, manage availability, and book parties automatically.
+          </p>
+          <a href="/dashboard/billing" className="inline-flex items-center justify-center rounded-xl bg-coral text-white px-6 py-2 text-sm font-medium hover:bg-coral-deep">
+            Upgrade to Pro
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="dash p-6 space-y-6" data-testid="reservations-page">
