@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
    • DEMO_TEL / DEMO_TEL_DISPLAY  → real Telnyx demo number
    • Founder name + photo (Founder note section)
    • Footer: socials, company city
-   • Legal page links (Privacy / Terms) — currently "#"
    ────────────────────────────────────────────────────────────── */
 const DEMO_TEL = "+15550100100";
 const DEMO_TEL_DISPLAY = "(555) 010-0100";
