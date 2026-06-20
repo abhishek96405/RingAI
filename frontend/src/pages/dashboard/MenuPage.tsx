@@ -14,12 +14,12 @@ import {
   updateItemModifierAssignments, syncMenuFromPOS
 } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
-import type { ModifierGroup, ModifierOption } from "@/types";
+import type { MenuItem, ModifierGroup } from "@/types";
 import { CheckCircle2, ChevronDown, ChevronUp, DollarSign, Edit2, GripVertical, Layers, Plus, RefreshCw, Search, Settings2, Trash2, UtensilsCrossed, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
-const defaultItem = {
+const defaultItem: MenuItem = {
   name: "",
   description: "",
   category: "Appetizers",
@@ -27,8 +27,8 @@ const defaultItem = {
   prep_time_minutes: 0,
   available: true,
   allergens: [] as string[],
-  modifiers: [] as any[],
-  modifier_group_assignments: [] as any[],
+  modifiers: [],
+  modifier_group_assignments: [],
   special_instructions_enabled: true,
 };
 
@@ -341,17 +341,17 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
 const MenuPage = () => {
   const { activeRestaurant } = useAppSession();
   const restaurantId = activeRestaurant?.id ?? "";
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
-  const [formData, setFormData] = useState<any>(defaultItem);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [formData, setFormData] = useState<MenuItem>(defaultItem);
   const [saving, setSaving] = useState(false);
-  const [modifierGroups, setModifierGroups] = useState<any[]>([]);
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
 
   // Legacy modifier state (kept for backward compat)
   const [newGroupName, setNewGroupName] = useState("");
@@ -408,7 +408,7 @@ const MenuPage = () => {
     setDialogOpen(true);
   };
 
-  const openEdit = (item: any) => {
+  const openEdit = (item: MenuItem) => {
     setEditingItem(item);
     setFormData({
       name: item.name,
@@ -473,7 +473,7 @@ const MenuPage = () => {
   };
 
   const toggleAllergen = (allergen: string) => {
-    setFormData((prev: any) => ({
+    setFormData((prev) => ({
       ...prev,
       allergens: prev.allergens.includes(allergen)
         ? prev.allergens.filter((a: string) => a !== allergen)
@@ -482,11 +482,11 @@ const MenuPage = () => {
   };
 
   const toggleModifierGroupAssignment = (groupId: string) => {
-    setFormData((prev: any) => {
+    setFormData((prev) => {
       const assignments = prev.modifier_group_assignments || [];
-      const exists = assignments.find((a: any) => a.modifier_group_id === groupId);
+      const exists = assignments.find((a) => a.modifier_group_id === groupId);
       if (exists) {
-        return { ...prev, modifier_group_assignments: assignments.filter((a: any) => a.modifier_group_id !== groupId) };
+        return { ...prev, modifier_group_assignments: assignments.filter((a) => a.modifier_group_id !== groupId) };
       } else {
         return {
           ...prev,
@@ -504,25 +504,25 @@ const MenuPage = () => {
   };
 
   const isGroupAssigned = (groupId: string) =>
-    (formData.modifier_group_assignments || []).some((a: any) => a.modifier_group_id === groupId);
+    (formData.modifier_group_assignments || []).some((a) => a.modifier_group_id === groupId);
 
   // Legacy modifier helpers
   const addModifierGroup = () => {
     if (!newGroupName.trim()) return;
-    const exists = formData.modifiers.some((m: any) => m.name.toLowerCase() === newGroupName.trim().toLowerCase());
+    const exists = formData.modifiers.some((m) => m.name.toLowerCase() === newGroupName.trim().toLowerCase());
     if (exists) { toast.error("Group already exists"); return; }
-    setFormData((prev: any) => ({ ...prev, modifiers: [...prev.modifiers, { name: newGroupName.trim(), options: [] }] }));
+    setFormData((prev) => ({ ...prev, modifiers: [...prev.modifiers, { name: newGroupName.trim(), options: [] }] }));
     setNewGroupName("");
   };
 
   const removeModifierGroup = (index: number) => {
-    setFormData((prev: any) => ({ ...prev, modifiers: prev.modifiers.filter((_: any, i: number) => i !== index) }));
+    setFormData((prev) => ({ ...prev, modifiers: prev.modifiers.filter((_, i: number) => i !== index) }));
   };
 
   const addOptionToGroup = (groupIndex: number) => {
     const val = (newOption[groupIndex] || "").trim();
     if (!val) return;
-    setFormData((prev: any) => {
+    setFormData((prev) => {
       const mods = [...prev.modifiers];
       if (mods[groupIndex].options.includes(val)) { toast.error("Option already exists"); return prev; }
       mods[groupIndex] = { ...mods[groupIndex], options: [...mods[groupIndex].options, val] };
@@ -532,7 +532,7 @@ const MenuPage = () => {
   };
 
   const removeOptionFromGroup = (groupIndex: number, option: string) => {
-    setFormData((prev: any) => {
+    setFormData((prev) => {
       const mods = [...prev.modifiers];
       mods[groupIndex] = { ...mods[groupIndex], options: mods[groupIndex].options.filter((o: string) => o !== option) };
       return { ...prev, modifiers: mods };
@@ -545,7 +545,7 @@ const MenuPage = () => {
     return true;
   }), [items, activeCategory, search]);
 
-  const groupedItems = useMemo(() => filteredItems.reduce((acc: Record<string, any[]>, item: any) => {
+  const groupedItems = useMemo(() => filteredItems.reduce((acc: Record<string, MenuItem[]>, item) => {
     if (!acc[item.category]) acc[item.category] = [];
     acc[item.category].push(item);
     return acc;
@@ -553,9 +553,9 @@ const MenuPage = () => {
 
   const menuStats = useMemo(() => {
     const total = items.length;
-    const available = items.filter((i: any) => i.available).length;
-    const withModifiers = items.filter((i: any) => (i.modifier_group_assignments?.length || 0) > 0).length;
-    const categoryCount = new Set(items.map((i: any) => i.category)).size;
+    const available = items.filter((i) => i.available).length;
+    const withModifiers = items.filter((i) => (i.modifier_group_assignments?.length || 0) > 0).length;
+    const categoryCount = new Set(items.map((i) => i.category)).size;
     return { total, available, withModifiers, categoryCount };
   }, [items]);
 
@@ -659,7 +659,7 @@ const MenuPage = () => {
             <div key={category}>
               <h3 className="font-display font-bold text-lg mb-4">{category}</h3>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {(catItems as any[]).map((item, i) => (
+                {catItems.map((item, i) => (
                   <motion.div key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="dash-card card-hover p-5">
                     <div className="flex justify-between items-start mb-3 gap-3">
                       <div className="flex-1 min-w-0">
@@ -712,18 +712,18 @@ const MenuPage = () => {
             <div className="space-y-4 py-1">
               <div className="space-y-1.5">
                 <Label>Item Name *</Label>
-                <Input value={formData.name} onChange={(e) => setFormData((p: any) => ({ ...p, name: e.target.value }))} placeholder="e.g. Margherita Pizza" />
+                <Input value={formData.name} onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Margherita Pizza" />
               </div>
 
               <div className="space-y-1.5">
                 <Label>Description</Label>
-                <Textarea value={formData.description} onChange={(e) => setFormData((p: any) => ({ ...p, description: e.target.value }))} placeholder="Brief description..." rows={2} className="resize-none" />
+                <Textarea value={formData.description} onChange={(e) => setFormData((p) => ({ ...p, description: e.target.value }))} placeholder="Brief description..." rows={2} className="resize-none" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Category</Label>
-                  <Select value={formData.category} onValueChange={(v) => setFormData((p: any) => ({ ...p, category: v }))}>
+                  <Select value={formData.category} onValueChange={(v) => setFormData((p) => ({ ...p, category: v }))}>
                     <SelectTrigger className="h-9 rounded-lg"><SelectValue /></SelectTrigger>
                     <SelectContent>{categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                   </Select>
@@ -733,7 +733,7 @@ const MenuPage = () => {
                   <Input
                     type="number" min={0} step={0.01}
                     value={formData.price / 100}
-                    onChange={(e) => setFormData((p: any) => ({ ...p, price: Math.round(parseFloat(e.target.value || "0") * 100) }))}
+                    onChange={(e) => setFormData((p) => ({ ...p, price: Math.round(parseFloat(e.target.value || "0") * 100) }))}
                     className="h-9"
                   />
                 </div>
@@ -742,7 +742,7 @@ const MenuPage = () => {
                   <Input
                     type="number" min={0} step={1}
                     value={formData.prep_time_minutes || 0}
-                    onChange={(e) => setFormData((p: any) => ({ ...p, prep_time_minutes: parseInt(e.target.value || "0") || 0 }))}
+                    onChange={(e) => setFormData((p) => ({ ...p, prep_time_minutes: parseInt(e.target.value || "0") || 0 }))}
                     placeholder="0 = default"
                     className="h-9"
                   />
@@ -780,7 +780,7 @@ const MenuPage = () => {
                             <span className="text-sm font-medium">{group.name}</span>
                             {group.required && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-honey/20 text-[#a26d0d]">Required</span>}
                           </div>
-                          <p className="text-xs text-ink-soft">{group.options.map((o: any) => o.name).join(", ")}</p>
+                          <p className="text-xs text-ink-soft">{group.options.map((o) => o.name).join(", ")}</p>
                         </div>
                         <Switch checked={isGroupAssigned(group.id)} onCheckedChange={() => toggleModifierGroupAssignment(group.id)} onClick={(e) => e.stopPropagation()} />
                       </div>
@@ -797,14 +797,14 @@ const MenuPage = () => {
                 </div>
                 <Switch
                   checked={formData.special_instructions_enabled !== false}
-                  onCheckedChange={(v) => setFormData((p: any) => ({ ...p, special_instructions_enabled: v }))}
+                  onCheckedChange={(v) => setFormData((p) => ({ ...p, special_instructions_enabled: v }))}
                 />
               </div>
 
               {/* Available toggle */}
               <div className="flex items-center justify-between">
                 <Label>Available</Label>
-                <Switch checked={formData.available} onCheckedChange={(v) => setFormData((p: any) => ({ ...p, available: v }))} />
+                <Switch checked={formData.available} onCheckedChange={(v) => setFormData((p) => ({ ...p, available: v }))} />
               </div>
             </div>
           </ScrollArea>
