@@ -8,6 +8,7 @@ Provides:
 
 Optional feature - enabled via prepayment_enabled setting
 """
+import asyncio
 import os
 import logging
 from typing import Dict, Any, Optional
@@ -45,7 +46,8 @@ async def create_payment_link(
     try:
         fee_cents = max(1, round(order_total * convenience_fee_pct / 100))
         
-        checkout_session = stripe.checkout.Session.create(
+        checkout_session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
             mode="payment",
             line_items=[
                 {
