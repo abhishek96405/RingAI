@@ -53,3 +53,33 @@ export interface Call {
   analysis_json?: CallAnalysis;
   transcript?: TranscriptEntry[];
 }
+
+export interface ChartDatum {
+  label?: string;
+  calls?: number;
+  revenue?: number;
+}
+
+export interface TopItem {
+  name?: string;
+  count?: number;
+}
+
+export interface HourlyDatum {
+  hour?: number;
+  calls?: number;
+}
+
+export interface DashboardStats {
+  calls_this_week?: number;
+  calls_this_month?: number;
+  revenue_this_week?: number;
+  revenue_this_month?: number;
+  avg_quality_score?: number;
+  ai_containment_rate?: number;
+  escalated_calls?: number;
+  daily_call_data?: ChartDatum[];
+  monthly_call_data?: ChartDatum[];
+  top_items?: TopItem[];
+  hourly_distribution?: HourlyDatum[];
+}

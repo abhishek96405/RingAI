@@ -5,6 +5,7 @@ import { AlertTriangle, AudioLines, CheckCircle2, DollarSign, Download, ShieldCh
 import { activateRestaurant, exportAnalytics, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
 import { toast } from "sonner";
+import type { DashboardStats } from "@/types";
 
 function formatHour(h: unknown): string | null {
   if (h === null || h === undefined || h === "") return null;
@@ -41,12 +42,18 @@ function sparkPoints(values: number[], w = 100, h = 26, pad = 3) {
     .join(" ");
 }
 
-function CustomTooltip({ active, payload, label }: any) {
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: Array<{ color?: string; name?: string; value?: number | string }>;
+  label?: string | number;
+}
+
+function CustomTooltip({ active, payload, label }: ChartTooltipProps) {
   if (active && payload && payload.length) {
     return (
       <div className="rounded-xl border border-line bg-[#FFFDF9] p-3 shadow-lg">
         <p className="text-sm font-semibold">{label}</p>
-        {payload.map((entry: any, i: number) => (
+        {payload.map((entry, i) => (
           <p key={i} className="text-xs text-ink-soft mt-1">
             <span className="font-medium" style={{ color: entry.color }}>{entry.name}:</span>{" "}
             {entry.name === "revenue" ? `$${Number(entry.value).toFixed(0)}` : entry.value}
@@ -63,7 +70,7 @@ const WAVE_DELAYS = [0, 0.1, 0.2, 0.3, 0.15, 0.25, 0.35, 0.05, 0.2, 0.3, 0.12, 0
 const DashboardHome = () => {
   const { activeRestaurant } = useAppSession();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
   const [exporting, setExporting] = useState(false);
@@ -136,7 +143,7 @@ const DashboardHome = () => {
     );
   }
 
-  const d = data || {};
+  const d: DashboardStats = data || {};
   const periodWord = period === "weekly" ? "week" : "month";
   const calls = Number(period === "weekly" ? d.calls_this_week : d.calls_this_month) || 0;
   const revenue = Math.round((Number(period === "weekly" ? d.revenue_this_week : d.revenue_this_month) || 0) / 100);
@@ -145,16 +152,16 @@ const DashboardHome = () => {
   const escalated = Number(d.escalated_calls) || 0;
   const chartData = (period === "weekly" ? d.daily_call_data : d.monthly_call_data) || [];
   const topItems = d.top_items || [];
-  const maxCount = topItems.length ? Math.max(...topItems.map((t: any) => Number(t.count) || 0), 1) : 1;
+  const maxCount = topItems.length ? Math.max(...topItems.map((t) => Number(t.count) || 0), 1) : 1;
 
-  const hourly = (d.hourly_distribution || []).filter((h: any) => (Number(h.calls) || 0) > 0);
+  const hourly = (d.hourly_distribution || []).filter((h) => (Number(h.calls) || 0) > 0);
   const busiest = hourly.length
-    ? formatHour(hourly.reduce((a: any, b: any) => ((Number(b.calls) || 0) > (Number(a.calls) || 0) ? b : a)).hour)
+    ? formatHour(hourly.reduce((a, b) => ((Number(b.calls) || 0) > (Number(a.calls) || 0) ? b : a)).hour)
     : null;
 
   const briefing = buildBriefing(calls, escalated, busiest, periodWord);
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-  const revSpark = sparkPoints((chartData as any[]).map((x) => Number(x.revenue) || 0));
+  const revSpark = sparkPoints(chartData.map((x) => Number(x.revenue) || 0));
 
   return (
     <div className="dash space-y-8">
@@ -292,7 +299,7 @@ const DashboardHome = () => {
           <p className="eyebrow mb-2">What they're ordering</p>
           <h3 className="font-display font-bold text-lg mb-5">Top items</h3>
           <div className="space-y-4">
-            {topItems.length ? topItems.slice(0, 6).map((it: any) => (
+            {topItems.length ? topItems.slice(0, 6).map((it) => (
               <div key={it.name}>
                 <div className="flex justify-between text-sm mb-1.5"><span className="font-medium truncate pr-2">{it.name}</span><span className="text-ink-soft">{it.count}</span></div>
                 <div className="track"><div className="fill" style={{ width: `${Math.round(((Number(it.count) || 0) / maxCount) * 100)}%` }} /></div>
