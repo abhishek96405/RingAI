@@ -93,6 +93,9 @@ async def test_schedule_hangup_fires_on_call_complete_for_escalation(
     on_complete = AsyncMock()
     sess._on_call_complete = on_complete
     monkeypatch.setattr("telnyx_service.hang_up_call", AsyncMock(return_value=True))
+    # PL-26: the fall-through path now speaks an apology before hangup.
+    monkeypatch.setattr("call_pipeline.TRANSFER_FAIL_HANGUP_DELAY_SECS", 0)
+    monkeypatch.setattr("telnyx_service.speak_text", AsyncMock(return_value=True))
 
     await sess._schedule_hangup(reason="escalation")
     # Let the asyncio.create_task background fire complete.
@@ -272,6 +275,100 @@ async def test_transfer_timeout_does_not_double_fire_on_call_complete(
     await sess._fire_on_call_complete()  # webhook path also tries
 
     on_complete.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# PL-26 (apology only) — speak before hanging up on a FAILED transfer.
+#
+# When escalation can't dispatch (no number, or the transfer endpoint errored)
+# the caller is still connected. The immediate-failure path must speak a short
+# apology before hanging up so they're not dropped into silence. (The OTP
+# number-verification half of PL-26 is a SEPARATE PR — not covered here. The
+# watchdog/timeout path keeps its May-2026 "no TTS goodbye" behavior — see
+# test_handle_transfer_timeout_hangs_up_a_leg.)
+# ---------------------------------------------------------------------------
+
+
+async def test_escalation_no_destination_speaks_apology_before_hangup(
+    make_call_session, monkeypatch
+):
+    """Escalation requested but no escalation_phone configured → an apology TTS
+    is emitted, THEN the call hangs up (apology strictly before hangup)."""
+    import call_pipeline
+
+    sess = make_call_session(config={"business_type": "restaurant"})  # no escalation_phone_number
+    monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
+    monkeypatch.setattr("call_pipeline.TRANSFER_FAIL_HANGUP_DELAY_SECS", 0)
+    sess._pipeline_task = AsyncMock()
+    sess._pipeline_task.cancel = AsyncMock()
+    sess._on_call_complete = AsyncMock()
+
+    order: list[str] = []
+
+    async def fake_speak(call_sid, text, *a, **k):
+        order.append("speak")
+        fake_speak.text = text
+        return True
+
+    async def fake_hang_up(call_sid):
+        order.append("hangup")
+        return True
+
+    monkeypatch.setattr("telnyx_service.speak_text", fake_speak)
+    monkeypatch.setattr("telnyx_service.hang_up_call", fake_hang_up)
+
+    await sess._schedule_hangup(reason="escalation")
+
+    assert order == ["speak", "hangup"], "apology must be spoken before hangup"
+    assert "couldn't connect you" in fake_speak.text
+
+
+async def test_escalation_transfer_endpoint_error_speaks_apology_before_hangup(
+    make_call_session, monkeypatch
+):
+    """Escalation phone IS configured but the transfer dispatch fails
+    (_transfer_call returns False) → still speak the apology before hangup."""
+    sess = make_call_session(config={"escalation_phone_number": "+15555550199"})
+    monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
+    monkeypatch.setattr("call_pipeline.TRANSFER_FAIL_HANGUP_DELAY_SECS", 0)
+    sess._pipeline_task = AsyncMock()
+    sess._pipeline_task.cancel = AsyncMock()
+    sess._on_call_complete = AsyncMock()
+    sess._transfer_call = AsyncMock(return_value=False)  # dispatch failed
+
+    speak = AsyncMock(return_value=True)
+    hang_up = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.speak_text", speak)
+    monkeypatch.setattr("telnyx_service.hang_up_call", hang_up)
+
+    await sess._schedule_hangup(reason="escalation")
+
+    speak.assert_awaited_once()
+    assert speak.await_args.args[0] == sess.call_sid
+    hang_up.assert_awaited_once_with(sess.call_sid)
+
+
+async def test_escalation_apology_tts_failure_still_hangs_up(
+    make_call_session, monkeypatch
+):
+    """A TTS failure must never block teardown — if speak_text raises, the call
+    still hangs up cleanly (no silent hung call)."""
+    sess = make_call_session(config={"business_type": "restaurant"})
+    monkeypatch.setattr("call_pipeline.HANGUP_DELAY_SECS", 0)
+    monkeypatch.setattr("call_pipeline.TRANSFER_FAIL_HANGUP_DELAY_SECS", 0)
+    sess._pipeline_task = AsyncMock()
+    sess._pipeline_task.cancel = AsyncMock()
+    sess._on_call_complete = AsyncMock()
+
+    monkeypatch.setattr(
+        "telnyx_service.speak_text", AsyncMock(side_effect=RuntimeError("telnyx 500"))
+    )
+    hang_up = AsyncMock(return_value=True)
+    monkeypatch.setattr("telnyx_service.hang_up_call", hang_up)
+
+    await sess._schedule_hangup(reason="escalation")
+
+    hang_up.assert_awaited_once_with(sess.call_sid)
 
 
 # ---------------------------------------------------------------------------

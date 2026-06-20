@@ -1213,7 +1213,17 @@ async def get_bootstrap_payload(user: Dict[str, Any], preferred_restaurant_id: O
         memberships=serialize_mongo_doc(memberships),
         restaurants=serialize_mongo_doc(restaurants),
         active_restaurant=serialize_mongo_doc(active_restaurant),
-        onboarding_complete=bool(active_restaurant and active_restaurant.get("is_active")),
+        # PL-13: an owner-facing "live"/"onboarding complete" signal must also
+        # require a bound phone number. The activate flow flips is_active=True
+        # *before* Telnyx provisioning, so is_active alone can flag a restaurant
+        # as live with no working number. READ-SIDE ONLY — the call-admission
+        # gate (is_active AND is_entitled) is intentionally left unchanged; a
+        # restaurant with no phone_number can't receive an inbound call anyway.
+        onboarding_complete=bool(
+            active_restaurant
+            and active_restaurant.get("is_active")
+            and active_restaurant.get("phone_number")
+        ),
     ).model_dump()
 
     return serialize_mongo_doc(payload)
@@ -4883,6 +4893,251 @@ async def admin_cost_analytics(
 # unauthenticated pre-start window (A4-2 partial).
 MEDIA_STREAM_START_TIMEOUT_SECONDS = 15
 
+
+async def _on_call_complete_impl(
+    db,
+    *,
+    call_sid,
+    restaurant_id,
+    transcript,
+    session,
+    active_call,
+    restaurant,
+    config,
+    menu_items,
+):
+    """Resilient post-call save (PL-14).
+
+    Persists a completed call's full record (extracted order + quality eval)
+    and runs the downstream post-processing (overage billing, CRM upsert,
+    WebSocket notify, SMS confirmation, auto-learning). Hardened so a
+    completed call's record is *never* silently lost:
+
+      1. The Gemini transcript analysis is isolated — its failure degrades
+         the saved analysis to ``{}`` only; it does not discard the record.
+         (analyse_call_transcript makes a Gemini call that history shows can
+         take 12-16s and 503. Downstream tolerates a null quality_score —
+         see the A7-17 note below.)
+      2. ``active_calls`` is always cleaned up (``finally``), so a crash in
+         the save path never leaves a stale active-call row.
+      3. If the rich save path raises *before* the primary insert, a minimal
+         ``status="INCOMPLETE"`` fallback record is written so a completed
+         call is never zero-rows. The fallback is suppressed once the primary
+         insert has succeeded (no duplicate).
+
+    Extracted from the ``telnyx_media_stream`` closure so the critical save
+    path is unit-testable in isolation.
+    """
+    primary_insert_done = False
+    record_data = {}
+    try:
+        if session:
+            record_data = session.build_final_call_record()
+            order_data = record_data.get("order")
+            order_total = record_data.get("order_total", 0)
+            quality_eval = record_data.get("quality_eval", {})
+            quality_score = quality_eval.get("rule_based_score", 85)
+            status = record_data.get("status", "COMPLETED")
+            escalated = record_data.get("escalated_to_human", False)
+            contained = record_data.get("contained_by_ai", True)
+        else:
+            order_data = None
+            order_total = 0
+            quality_score = 85
+            status = "COMPLETED"
+            escalated = False
+            contained = True
+
+        # PL-14 (1): isolate the Gemini analysis. A failure here must degrade
+        # the saved analysis only — never discard the whole call record.
+        try:
+            analysis = await analyse_call_transcript(transcript, order_data, menu_items)
+        except Exception as e:
+            logger.error(
+                f"[{call_sid}] analyse_call_transcript failed — saving record "
+                f"without analysis: {e}"
+            )
+            analysis = {}
+
+        call = CallRecord(
+            restaurant_id=restaurant_id,
+            call_sid=call_sid,
+            caller_number=active_call.get("caller_number", ""),
+            caller_name=record_data.get("caller_name") if session else None,
+            started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
+            ended_at=datetime.now(timezone.utc).isoformat(),
+            duration_seconds=len(transcript) * 8,
+            status=status,
+            contained_by_ai=contained,
+            escalated_to_human=escalated,
+            transcript=transcript,
+            order_json=order_data,
+            # A7-17: keep the analysis score null when Gemini was
+            # unavailable (the deterministic rule_based_score still lives
+            # in analysis_json["rule_eval"]); don't backfill a number.
+            quality_score=analysis.get("quality_score"),
+            analysis_json={**analysis, "rule_eval": quality_eval if session else {}},
+            order_total=order_total,
+        )
+        await db.call_records.insert_one(call.model_dump())
+        primary_insert_done = True
+        logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
+
+        # Monthly call count + overage billing (A5-1/A5-2 — see _record_call_for_billing)
+        try:
+            await _record_call_for_billing(restaurant, restaurant_id, call_sid)
+        except Exception as e:
+            logger.warning(f"[{call_sid}] Overage billing failed (non-critical): {e}")
+
+        # CRM: upsert customer profile (PRO only)
+        customer_name = None
+        if session and session.order and session.order.customer_name:
+            customer_name = session.order.customer_name
+        _plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
+        if _plan_features["customer_recognition"] and (caller_number := active_call.get("caller_number")):
+            _profile_update = {
+                "phone_number": caller_number,
+                "restaurant_id": restaurant_id,
+                "last_call_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _consent = None
+            if session and session.order:
+                _consent = session.order.save_name_consent
+            if _consent is True and customer_name:
+                _profile_update["last_name"] = customer_name
+                _profile_update["name_consent"] = True
+            elif _consent is False:
+                _profile_update["name_consent"] = False
+                _profile_update["last_name"] = None
+            elif customer_name:
+                existing_profile = await db.customer_profiles.find_one(
+                    {"phone_number": caller_number, "restaurant_id": restaurant_id},
+                    {"_id": 0, "name_consent": 1}
+                )
+                if existing_profile and existing_profile.get("name_consent") is True:
+                    _profile_update["last_name"] = customer_name
+            if order_data:
+                _profile_update["last_order"] = order_data
+            await db.customer_profiles.update_one(
+                {"phone_number": caller_number, "restaurant_id": restaurant_id},
+                {"$set": _profile_update, "$inc": {"visit_count": 1}},
+                upsert=True,
+            )
+            logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
+
+        # WebSocket notifications
+        try:
+            from websocket_notifications import notify_new_call, notify_new_order
+            await notify_new_call(
+                restaurant_id=restaurant_id,
+                call_sid=call_sid,
+                caller_number=active_call.get("caller_number", ""),
+                caller_name=record_data.get("caller_name") if session else None,
+                status=status,
+                order_total=order_total,
+            )
+            if order_total > 0 and order_data:
+                await notify_new_order(
+                    restaurant_id=restaurant_id,
+                    order_id=call_sid,
+                    total=order_total,
+                    order_type=order_data.get("type", "pickup"),
+                    items_count=len(order_data.get("items", [])),
+                )
+        except Exception as e:
+            logger.warning(f"Could not send WebSocket notification: {e}")
+
+        # SMS confirmation
+        sms_enabled = config.get("sms_enabled", True) if config else True
+        # Order prepayment disabled for launch (kept in code for future use).
+        sms_payment_enabled = False  # was: config.get("sms_payment_enabled", False)
+
+        if sms_enabled and session and session.order.items:
+            payment_link = None
+            if sms_payment_enabled and order_total > 0:
+                _stripe_account_id = restaurant.get("stripe_account_id")
+                payment_link = await create_stripe_payment_link(
+                    order_total_cents=order_total,
+                    restaurant_name=restaurant.get("name", "the restaurant"),
+                    call_sid=call_sid,
+                    restaurant_id=restaurant_id,
+                    stripe_account_id=_stripe_account_id,
+                )
+            await send_order_sms(
+                caller_number=active_call.get("caller_number", ""),
+                order=session.order,
+                restaurant_name=restaurant.get("name", "the restaurant"),
+                prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
+                payment_link=payment_link,
+                restaurant=restaurant,
+                config=config,
+            )
+            if session:
+                session._sms_count += 1
+
+        # Auto-learning (PRO only, non-blocking)
+        try:
+            if analysis and session and session.business_type == "restaurant" and _plan_features.get("auto_learning"):
+                learning_service = get_learning_service(db)
+                learning_result = await learning_service.process_call_analysis(
+                    restaurant_id=restaurant_id,
+                    call_id=call_sid,
+                    analysis=analysis,
+                    order_completed=bool(order_data and order_data.get("items")),
+                    order_total=order_total,
+                )
+                logger.info(f"[{call_sid}] Learning: aliases={len(learning_result.get('aliases_learned', []))}, flagged={learning_result.get('flagged_for_review')}")
+        except Exception as e:
+            logger.warning(f"[{call_sid}] Auto-learning failed (non-critical): {e}")
+    except Exception as e:
+        logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
+        # PL-14 (3): persist a minimal fallback record so a completed call is
+        # never zero-rows. Suppressed if the primary insert already succeeded
+        # (otherwise we'd duplicate the record).
+        if not primary_insert_done:
+            try:
+                await db.call_records.insert_one(CallRecord(
+                    restaurant_id=restaurant_id,
+                    call_sid=call_sid,
+                    caller_number=active_call.get("caller_number", ""),
+                    started_at=active_call.get(
+                        "started_at", datetime.now(timezone.utc).isoformat()
+                    ),
+                    ended_at=datetime.now(timezone.utc).isoformat(),
+                    duration_seconds=len(transcript) * 8,
+                    status="INCOMPLETE",
+                    transcript=transcript,
+                    order_json=record_data.get("order"),
+                ).model_dump())
+                logger.warning(
+                    f"[{call_sid}] Saved minimal INCOMPLETE fallback call record "
+                    f"after save-path error."
+                )
+            except Exception as e2:
+                logger.error(f"[{call_sid}] even fallback call record failed: {e2}")
+    finally:
+        # PL-14 (2): always clean up active_calls — a stale row must never be
+        # left even if the save path errored.
+        try:
+            await db.active_calls.delete_one({"call_sid": call_sid})
+        except Exception as e:
+            logger.error(f"[{call_sid}] active_calls cleanup failed: {e}")
+
+    # ── Post-call reservation fallback (restaurants only) ────────────
+    # Final safety net only. Primary reservation dispatch now runs
+    # earlier, in the same teardown-protected sequence as the order
+    # (CallSession._ensure_reservation_booked, from _handle_order_confirmed
+    # and the disconnect handler). This tail runs after the slow
+    # analyse_call_transcript above and races teardown, so it must not be
+    # the only dispatch path — by the time it runs the reservation is
+    # usually already booked (no-op).
+    try:
+        if session is not None:
+            await session._ensure_reservation_booked()
+    except Exception as e:
+        logger.error(f"[{call_sid}] Post-call reservation fallback error: {e}", exc_info=True)
+
+
 @app.websocket("/api/telnyx/media-stream")
 async def telnyx_media_stream(websocket: WebSocket):
     """Full Pipecat-integrated WebSocket for Telnyx media streams.
@@ -4987,173 +5242,23 @@ async def telnyx_media_stream(websocket: WebSocket):
         register_call_session(call_sid, session)
 
         async def on_call_complete(call_sid, restaurant_id, transcript, session=None):
-            """Save full call record including extracted order and quality eval."""
-            try:
-                if session:
-                    record_data = session.build_final_call_record()
-                    order_data = record_data.get("order")
-                    order_total = record_data.get("order_total", 0)
-                    quality_eval = record_data.get("quality_eval", {})
-                    quality_score = quality_eval.get("rule_based_score", 85)
-                    status = record_data.get("status", "COMPLETED")
-                    escalated = record_data.get("escalated_to_human", False)
-                    contained = record_data.get("contained_by_ai", True)
-                else:
-                    order_data = None
-                    order_total = 0
-                    quality_score = 85
-                    status = "COMPLETED"
-                    escalated = False
-                    contained = True
+            """Save full call record including extracted order and quality eval.
 
-                analysis = await analyse_call_transcript(transcript, order_data, menu_items)
-
-                call = CallRecord(
-                    restaurant_id=restaurant_id,
-                    call_sid=call_sid,
-                    caller_number=active_call.get("caller_number", ""),
-                    caller_name=record_data.get("caller_name") if session else None,
-                    started_at=active_call.get("started_at", datetime.now(timezone.utc).isoformat()),
-                    ended_at=datetime.now(timezone.utc).isoformat(),
-                    duration_seconds=len(transcript) * 8,
-                    status=status,
-                    contained_by_ai=contained,
-                    escalated_to_human=escalated,
-                    transcript=transcript,
-                    order_json=order_data,
-                    # A7-17: keep the analysis score null when Gemini was
-                    # unavailable (the deterministic rule_based_score still lives
-                    # in analysis_json["rule_eval"]); don't backfill a number.
-                    quality_score=analysis.get("quality_score"),
-                    analysis_json={**analysis, "rule_eval": quality_eval if session else {}},
-                    order_total=order_total,
-                )
-                await db.call_records.insert_one(call.model_dump())
-                await db.active_calls.delete_one({"call_sid": call_sid})
-                logger.info(f"[{call_sid}] Call record saved. Order total: ${order_total/100:.2f}")
-
-                # Monthly call count + overage billing (A5-1/A5-2 — see _record_call_for_billing)
-                try:
-                    await _record_call_for_billing(restaurant, restaurant_id, call_sid)
-                except Exception as e:
-                    logger.warning(f"[{call_sid}] Overage billing failed (non-critical): {e}")
-
-                # CRM: upsert customer profile (PRO only)
-                customer_name = None
-                if session and session.order and session.order.customer_name:
-                    customer_name = session.order.customer_name
-                _plan_features = get_plan_features(restaurant.get("plan", "STARTER"))
-                if _plan_features["customer_recognition"] and (caller_number := active_call.get("caller_number")):
-                    _profile_update = {
-                        "phone_number": caller_number,
-                        "restaurant_id": restaurant_id,
-                        "last_call_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    _consent = None
-                    if session and session.order:
-                        _consent = session.order.save_name_consent
-                    if _consent is True and customer_name:
-                        _profile_update["last_name"] = customer_name
-                        _profile_update["name_consent"] = True
-                    elif _consent is False:
-                        _profile_update["name_consent"] = False
-                        _profile_update["last_name"] = None
-                    elif customer_name:
-                        existing_profile = await db.customer_profiles.find_one(
-                            {"phone_number": caller_number, "restaurant_id": restaurant_id},
-                            {"_id": 0, "name_consent": 1}
-                        )
-                        if existing_profile and existing_profile.get("name_consent") is True:
-                            _profile_update["last_name"] = customer_name
-                    if order_data:
-                        _profile_update["last_order"] = order_data
-                    await db.customer_profiles.update_one(
-                        {"phone_number": caller_number, "restaurant_id": restaurant_id},
-                        {"$set": _profile_update, "$inc": {"visit_count": 1}},
-                        upsert=True,
-                    )
-                    logger.info(f"[{call_sid}] Customer profile upserted for {caller_number}")
-
-                # WebSocket notifications
-                try:
-                    from websocket_notifications import notify_new_call, notify_new_order
-                    await notify_new_call(
-                        restaurant_id=restaurant_id,
-                        call_sid=call_sid,
-                        caller_number=active_call.get("caller_number", ""),
-                        caller_name=record_data.get("caller_name") if session else None,
-                        status=status,
-                        order_total=order_total,
-                    )
-                    if order_total > 0 and order_data:
-                        await notify_new_order(
-                            restaurant_id=restaurant_id,
-                            order_id=call_sid,
-                            total=order_total,
-                            order_type=order_data.get("type", "pickup"),
-                            items_count=len(order_data.get("items", [])),
-                        )
-                except Exception as e:
-                    logger.warning(f"Could not send WebSocket notification: {e}")
-
-                # SMS confirmation
-                sms_enabled = config.get("sms_enabled", True) if config else True
-                # Order prepayment disabled for launch (kept in code for future use).
-                sms_payment_enabled = False  # was: config.get("sms_payment_enabled", False)
-
-                if sms_enabled and session and session.order.items:
-                    payment_link = None
-                    if sms_payment_enabled and order_total > 0:
-                        _stripe_account_id = restaurant.get("stripe_account_id")
-                        payment_link = await create_stripe_payment_link(
-                            order_total_cents=order_total,
-                            restaurant_name=restaurant.get("name", "the restaurant"),
-                            call_sid=call_sid,
-                            restaurant_id=restaurant_id,
-                            stripe_account_id=_stripe_account_id,
-                        )
-                    await send_order_sms(
-                        caller_number=active_call.get("caller_number", ""),
-                        order=session.order,
-                        restaurant_name=restaurant.get("name", "the restaurant"),
-                        prep_time_minutes=restaurant.get("avg_prep_time_minutes", 20),
-                        payment_link=payment_link,
-                        restaurant=restaurant,
-                        config=config,
-                    )
-                    if session:
-                        session._sms_count += 1
-
-                # Auto-learning (PRO only, non-blocking)
-                try:
-                    if analysis and session and session.business_type == "restaurant" and _plan_features.get("auto_learning"):
-                        learning_service = get_learning_service(db)
-                        learning_result = await learning_service.process_call_analysis(
-                            restaurant_id=restaurant_id,
-                            call_id=call_sid,
-                            analysis=analysis,
-                            order_completed=bool(order_data and order_data.get("items")),
-                            order_total=order_total,
-                        )
-                        logger.info(f"[{call_sid}] Learning: aliases={len(learning_result.get('aliases_learned', []))}, flagged={learning_result.get('flagged_for_review')}")
-                except Exception as e:
-                    logger.warning(f"[{call_sid}] Auto-learning failed (non-critical): {e}")
-            except Exception as e:
-                logger.error(f"[{call_sid}] on_call_complete error: {e}", exc_info=True)
-
-            # ── Post-call reservation fallback (restaurants only) ────────────
-            # Final safety net only. Primary reservation dispatch now runs
-            # earlier, in the same teardown-protected sequence as the order
-            # (CallSession._ensure_reservation_booked, from _handle_order_confirmed
-            # and the disconnect handler). This tail runs after the slow
-            # analyse_call_transcript above and races teardown, so it must not be
-            # the only dispatch path — by the time it runs the reservation is
-            # usually already booked (no-op).
-            try:
-                if session is not None:
-                    await session._ensure_reservation_booked()
-            except Exception as e:
-                logger.error(f"[{call_sid}] Post-call reservation fallback error: {e}", exc_info=True)
+            Thin wrapper — the resilient save path lives in the module-level
+            ``_on_call_complete_impl`` (PL-14) so it is unit-testable. This
+            closure just captures the per-call websocket context.
+            """
+            await _on_call_complete_impl(
+                db,
+                call_sid=call_sid,
+                restaurant_id=restaurant_id,
+                transcript=transcript,
+                session=session,
+                active_call=active_call,
+                restaurant=restaurant,
+                config=config,
+                menu_items=menu_items,
+            )
 
         if is_pipeline_available():
             await create_call_pipeline(

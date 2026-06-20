@@ -107,6 +107,59 @@ async def test_bootstrap_honours_restaurant_id_query(
 
 
 # ---------------------------------------------------------------------------
+# PL-13 — onboarding_complete must require a bound phone number.
+#
+# The activate flow sets is_active=True *before* Telnyx provisioning, so
+# is_active alone can flag a restaurant as "live" with no working number.
+# The owner-facing onboarding_complete signal must additionally require a
+# phone_number. This is read-side only — the call-admission gate is untouched.
+# ---------------------------------------------------------------------------
+
+
+async def test_onboarding_incomplete_when_active_but_no_phone_number(
+    client, two_tenant_with_memberships
+):
+    """is_active=True but no phone_number bound -> onboarding_complete is False.
+    The restaurant has been activated but Telnyx provisioning hasn't yet bound
+    a number, so the owner must not be shown as live."""
+    import server
+
+    await server.db.restaurants.update_one(
+        {"id": TENANT_A_ID},
+        {"$set": {"is_active": True}, "$unset": {"phone_number": ""}},
+    )
+
+    response = client.get(
+        "/api/me/bootstrap",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_restaurant"]["id"] == TENANT_A_ID
+    assert body["onboarding_complete"] is False
+
+
+async def test_onboarding_complete_when_active_and_phone_number_bound(
+    client, two_tenant_with_memberships
+):
+    """is_active=True AND phone_number bound -> onboarding_complete is True."""
+    import server
+
+    await server.db.restaurants.update_one(
+        {"id": TENANT_A_ID},
+        {"$set": {"is_active": True, "phone_number": "+15555550100"}},
+    )
+
+    response = client.get(
+        "/api/me/bootstrap",
+        headers={"Authorization": "Bearer tenant_a"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["onboarding_complete"] is True
+
+
+# ---------------------------------------------------------------------------
 # POST /api/me/repair-membership
 # ---------------------------------------------------------------------------
 

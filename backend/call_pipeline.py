@@ -360,6 +360,18 @@ VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.3"))
 # Seconds to wait after farewell TTS before hanging up
 HANGUP_DELAY_SECS = float(os.environ.get("HANGUP_DELAY_SECS", "1.5"))
 
+# PL-26: when an escalation transfer can't be dispatched (no number, or the
+# transfer endpoint errored) the caller is still connected. Speak a short
+# apology before terminating so they're not dropped into silence. The pause
+# gives Telnyx's server-side TTS time to play before the hangup cuts it off.
+TRANSFER_FAIL_APOLOGY = (
+    "I'm sorry, I couldn't connect you right now. "
+    "Please call back in a few minutes."
+)
+TRANSFER_FAIL_HANGUP_DELAY_SECS = float(
+    os.environ.get("TRANSFER_FAIL_HANGUP_DELAY_SECS", "4.0")
+)
+
 # Telnyx-side ring timeout on /actions/transfer — destination has this long to
 # answer before Telnyx aborts the outbound dial and fires call.hangup on the
 # B-leg. Durable across our backend restarts.
@@ -444,6 +456,46 @@ class CallSession:
         self._pipeline_task: Optional[Any] = None
         # Set by create_call_pipeline so _schedule_hangup can invoke it directly
         self._on_call_complete: Optional[Callable] = None
+
+        # PL-27: strong references to in-flight fire-and-forget notification/
+        # enrichment tasks. asyncio only holds a weak reference to a bare
+        # create_task() result, so an untracked task can be garbage-collected
+        # before it finishes (silently dropping the work). Keeping it in this
+        # set until its done-callback fires is the documented GC-safe pattern.
+        # NOTE: this set is for SIDE-EFFECT tasks only (operator alerts, SMS,
+        # availability checks). Control-flow/teardown tasks (_fire_on_call_complete,
+        # _handle_*_confirmed, _schedule_hangup, the farewell/timer tasks) are
+        # deliberately NOT tracked here and must never be blanket-cancelled.
+        self._background_tasks: "set[asyncio.Task]" = set()
+
+    # ------------------------------------------------------------------
+    # Background-task tracking (PL-27)
+    # ------------------------------------------------------------------
+
+    def _spawn_tracked(self, coro, label: str) -> "asyncio.Task":
+        """Spawn a fire-and-forget SIDE-EFFECT task GC-safely and visibly.
+
+        Keeps a strong reference (so the task can't be garbage-collected
+        mid-flight) and attaches a done-callback that logs any exception
+        instead of letting it vanish into the void. Use ONLY for notification/
+        enrichment work that may legitimately outlive the call — never for
+        control-flow/teardown tasks (those would break the call if cancelled).
+        Intentionally does NOT register for blanket cancellation.
+        """
+        t = asyncio.create_task(coro)
+        self._background_tasks.add(t)
+
+        def _done(task: "asyncio.Task") -> None:
+            self._background_tasks.discard(task)
+            if not task.cancelled():
+                exc = task.exception()
+                if exc is not None:
+                    logger.error(
+                        f"[{self.call_sid}] background task '{label}' failed: {exc}"
+                    )
+
+        t.add_done_callback(_done)
+        return t
 
     # ------------------------------------------------------------------
     # Transcript + signal handling
@@ -714,8 +766,25 @@ class CallSession:
                     )
                     return
             # Escalation requested but failed to dispatch (no number, or
-            # transfer endpoint errored) — fall through to terminate. We
-            # explicitly hang up the Telnyx leg since auto_hang_up=False.
+            # transfer endpoint errored) — fall through to terminate. PL-26:
+            # the caller is still connected, so speak a short apology before
+            # hanging up rather than dropping them into silence. speak_text
+            # drives Telnyx's server-side /actions/speak (independent of the
+            # media stream), and we pause briefly so the message plays before
+            # the hangup cuts it. Best-effort: a TTS failure must never block
+            # the hangup.
+            try:
+                spoke = await telnyx_service.speak_text(
+                    self.call_sid, TRANSFER_FAIL_APOLOGY
+                )
+                if spoke:
+                    await asyncio.sleep(TRANSFER_FAIL_HANGUP_DELAY_SECS)
+            except Exception as e:
+                logger.warning(
+                    f"[{self.call_sid}] Transfer-failure apology TTS failed "
+                    f"(continuing to hangup): {e}"
+                )
+            # Explicitly hang up the Telnyx leg since auto_hang_up=False.
             await telnyx_service.hang_up_call(self.call_sid)
         else:
             # Normal hangup paths (order_confirmed, appointment_confirmed,
@@ -953,7 +1022,10 @@ class CallSession:
                         f"[{self.call_sid}] Delivery address UNVERIFIABLE "
                         f"(reason={validation.get('reason')}) — holding for operator review"
                     )
-                    asyncio.create_task(self._notify_delivery_unverifiable(validation))
+                    self._spawn_tracked(
+                        self._notify_delivery_unverifiable(validation),
+                        "notify_delivery_unverifiable",
+                    )
                 return False
 
             logger.info(
@@ -993,7 +1065,9 @@ class CallSession:
                 f"{result.get('attempted_pos', 'pos')} dispatch failed",
             )
             logger.error(f"[{self.call_sid}] Kitchen dispatch FAILED: {result}")
-            asyncio.create_task(self._notify_dispatch_failure(result))
+            self._spawn_tracked(
+                self._notify_dispatch_failure(result), "notify_dispatch_failure"
+            )
 
     async def _notify_dispatch_failure(self, result: Dict[str, Any]) -> None:
         """Alert the operator that a configured POS dispatch failed and the order
@@ -1283,7 +1357,9 @@ class CallSession:
             f"[{self.call_sid}] Appointment dispatch FAILED — booking not saved: "
             f"{result.get('error')}"
         )
-        asyncio.create_task(self._notify_booking_failure(result, booking))
+        self._spawn_tracked(
+            self._notify_booking_failure(result, booking), "notify_booking_failure"
+        )
         return False
 
     async def _notify_booking_failure(
@@ -1674,12 +1750,15 @@ async def create_call_pipeline(
             # ── Menu SMS trigger ──
             if "i'll text you" in text_lower and "menu" in text_lower:
                 from gemini_service import send_menu_sms
-                asyncio.create_task(send_menu_sms(
-                    caller_number=session.caller_number,
-                    restaurant_name=session.restaurant.get("name", "the restaurant"),
-                    restaurant_id=session.restaurant_id,
-                    base_url="https://ringai-v2.onrender.com",
-                ))
+                session._spawn_tracked(
+                    send_menu_sms(
+                        caller_number=session.caller_number,
+                        restaurant_name=session.restaurant.get("name", "the restaurant"),
+                        restaurant_id=session.restaurant_id,
+                        base_url="https://ringai-v2.onrender.com",
+                    ),
+                    "send_menu_sms",
+                )
                 session._sms_count += 1
                 logger.info(f"[{call_sid}] Menu SMS triggered")
 
@@ -2141,7 +2220,10 @@ async def create_call_pipeline(
                 full_text = message.content.strip() if message.content else ""
                 if not full_text or full_text.startswith("SYSTEM:"):
                     return
-                asyncio.create_task(_classifier_availability_check(full_text))
+                session._spawn_tracked(
+                    _classifier_availability_check(full_text),
+                    "classifier_availability_check",
+                )
 
         task = PipelineTask(
             pipeline,
