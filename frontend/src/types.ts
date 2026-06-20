@@ -202,3 +202,24 @@ export interface MenuItem {
   category?: string;
   price?: number;
 }
+
+export interface ModifierOption {
+  id?: string;
+  name?: string;
+  price_delta?: number;
+  default_selected?: boolean;
+  in_stock?: boolean;
+  display_order?: number;
+  ai_aliases?: string[];
+}
+
+export interface ModifierGroup {
+  id?: string;
+  name?: string;
+  selection_type?: string;
+  required?: boolean;
+  min_selections?: number;
+  max_selections?: number;
+  active?: boolean;
+  options?: ModifierOption[];
+}
