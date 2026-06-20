@@ -26,6 +26,32 @@ pytestmark = [pytest.mark.webhook, pytest.mark.integration]
 # ---------------------------------------------------------------------------
 
 
+async def test_stripe_replay_returns_deduped_flag(
+    client, patched_server_db, stripe_sdk_mock
+):
+    """PL-06: atomic dedup — the second delivery of the same event id is
+    short-circuited and reports deduped, side effects do not re-run."""
+    await patched_server_db.restaurants.insert_one(
+        {"id": TENANT_A_ID, "stripe_customer_id": "cus_dedupe_1", "billing_status": "past_due"}
+    )
+    event = json.dumps(
+        {
+            "id": "evt_dedupe_flag",
+            "type": "invoice.paid",
+            "data": {"object": {"customer": "cus_dedupe_1"}},
+        }
+    ).encode()
+    headers = {"Stripe-Signature": "t=0,v1=ignored", "Content-Type": "application/json"}
+    r1 = client.post("/api/webhooks/stripe", content=event, headers=headers)
+    r2 = client.post("/api/webhooks/stripe", content=event, headers=headers)
+    assert r1.json().get("deduped") is not True
+    assert r2.json().get("deduped") is True
+    seen = await patched_server_db.webhook_events.count_documents(
+        {"provider": "stripe", "event_id": "evt_dedupe_flag"}
+    )
+    assert seen == 1
+
+
 async def test_stripe_invoice_paid_idempotent_on_replay(
     client, patched_server_db, stripe_sdk_mock
 ):
@@ -220,6 +246,7 @@ async def test_telnyx_call_initiated_replay_upserts_same_row(
             "twilio_phone_number": "+15555550100",
             "phone_number": "+15555550100",
             "is_active": True,
+            "billing_status": "active",
             "language": "en",
         }
     )

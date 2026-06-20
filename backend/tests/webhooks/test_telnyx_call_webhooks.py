@@ -53,6 +53,7 @@ async def test_call_initiated_seeds_active_call(
             "twilio_phone_number": "+15555550100",
             "phone_number": "+15555550100",
             "is_active": True,
+            "billing_status": "active",
             "language": "en",
         }
     )

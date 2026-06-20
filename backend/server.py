@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 import os
 import math
 import logging
@@ -4235,6 +4236,60 @@ async def send_menu_sms_endpoint(
     return {"sent": success}
 
 
+def is_entitled_to_calls(restaurant: dict) -> bool:
+    """Live-call billing entitlement (PL-02). Fail-closed: an unknown or missing
+    status denies service. This is the authoritative, race-free way trial and
+    cancelled service ends — checked at call time, no background sweep required.
+
+    Entitlement mapping (the 2-week grace timer + dunning are owned by Stripe;
+    the app owns only this gate):
+      - active                          → entitled
+      - trialing + trial_ends_at future → entitled (expired/unknown → denied)
+      - past_due                        → entitled (Stripe still retrying in the
+                                          2-week window; service stays on)
+      - unpaid/canceled/pending/other   → not entitled
+    """
+    status = (restaurant.get("billing_status") or "").lower()
+    if status == "active":
+        return True
+    if status == "trialing":
+        te = restaurant.get("trial_ends_at")
+        if not te:
+            return False  # trialing with no end date → fail closed
+        try:
+            return datetime.now(timezone.utc) < datetime.fromisoformat(te.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return False
+    if status == "past_due":
+        return True  # GRACE: within Stripe's retry window
+    return False
+
+
+async def _notify_service_suspended(customer_id: str, reason: str) -> None:
+    """Send a one-time loss-of-service notice to the restaurant whose Stripe
+    customer was suspended (PL-02). Uses the existing dashboard notification
+    channel (websocket_notifications.notify_system) — no new channel is built.
+    Best-effort: never raises into the webhook handler."""
+    if not customer_id:
+        return
+    try:
+        from websocket_notifications import notify_system
+        for _coll in (db.restaurants, db.clinics, db.salons, db.home_services, db.legal):
+            rest = await _coll.find_one({"stripe_customer_id": customer_id}, {"id": 1, "_id": 0})
+            if rest and rest.get("id"):
+                await notify_system(
+                    restaurant_id=rest["id"],
+                    title="AI line suspended",
+                    message=(
+                        "Your AI phone line has been suspended for non-payment. "
+                        "Update your payment method to restore service."
+                    ),
+                    data={"reason": reason},
+                )
+    except Exception as e:
+        logger.warning(f"[Stripe] Could not send suspension notice for {customer_id}: {e}")
+
+
 async def _prefetch_call_session_data(
     *,
     called_number: str,
@@ -4257,7 +4312,14 @@ async def _prefetch_call_session_data(
         db.legal.find_one(_lookup_filter, {"_id": 0}),
     )
     restaurant = next((r for r in _phone_results if r), None)
-    if not restaurant or not restaurant.get("is_active"):
+    # is_active = provisioned/onboarded; is_entitled_to_calls = billing entitlement
+    # (PL-02). Both must hold to answer a call.
+    if not restaurant or not restaurant.get("is_active") or not is_entitled_to_calls(restaurant):
+        if restaurant:
+            logger.info(
+                f"[{call_sid}] Call denied — is_active={restaurant.get('is_active')}, "
+                f"billing_status={restaurant.get('billing_status')}"
+            )
         return None
 
     restaurant_id = restaurant["id"]
@@ -5283,16 +5345,25 @@ async def stripe_webhook(request: Request):
     # every replay. Mirror the Square webhook — record seen ids in webhook_events
     # (7-day TTL) and short-circuit a replay before any side effect. Recorded
     # up-front so a replay is suppressed even if the first attempt partially ran.
+    # PL-06: atomic dedup. The fast-path find_one short-circuits sequential
+    # retries; the insert + unique index on (provider,event_id) is the real
+    # guarantee under concurrent delivery — exactly one insert wins, the rest
+    # hit DuplicateKeyError and skip all side effects. (Known limitation: a
+    # crash between insert and side-effect completion won't reprocess — a
+    # status-field state machine is a future enhancement, not fixed here.)
     _event_id = event.get("id")
     if _event_id:
         if await db.webhook_events.find_one({"provider": "stripe", "event_id": _event_id}):
             return JSONResponse({"received": True, "deduped": True})
-        await db.webhook_events.insert_one({
-            "provider": "stripe",
-            "event_id": _event_id,
-            "event_type": event_type,
-            "received_at": datetime.now(timezone.utc),
-        })
+        try:
+            await db.webhook_events.insert_one({
+                "provider": "stripe",
+                "event_id": _event_id,
+                "event_type": event_type,
+                "received_at": datetime.now(timezone.utc),
+            })
+        except DuplicateKeyError:
+            return JSONResponse({"received": True, "deduped": True})
 
     all_collections = [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]
 
@@ -5396,11 +5467,25 @@ async def stripe_webhook(request: Request):
         if resolved_plan:
             update_fields["plan"] = resolved_plan
             update_fields["monthly_call_limit"] = get_plan_features(resolved_plan)["monthly_call_limit"]
+        # PL-02: detect a transition INTO a non-serviceable state so the
+        # loss-of-service notice fires once (not on every repeated unpaid event).
+        _suspend_states = {"unpaid", "canceled", "incomplete_expired"}
+        _was_serviceable = False
+        if status in _suspend_states:
+            for _coll in all_collections:
+                _prior = await _coll.find_one(
+                    {"stripe_customer_id": customer_id}, {"billing_status": 1, "_id": 0}
+                )
+                if _prior and (_prior.get("billing_status") or "").lower() not in _suspend_states:
+                    _was_serviceable = True
+                    break
         for _coll in all_collections:
             await _coll.update_one(
                 {"stripe_customer_id": customer_id},
                 {"$set": update_fields}
             )
+        if status in _suspend_states and _was_serviceable:
+            await _notify_service_suspended(customer_id, reason=status)
         logger.info(f"[Stripe] Subscription {event_type}: customer={customer_id}, status={status}, plan={resolved_plan}")
 
     elif event_type == "customer.subscription.deleted":
@@ -5417,6 +5502,8 @@ async def stripe_webhook(request: Request):
                 {"stripe_customer_id": customer_id},
                 {"$set": {"billing_status": "canceled"}}
             )
+        # PL-02: cancellation is a one-shot event — fire the loss-of-service notice.
+        await _notify_service_suspended(customer_id, reason="canceled")
 
     elif event_type == "invoice.payment_failed":
         customer_id = data.get("customer")
@@ -5427,14 +5514,18 @@ async def stripe_webhook(request: Request):
             )
         logger.warning(f"[Stripe] Payment failed for customer {customer_id}")
 
-    elif event_type == "invoice.paid":
+    elif event_type in ("invoice.paid", "invoice.payment_succeeded"):
+        # PL-07: Stripe dashboards commonly select invoice.payment_succeeded (not
+        # invoice.paid) for the recurring-renewal event. Handle both so the
+        # monthly counter resets — otherwise paying tenants are over-billed for
+        # overage from month 2.
         customer_id = data.get("customer")
         for _coll in all_collections:
             await _coll.update_one(
                 {"stripe_customer_id": customer_id},
                 {"$set": {"billing_status": "active", "monthly_call_count": 0}}
             )
-        logger.info(f"[Stripe] Invoice paid for customer {customer_id} — call count reset")
+        logger.info(f"[Stripe] {event_type} for customer {customer_id} — call count reset")
 
     return JSONResponse({"received": True})
 
@@ -5927,8 +6018,19 @@ async def square_webhook(request: Request):
     if not event_id:
         raise HTTPException(status_code=400, detail="Missing event_id in payload")
 
-    existing = await db.webhook_events.find_one({"provider": "square", "event_id": event_id})
-    if existing:
+    # PL-06: atomic dedup — insert the marker BEFORE side effects (fast-path
+    # find_one for sequential retries; unique-index insert is the concurrent
+    # guarantee). Mirrors the Stripe handler.
+    if await db.webhook_events.find_one({"provider": "square", "event_id": event_id}):
+        return JSONResponse({"received": True, "deduped": True})
+    try:
+        await db.webhook_events.insert_one({
+            "provider": "square",
+            "event_id": event_id,
+            "event_type": event_type,
+            "received_at": datetime.now(timezone.utc),
+        })
+    except DuplicateKeyError:
         return JSONResponse({"received": True, "deduped": True})
 
     if event_type == "oauth.authorization.revoked":
@@ -5941,13 +6043,6 @@ async def square_webhook(request: Request):
             logger.info(f"square_webhook: marked merchant {merchant_id} as disconnected")
     else:
         logger.info(f"square_webhook: received unhandled event type {event_type}")
-
-    await db.webhook_events.insert_one({
-        "provider": "square",
-        "event_id": event_id,
-        "event_type": event_type,
-        "received_at": datetime.now(timezone.utc),
-    })
 
     return JSONResponse({"received": True})
 
@@ -6351,15 +6446,19 @@ async def _ensure_query_indexes():
     Each index is created in its own try/except so a single failure never
     blocks startup or the remaining indexes.
 
-    NOTE on uniqueness: every index here is created NON-unique on purpose.
-    The natural unique keys (users.id, memberships(user_id,restaurant_id),
-    webhook_events(provider,event_id), <business>.id, active_calls.call_sid)
-    are written via find-then-insert paths that do NOT catch DuplicateKeyError
-    (server.py:1148, 1333, 5288/5943), so adding unique=True now could turn a
-    rare race into an uncaught 500. The unique flips are deferred to follow-up
-    work after a prod dedupe pass — webhook_events specifically to PL-06, which
-    adds insert-first / DuplicateKeyError-based dedup. The aggregation to find
-    duplicates before flipping unique=True, per collection, is:
+    NOTE on uniqueness: webhook_events(provider,event_id) IS unique (PL-06) —
+    the Stripe/Square handlers now use insert-first + DuplicateKeyError to dedup
+    atomically, so the constraint is the source of truth (a 7-day TTL keeps the
+    collection tiny and provider event-ids are globally unique, so a pre-existing
+    duplicate is unlikely; if creation logs a duplicate-key error, delete the
+    extra throwaway markers and the next boot creates the index).
+
+    The remaining natural unique keys (users.id, memberships(user_id,restaurant_id),
+    <business>.id, active_calls.call_sid) stay NON-unique here: they are written
+    via find-then-insert paths that do NOT catch DuplicateKeyError
+    (server.py:1148, 1333), so unique=True would turn a rare race into an
+    uncaught 500. Those flips are deferred to a follow-up after a prod dedupe
+    pass. The aggregation to find duplicates before flipping unique=True is:
         [{"$group": {"_id": "<key fields>", "n": {"$sum": 1}}},
          {"$match": {"n": {"$gt": 1}}}]
     """
@@ -6370,7 +6469,7 @@ async def _ensure_query_indexes():
         (db.call_records,   [("restaurant_id", 1), ("started_at", -1)],  {}),
         (db.active_calls,   [("call_sid", 1)],                           {}),
         (db.active_calls,   [("started_at", 1)],                         {}),
-        (db.webhook_events, [("provider", 1), ("event_id", 1)],          {}),
+        (db.webhook_events, [("provider", 1), ("event_id", 1)],          {"unique": True}),
         (db.menu_items,     [("restaurant_id", 1)],                      {}),
     ]
     for coll in (db.restaurants, db.clinics, db.salons, db.home_services, db.legal):
