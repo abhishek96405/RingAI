@@ -83,3 +83,52 @@ export interface DashboardStats {
   top_items?: TopItem[];
   hourly_distribution?: HourlyDatum[];
 }
+
+export interface Invoice {
+  id: string;
+  date?: number;
+  description?: string;
+  status?: string;
+  amount?: number;
+  pdf?: string;
+}
+
+// The restaurant/business object. Intentionally partial — fields are added as
+// more pages are typed; AppSessionContext finalizes it in the last pass.
+export interface Restaurant {
+  id?: string;
+  plan?: string;
+  billing_status?: string;
+  trial_ends_at?: string;
+  monthly_call_count?: number;
+  monthly_call_limit?: number;
+  ai_containment_rate?: number;
+  total_revenue?: number;
+}
+
+export interface AdminCostOverall {
+  total_calls?: number;
+  total_cost_dollars?: number;
+  avg_cost_per_call_cents?: number;
+  total_revenue_dollars?: number;
+  gross_margin_pct?: number;
+  total_sms_sent?: number;
+}
+
+export interface AdminCostPerRestaurant {
+  restaurant_id?: string;
+  restaurant_name?: string;
+  sms_count?: number;
+  total_calls?: number;
+  voice_cost_dollars?: number;
+  sms_cost_dollars?: number;
+  gemini_cost_dollars?: number;
+  cost_dollars?: number;
+  revenue_dollars?: number;
+  avg_duration_seconds?: number;
+}
+
+export interface AdminCostAnalytics {
+  overall?: AdminCostOverall;
+  per_restaurant?: AdminCostPerRestaurant[];
+}

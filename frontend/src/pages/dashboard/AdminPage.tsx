@@ -6,12 +6,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { DollarSign, Phone, MessageSquare, Zap, TrendingUp, TrendingDown, Loader2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+import axios from "axios";
+import type { AdminCostAnalytics } from "@/types";
 
 const ADMIN_CLERK_ID = import.meta.env.VITE_ADMIN_CLERK_ID || "";
 
 const AdminPage = () => {
   const { activeRestaurant } = useAppSession();
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<AdminCostAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState("30");
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
@@ -22,8 +24,8 @@ const AdminPage = () => {
       const res = await getAdminCostAnalytics(parseInt(days));
       setData(res.data);
       setIsAdmin(true);
-    } catch (err: any) {
-      if (err?.response?.status === 403) {
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 403) {
         setIsAdmin(false);
       } else {
         toast.error("Failed to load admin analytics");
@@ -132,7 +134,7 @@ const AdminPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {per_restaurant.map((r: any) => (
+                {per_restaurant.map((r) => (
                   <tr key={r.restaurant_id} className="border-b border-line hover:bg-cream transition-colors">
                     <td className="py-3 pr-4">
                       <p className="font-medium">{r.restaurant_name}</p>

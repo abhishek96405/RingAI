@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/errors";
+import type { Restaurant, Invoice } from "@/types";
 
 const plans = [
   {
@@ -58,10 +59,10 @@ const plans = [
 
 const BillingPage = () => {
   const { activeRestaurant } = useAppSession();
-  const [restaurant, setRestaurant] = useState<any>(null);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
-  const [invoices, setInvoices] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
 
   const fetchRestaurant = useCallback(async () => {
     try {
@@ -303,7 +304,7 @@ const BillingPage = () => {
         <div className="dash-card p-6">
           <h3 className="font-display font-bold text-lg mb-4">Invoice History</h3>
           <div className="space-y-3">
-            {invoices.map((inv: any) => (
+            {invoices.map((inv) => (
               <div key={inv.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
                 <div>
                   <p className="text-sm font-medium">{new Date(inv.date * 1000).toLocaleDateString()}</p>
