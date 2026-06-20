@@ -40,7 +40,7 @@ jobs:
       - name: Run tests
         run: |
           pytest -m "unit or integration or webhook or security or voice or e2e_in_process" \
-            -ra --tb=short
+            -ra --tb=short --cov-fail-under=78
 
       - name: Upload coverage reports
         if: always()
@@ -70,6 +70,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Typecheck
+        run: npx tsc -p tsconfig.app.json --noEmit
+
+      - name: Lint
+        run: npx eslint src
 
       - name: Run tests with coverage
         run: npm run test:coverage
