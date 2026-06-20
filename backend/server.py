@@ -123,7 +123,8 @@ async def _record_call_for_billing(restaurant: dict, restaurant_id: str, call_si
     if restaurant.get("billing_status") == "active" and _cust_id and _new_count > _call_limit:
         _plan = restaurant.get("plan", "STARTER")
         _overage_cents = get_plan_features(_plan)["overage_per_call_cents"]
-        stripe.InvoiceItem.create(
+        await asyncio.to_thread(
+            stripe.InvoiceItem.create,
             customer=_cust_id,
             amount=_overage_cents,
             currency="usd",
@@ -925,14 +926,16 @@ class MenuItemBase(BaseModel):
 
 
 class MenuItemCreate(MenuItemBase):
-    pass
+    # Bound price on input only (not on MenuItemBase/MenuItem) so reads of
+    # pre-existing out-of-range POS/DB data are unaffected. cents: 0..$100,000.
+    price: int = Field(ge=0, le=10_000_000)
 
 
 class MenuItemUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
-    price: Optional[int] = None
+    price: Optional[int] = Field(default=None, ge=0, le=10_000_000)  # cents; 0 to $100,000
     available: Optional[bool] = None
     modifiers: Optional[List[MenuItemModifier]] = None
     modifier_group_assignments: Optional[List[MenuItemModifierAssignment]] = None
@@ -3343,7 +3346,7 @@ async def activate_restaurant(data: OnboardingActivate, user: Dict[str, Any] = D
         _customer_id = existing.get("stripe_customer_id")
         if _customer_id:
             try:
-                _subs = stripe.Subscription.list(customer=_customer_id, status="all", limit=10)
+                _subs = await asyncio.to_thread(stripe.Subscription.list, customer=_customer_id, status="all", limit=10)
                 _resolved_sub = next(
                     (s for s in _subs.data if s.get("status") in ("trialing", "active")),
                     None,
@@ -3782,7 +3785,8 @@ async def create_stripe_payment_link(
         # 1% convenience fee kept by Duuutah AI (minimum 1 cent)
         application_fee_cents = max(1, round(order_total_cents * 0.01))
         success_url = os.environ.get("PAYMENT_SUCCESS_URL", "https://duuutah.com/payment-success")
-        checkout_session = stripe.checkout.Session.create(
+        checkout_session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
             mode="payment",
             line_items=[
                 {
@@ -5140,7 +5144,8 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
 
     customer_id = restaurant.get("stripe_customer_id")
     if not customer_id:
-        customer = stripe.Customer.create(
+        customer = await asyncio.to_thread(
+            stripe.Customer.create,
             email=restaurant.get("billing_email") or restaurant.get("owner_email"),
             name=restaurant.get("owner_name") or restaurant.get("name"),
             metadata={"restaurant_id": restaurant["id"]},
@@ -5157,7 +5162,8 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
     success_path = "/dashboard?billing=success" if is_onboarding else "/billing?billing=success"
     cancel_path = "/onboarding?billing=cancelled" if is_onboarding else "/billing?billing=cancelled"
 
-    session = stripe.checkout.Session.create(
+    session = await asyncio.to_thread(
+        stripe.checkout.Session.create,
         mode="subscription",
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
@@ -5207,7 +5213,7 @@ async def list_invoices(restaurant_id: str = Query(...), user: Dict[str, Any] = 
     if not customer_id:
         return {"invoices": []}
     try:
-        invoices = stripe.Invoice.list(customer=customer_id, limit=12)
+        invoices = await asyncio.to_thread(stripe.Invoice.list, customer=customer_id, limit=12)
         return {"invoices": [
             {
                 "id": inv.id,
@@ -5814,7 +5820,8 @@ async def refund_order(
         raise HTTPException(status_code=400, detail="No Stripe payment ID found for this order")
 
     try:
-        refund = stripe.Refund.create(
+        refund = await asyncio.to_thread(
+            stripe.Refund.create,
             payment_intent=stripe_payment_id,
             reverse_transfer=True,
             refund_application_fee=True,
@@ -6335,6 +6342,51 @@ async def _ensure_webhook_idempotency_index():
         logger.info("Security TTL indexes ensured (webhook_events, oauth_states)")
     except Exception as e:
         logger.warning(f"Could not create security TTL indexes: {e}")
+
+
+@app.on_event("startup")
+async def _ensure_query_indexes():
+    """Create indexes for hot query paths so they stop full-scanning (PL-04).
+
+    Each index is created in its own try/except so a single failure never
+    blocks startup or the remaining indexes.
+
+    NOTE on uniqueness: every index here is created NON-unique on purpose.
+    The natural unique keys (users.id, memberships(user_id,restaurant_id),
+    webhook_events(provider,event_id), <business>.id, active_calls.call_sid)
+    are written via find-then-insert paths that do NOT catch DuplicateKeyError
+    (server.py:1148, 1333, 5288/5943), so adding unique=True now could turn a
+    rare race into an uncaught 500. The unique flips are deferred to follow-up
+    work after a prod dedupe pass — webhook_events specifically to PL-06, which
+    adds insert-first / DuplicateKeyError-based dedup. The aggregation to find
+    duplicates before flipping unique=True, per collection, is:
+        [{"$group": {"_id": "<key fields>", "n": {"$sum": 1}}},
+         {"$match": {"n": {"$gt": 1}}}]
+    """
+    index_specs = [
+        # (collection, keys, kwargs)
+        (db.users,          [("id", 1)],                                 {}),
+        (db.memberships,    [("user_id", 1), ("restaurant_id", 1)],      {}),
+        (db.call_records,   [("restaurant_id", 1), ("started_at", -1)],  {}),
+        (db.active_calls,   [("call_sid", 1)],                           {}),
+        (db.active_calls,   [("started_at", 1)],                         {}),
+        (db.webhook_events, [("provider", 1), ("event_id", 1)],          {}),
+        (db.menu_items,     [("restaurant_id", 1)],                      {}),
+    ]
+    for coll in (db.restaurants, db.clinics, db.salons, db.home_services, db.legal):
+        index_specs.append((coll, [("id", 1)], {}))
+        index_specs.append((coll, [("stripe_customer_id", 1)], {}))
+
+    created = 0
+    for coll, keys, kwargs in index_specs:
+        try:
+            await coll.create_index(keys, **kwargs)
+            created += 1
+        except Exception as e:
+            logger.error(
+                f"Index creation failed on {coll.name} {keys}: {e} — manual dedupe likely required"
+            )
+    logger.info(f"Query indexes ensured ({created}/{len(index_specs)})")
 
 
 @app.on_event("startup")

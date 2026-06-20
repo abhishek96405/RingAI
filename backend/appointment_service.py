@@ -13,6 +13,7 @@ Functions:
 - dispatch_appointment() - Create calendar event + send SMS
 - send_appointment_sms() - Send appointment confirmation SMS
 """
+import asyncio
 import os
 import json
 import logging
@@ -621,7 +622,8 @@ JSON:"""
         )
         client = OpenAI(api_key=api_key, base_url=base_url)
         
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model="gemini-2.5-flash",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,

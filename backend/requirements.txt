@@ -86,7 +86,7 @@ passlib==1.7.4
 pathspec==1.0.4
 pillow==12.1.1
 pipecat-ai==0.0.104
-soundfile>=0.12.1
+soundfile==0.13.1
 platformdirs==4.9.2
 pluggy==1.6.0
 propcache==0.4.1
@@ -135,7 +135,7 @@ tiktoken==0.12.0
 tokenizers==0.22.2
 tqdm==4.67.3
 transformers==5.2.0
-telnyx
+telnyx==4.138.0
 typer==0.24.0
 typer-slim==0.24.0
 typing-inspection==0.4.2

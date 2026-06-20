@@ -10,6 +10,7 @@ Provides:
 
 Part of Prompt 1 - Voice-Based Reservation System
 """
+import asyncio
 import os
 import logging
 import json
@@ -425,7 +426,8 @@ TRANSCRIPT:
 JSON:"""
 
     try:
-        resp = client.chat.completions.create(
+        resp = await asyncio.to_thread(
+            client.chat.completions.create,
             model="gemini-2.5-flash",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,

@@ -14,6 +14,7 @@ CHANGES:
 - Order extraction: max_tokens 600→1200, confirmed=None treated as True
 - Transcript limit for extraction: 3000→1500 chars
 """
+import asyncio
 import os
 import json
 import logging
@@ -507,7 +508,8 @@ JSON:"""
     raw = None
     if client:
         try:
-            resp = client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
@@ -2060,7 +2062,8 @@ async def get_conversation_response(
         if new_customer_message:
             messages.append({"role": "user", "content": new_customer_message[:500]})
 
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=MODEL,
             messages=messages,
             temperature=0.7,
@@ -2101,7 +2104,8 @@ async def parse_menu_text(menu_text: str) -> Dict[str, Any]:
         return _mock_parse_menu(menu_text)
 
     try:
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=MODEL,
             messages=[
                 {"role": "system", "content": """You are a menu parser. Extract menu items from the text and return valid JSON.
@@ -2257,7 +2261,8 @@ async def analyse_call_transcript(
             menu_context = "\n\nMENU ITEMS (exact names): " + ", ".join(item_names[:60])
 
     try:
-        response = client.chat.completions.create(
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=MODEL,
             messages=[
                 {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},

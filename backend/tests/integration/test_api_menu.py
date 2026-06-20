@@ -51,6 +51,41 @@ async def test_create_menu_item_rejects_bad_payload(
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("bad_price", [-1, -1500, 10_000_001])
+async def test_create_menu_item_rejects_out_of_range_price(
+    client, two_tenant_with_memberships, bad_price
+):
+    """PL-12: negative or absurdly large prices (cents) → 422 on create."""
+    response = client.post(
+        f"/api/restaurants/{TENANT_A_ID}/menu",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"name": "Margherita", "category": "Pizza", "price": bad_price},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("bad_price", [-1, -1500, 10_000_001])
+async def test_update_menu_item_rejects_out_of_range_price(
+    client, two_tenant_with_memberships, patched_server_db, bad_price
+):
+    """PL-12: negative or absurdly large prices (cents) → 422 on update."""
+    await patched_server_db.menu_items.insert_one(
+        {
+            "id": "i1",
+            "restaurant_id": TENANT_A_ID,
+            "name": "Old",
+            "category": "X",
+            "price": 100,
+        }
+    )
+    response = client.put(
+        "/api/menu/i1",
+        headers={"Authorization": "Bearer tenant_a"},
+        json={"price": bad_price},
+    )
+    assert response.status_code == 422
+
+
 async def test_create_menu_item_wrong_tenant_404(client, two_tenant_with_memberships):
     response = client.post(
         f"/api/restaurants/{TENANT_A_ID}/menu",
