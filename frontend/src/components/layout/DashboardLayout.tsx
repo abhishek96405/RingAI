@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Bell, Brain, Calendar, CalendarDays, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed, Briefcase, X, CheckCircle2, AlertTriangle, Info, PhoneIncoming, Wifi, WifiOff, ShieldCheck } from "lucide-react";
+import { Bell, Brain, Calendar, CalendarDays, ChevronLeft, ChevronRight, CreditCard, LayoutDashboard, LogOut, Menu, Phone, PhoneCall, Plug, Settings, ShoppingBag, UtensilsCrossed, Briefcase, X, CheckCircle2, AlertTriangle, Info, PhoneIncoming, Wifi, WifiOff, ShieldCheck, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -13,7 +13,7 @@ import {
 import { SignOutButton, UserButton, useUser } from "@clerk/clerk-react";
 import { useAppSession } from "@/context/AppSessionContext";
 import { getConfig } from "@/lib/api";
-import { useWebSocketNotifications } from "@/hooks/useWebSocketNotifications";
+import { useWebSocketNotifications, type WebSocketNotification } from "@/hooks/useWebSocketNotifications";
 import { toast } from "sonner";
 
 // Notification types
@@ -26,7 +26,7 @@ interface Notification {
   read: boolean;
 }
 
-const notificationIcons: Record<string, any> = {
+const notificationIcons: Record<string, LucideIcon> = {
   call: PhoneIncoming,
   order: ShoppingBag,
   alert: AlertTriangle,
@@ -91,7 +91,7 @@ const DashboardLayout = () => {
   const { activeRestaurant } = useAppSession();
 
   // WebSocket notifications with real-time updates
-  const handleWebSocketNotification = useCallback((wsNotification: any) => {
+  const handleWebSocketNotification = useCallback((wsNotification: WebSocketNotification) => {
     const notification: Notification = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: wsNotification.event as Notification["type"],

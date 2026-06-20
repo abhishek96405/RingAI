@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getAuthToken } from "../lib/api";
 
-interface WebSocketNotification {
+export interface WebSocketNotification {
   type: string;
   event: string;
   title: string;

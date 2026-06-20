@@ -24,6 +24,25 @@ const Spinner = () => (
 );
 
 /**
+ * Pull a human-readable `response.data.detail` string off a rejected request.
+ * Narrows from `unknown` step by step so an arbitrary error shape (or a missing
+ * detail) safely collapses to "".
+ */
+function getErrorDetail(err: unknown): string {
+  if (err && typeof err === "object" && "response" in err) {
+    const { response } = err;
+    if (response && typeof response === "object" && "data" in response) {
+      const { data } = response;
+      if (data && typeof data === "object" && "detail" in data) {
+        const { detail } = data;
+        if (typeof detail === "string") return detail;
+      }
+    }
+  }
+  return "";
+}
+
+/**
  * Clover v2 OAuth callback landing page.
  *
  * Clover redirects the BROWSER here (CLOVER_REDIRECT_URI) after the merchant
@@ -78,8 +97,8 @@ const CloverCallbackPage = () => {
       setPhase("exchanging");
       exchangeCloverCode({ restaurant_id: restaurantId, code, merchant_id: merchantId })
         .then(() => setPhase("success"))
-        .catch((err: any) => {
-          setErrorDetail(err?.response?.data?.detail || "");
+        .catch((err: unknown) => {
+          setErrorDetail(getErrorDetail(err));
           setPhase("error");
         });
       return;
@@ -99,8 +118,8 @@ const CloverCallbackPage = () => {
               setPhase("error");
             }
           })
-          .catch((err: any) => {
-            setErrorDetail(err?.response?.data?.detail || "");
+          .catch((err: unknown) => {
+            setErrorDetail(getErrorDetail(err));
             setPhase("error");
           });
       } else {
