@@ -181,6 +181,153 @@ async def get_valid_clover_token(restaurant: Dict, db) -> str:
     return new_access
 
 
+def _square_oauth_base() -> str:
+    """OAuth token/refresh host for Square (sandbox vs production).
+
+    Mirrors the env switch in exchange_square_code / _send_to_square. OAuth uses
+    the global app environment (SQUARE_ENVIRONMENT), no per-restaurant override.
+    """
+    import os
+    square_env = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    return "https://connect.squareupsandbox.com" if square_env == "sandbox" else "https://connect.squareup.com"
+
+
+async def refresh_square_token(refresh_token: str) -> Dict[str, Any]:
+    """Refresh a Square OAuth access token.
+
+    POSTs to /oauth2/token with grant_type=refresh_token. Returns Square's token
+    payload (access_token, expires_at, and — only if it rotated — refresh_token).
+    Unlike Clover, Square does NOT rotate the refresh token on each refresh, so
+    callers must keep the existing refresh token if the response omits one.
+    Never logs the token or secret.
+    """
+    import os
+    application_id = os.environ.get("SQUARE_APPLICATION_ID", "")
+    application_secret = os.environ.get("SQUARE_APPLICATION_SECRET", "")
+    if not application_id or not application_secret:
+        raise ValueError("Square credentials not configured")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{_square_oauth_base()}/oauth2/token",
+            headers={"Content-Type": "application/json"},
+            json={
+                "client_id": application_id,
+                "client_secret": application_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+        )
+    if resp.status_code != 200:
+        raise ValueError(f"Square token refresh failed: {resp.status_code}")
+    return resp.json()
+
+
+async def _persist_square_token(restaurant: Dict, db, new_access: str, new_refresh: str, new_expires_at: str) -> None:
+    """Persist a refreshed Square token pair encrypted to all business collections
+    and update the in-memory (decrypted) restaurant dict so the caller proceeds
+    with live values. Expiry is an RFC3339 string, stored plaintext (like Clover's
+    integer expirations)."""
+    from encryption_utils import encrypt_value
+
+    for _coll in [db.restaurants, db.clinics, db.salons, db.home_services, db.legal]:
+        await _coll.update_one(
+            {"id": restaurant["id"]},
+            {"$set": {
+                "square_access_token": encrypt_value(new_access),
+                "square_refresh_token": encrypt_value(new_refresh),
+                "square_token_expires_at": new_expires_at,
+            }},
+        )
+
+    restaurant["square_access_token"] = new_access
+    restaurant["square_refresh_token"] = new_refresh
+    restaurant["square_token_expires_at"] = new_expires_at
+
+
+async def _do_square_refresh(restaurant: Dict, db) -> str:
+    """Force a Square token refresh + persist, regardless of expiry.
+
+    Returns the new access token, or "" if there is no stored refresh token or
+    the refresh call fails. Used by both the proactive (near-expiry) path and the
+    reactive 401-retry path.
+    """
+    refresh_token = restaurant.get("square_refresh_token")
+    if not refresh_token:
+        return ""
+    try:
+        token_data = await refresh_square_token(refresh_token)
+    except Exception as e:
+        logger.error(f"[Square OAuth] token refresh failed: {e}", exc_info=True)
+        return ""
+
+    new_access = token_data.get("access_token", "")
+    # Square's refresh token does not rotate on refresh — keep the existing one
+    # if the response omits it.
+    new_refresh = token_data.get("refresh_token") or refresh_token
+    new_expires_at = token_data.get("expires_at") or restaurant.get("square_token_expires_at", "")
+    if not new_access:
+        return ""
+    await _persist_square_token(restaurant, db, new_access, new_refresh, new_expires_at)
+    return new_access
+
+
+async def get_valid_square_token(restaurant: Dict, db) -> str:
+    """Return a valid Square access token, refreshing + persisting if near expiry.
+
+    `restaurant` MUST be the already-decrypted doc (same contract as
+    get_valid_clover_token). Manual/legacy tokens (no refresh token or no expiry)
+    are returned unchanged. Square's expiry is an RFC3339 timestamp STRING (e.g.
+    "2026-07-20T00:00:00Z"), not a unix-seconds int like Clover — it is parsed and
+    compared with a 5-minute runway. On refresh failure the stale token is
+    returned so the downstream call 401s and surfaces the real failure.
+    """
+    refresh_token = restaurant.get("square_refresh_token")
+    expires_at = restaurant.get("square_token_expires_at")
+
+    # Manual/legacy tokens never refresh.
+    if not refresh_token or not expires_at:
+        return restaurant.get("square_access_token", "")
+
+    # Square returns expires_at as an RFC3339 string, not a unix int.
+    try:
+        expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("[Square OAuth] unparseable square_token_expires_at; using current token")
+        return restaurant.get("square_access_token", "")
+
+    now = datetime.now(timezone.utc)
+    # Still comfortably valid (>5 min of runway) — use the current token.
+    if (expiry - now).total_seconds() > 300:
+        return restaurant.get("square_access_token", "")
+
+    new_access = await _do_square_refresh(restaurant, db)
+    if not new_access:
+        # Refresh failed — return the stale token; the downstream call will 401
+        # and surface the real failure rather than masking it here.
+        return restaurant.get("square_access_token", "")
+    return new_access
+
+
+async def square_call_with_refresh(restaurant: Dict, db, request_fn):
+    """Run a Square API call with proactive refresh + one reactive 401-retry.
+
+    `request_fn(token)` is an async callable returning an httpx.Response. The
+    token is first resolved via get_valid_square_token (proactive refresh near
+    expiry). If the call still returns 401 (e.g. the token was revoked early), a
+    refresh is forced and the request retried EXACTLY once with the new token. A
+    second 401 (or no refresh token) surfaces the original error.
+    """
+    token = await get_valid_square_token(restaurant, db)
+    resp = await request_fn(token)
+    if resp.status_code == 401:
+        logger.warning("[Square OAuth] 401 from Square — forcing refresh and retrying once")
+        new_token = await _do_square_refresh(restaurant, db)
+        if new_token and new_token != token:
+            resp = await request_fn(new_token)
+    return resp
+
+
 def _map_clover_item(item: Dict, restaurant_id: str) -> Dict:
     """Map a Clover inventory item to Duuutah AI MenuItem format."""
     price_elements = item.get("price", 0)
@@ -288,27 +435,32 @@ async def sync_menu_from_clover(restaurant_id: str, db, restaurant: Dict = None)
 async def sync_menu_from_square(restaurant_id: str, db, restaurant: Dict = None) -> Dict[str, Any]:
     """Fetch Square catalog and upsert into menu_items."""
     import os
-    access_token = (restaurant or {}).get("square_access_token", "")
+    restaurant = restaurant or {}
 
-    if not access_token:
+    if not restaurant.get("square_access_token"):
         return {"success": False, "error": "Square credentials not configured"}
 
     # Sandbox vs production base — mirrors _send_to_square / the Clover env-switch.
     # Per-restaurant pos_env wins, else the global SQUARE_ENVIRONMENT.
-    square_env = (restaurant or {}).get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    square_env = restaurant.get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
     square_base = "https://connect.squareupsandbox.com" if square_env == "sandbox" else "https://connect.squareup.com"
 
-    try:
+    async def _do_request(token: str):
+        # A fresh client per attempt so the 401-retry issues a clean request.
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
+            return await client.get(
                 f"{square_base}/v2/catalog/list",
-                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 params={"types": "ITEM"},
             )
-            if resp.status_code != 200:
-                return {"success": False, "error": f"Square API error: {resp.status_code}"}
 
-            items = resp.json().get("objects", [])
+    try:
+        # Proactive OAuth refresh near expiry + one 401-retry (PL-08 / PL-28).
+        resp = await square_call_with_refresh(restaurant, db, _do_request)
+        if resp.status_code != 200:
+            return {"success": False, "error": f"Square API error: {resp.status_code}"}
+
+        items = resp.json().get("objects", [])
 
         synced = 0
         for item in items:

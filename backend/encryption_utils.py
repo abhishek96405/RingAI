@@ -161,6 +161,7 @@ ENCRYPTED_CREDENTIAL_FIELDS = {
     "clover_merchant_id",
     "clover_refresh_token",
     "square_access_token",
+    "square_refresh_token",
     "square_location_id",
     "toast_client_id",
     "toast_client_secret",

@@ -5720,6 +5720,11 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
 
     access_token = token_data.get("access_token", "")
     merchant_id = token_data.get("merchant_id", "")
+    # PL-08: persist the refresh token + expiry so get_valid_square_token can
+    # refresh ~30 days later. Square's expires_at is an RFC3339 string (stored
+    # plaintext, like Clover's int expirations); the refresh token is encrypted.
+    refresh_token = token_data.get("refresh_token", "")
+    expires_at = token_data.get("expires_at", "")
 
     await db.integrations.update_one(
         {"provider": "square", "restaurant_id": restaurant_id},
@@ -5739,6 +5744,8 @@ async def square_callback(code: Optional[str] = None, state: Optional[str] = Non
                 "square_connected": True,
                 "pos_type": "square",
                 "square_access_token": encrypt_value(access_token),
+                "square_refresh_token": encrypt_value(refresh_token),
+                "square_token_expires_at": expires_at,
             }},
         )
     return RedirectResponse(url=f"{landing}?status=connected&merchant_id={merchant_id}", status_code=303)
@@ -6434,7 +6441,7 @@ async def run_test_scenario(
 # CLOUDFLARE SECURITY MIDDLEWARE
 # ============================================================
 CF_SECRET_TOKEN = os.environ.get("CF_SECRET_TOKEN", "")
-CF_BYPASS_PREFIXES = ["/api/telnyx", "/api/call", "/health", "/api/integrations/stripe/callback", "/api/calendar/google/callback", "/api/integrations/square/callback", "/api/webhooks/stripe"]
+CF_BYPASS_PREFIXES = ["/api/telnyx", "/api/call", "/health", "/api/integrations/stripe/callback", "/api/calendar/google/callback", "/api/integrations/square/callback", "/api/webhooks/stripe", "/api/webhooks/square"]
 
 @app.middleware("http")
 async def cloudflare_security_middleware(request: Request, call_next):

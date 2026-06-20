@@ -896,7 +896,13 @@ async def test_square_callback_persists_integration(
     import pos_sync
 
     async def _fake_exchange(code, redirect_uri):
-        return {"access_token": "sq_at_test", "merchant_id": "M123"}
+        return {
+            "access_token": "sq_at_test",
+            "merchant_id": "M123",
+            # PL-08: the callback must persist these so the token can be refreshed.
+            "refresh_token": "sq_rt_test",
+            "expires_at": "2026-07-20T00:00:00Z",
+        }
 
     monkeypatch.setattr(pos_sync, "exchange_square_code", _fake_exchange)
 
@@ -919,6 +925,9 @@ async def test_square_callback_persists_integration(
     # order-push routing works (mirrors how Clover exchange sets pos_type).
     assert saved["pos_type"] == "square"
     assert decrypt_value(saved["square_access_token"]) == "sq_at_test"
+    # PL-08: refresh token stored encrypted; expiry stored plaintext (RFC3339 string).
+    assert decrypt_value(saved["square_refresh_token"]) == "sq_rt_test"
+    assert saved["square_token_expires_at"] == "2026-07-20T00:00:00Z"
 
     integ = await patched_server_db.integrations.find_one(
         {"provider": "square", "restaurant_id": TENANT_A_ID}, {"_id": 0}
