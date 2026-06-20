@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,14 +9,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, Copy, PhoneForwarded, Save } from "lucide-react";
 import { toast } from "sonner";
 import { updateConfig, updateRestaurant } from "@/lib/api";
+import type { Restaurant, Config } from "@/types";
 import { CARRIERS } from "./forwardingInstructions";
 
 interface Props {
   restaurantId: string | null;
-  restaurant: any;
-  setRestaurant: (r: any) => void;
-  config: any;
-  setConfig: (c: any) => void;
+  restaurant: Restaurant | null;
+  setRestaurant: Dispatch<SetStateAction<Restaurant | null>>;
+  config: Config | null;
+  setConfig: Dispatch<SetStateAction<Config | null>>;
   onAfterSave?: () => Promise<void>;
 }
 
@@ -140,11 +142,31 @@ export default function PhoneForwardingTab({
       }
       if (onAfterSave) await onAfterSave();
       toast.success("Phone settings saved");
-    } catch (err: any) {
-      const detail =
-        err?.response?.data?.detail ||
-        err?.detail ||
-        (typeof err === "string" ? err : null);
+    } catch (err: unknown) {
+      let detail: string | null = null;
+      if (axios.isAxiosError(err)) {
+        const respDetail = err.response?.data?.detail;
+        if (typeof respDetail === "string") detail = respDetail;
+      } else if (typeof err === "string") {
+        detail = err;
+      } else if (typeof err === "object" && err !== null) {
+        // Some callers (and tests) hand us a plain object shaped like an
+        // axios error rather than a real AxiosError instance.
+        if (
+          "response" in err &&
+          typeof err.response === "object" &&
+          err.response !== null &&
+          "data" in err.response &&
+          typeof err.response.data === "object" &&
+          err.response.data !== null &&
+          "detail" in err.response.data &&
+          typeof err.response.data.detail === "string"
+        ) {
+          detail = err.response.data.detail;
+        } else if ("detail" in err && typeof err.detail === "string") {
+          detail = err.detail;
+        }
+      }
       if (detail) {
         setConflictMessage(detail);
         toast.error(detail);

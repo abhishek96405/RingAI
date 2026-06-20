@@ -4,17 +4,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Save } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
+import type { Config } from "@/types";
 import { days, defaultHours } from "./constants";
 
 interface Props {
-  config: any;
-  setConfig: (c: any) => void;
+  config: Config | null;
+  setConfig: Dispatch<SetStateAction<Config | null>>;
   saving: boolean;
   onSave: () => Promise<void>;
 }
 
 export default function HoursTab({ config, setConfig, saving, onSave }: Props) {
-  const updateHours = (dayKey: keyof typeof defaultHours, field: string, value: any) =>
+  const updateHours = (dayKey: keyof typeof defaultHours, field: string, value: string | boolean) =>
     setConfig({ ...config, operating_hours: { ...config.operating_hours, [dayKey]: { ...config.operating_hours[dayKey], [field]: value } } });
 
   return (

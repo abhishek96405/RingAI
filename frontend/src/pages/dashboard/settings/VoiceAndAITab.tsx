@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -11,11 +11,12 @@ import { toast } from "sonner";
 import { getVoicePreview } from "@/lib/api";
 import { voiceOptions, SUPPORTED_LANGUAGES } from "./constants";
 import { isProPlan } from "@/lib/plan";
+import type { Restaurant, Config } from "@/types";
 
 interface Props {
-  restaurant: any;
-  config: any;
-  setConfig: (c: any) => void;
+  restaurant: Restaurant | null;
+  config: Config | null;
+  setConfig: Dispatch<SetStateAction<Config | null>>;
   saving: boolean;
   onSave: () => Promise<void>;
 }
@@ -192,7 +193,7 @@ export default function VoiceAndAITab({ restaurant, config, setConfig, saving, o
               })}
             </div>
             {(config?.additional_languages?.length ?? 0) === 0 && (
-              <p className="text-xs text-[#a26d0d]">âš  Select at least one additional language, or turn multilingual off.</p>
+              <p className="text-xs text-[#a26d0d]">âš  Select at least one additional language, or turn multilingual off.</p>
             )}
           </div>
         )}

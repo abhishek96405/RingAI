@@ -4,13 +4,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Save } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
+import type { Restaurant, Config } from "@/types";
 import { isProPlan } from "@/lib/plan";
 
 interface Props {
-  restaurant: any;
-  setRestaurant: (r: any) => void;
-  config: any;
-  setConfig: (c: any) => void;
+  restaurant: Restaurant | null;
+  setRestaurant: Dispatch<SetStateAction<Restaurant | null>>;
+  config: Config | null;
+  setConfig: Dispatch<SetStateAction<Config | null>>;
   saving: boolean;
   onSave: () => Promise<void>;
 }

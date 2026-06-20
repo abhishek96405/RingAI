@@ -4,13 +4,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Save } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
+import type { Restaurant, Config } from "@/types";
 import { getBusinessLabel, getSpecialtyLabel, type FieldErrors } from "./constants";
 
 interface Props {
-  restaurant: any;
-  setRestaurant: (r: any) => void;
-  config: any;
-  setConfig: (c: any) => void;
+  restaurant: Restaurant | null;
+  setRestaurant: Dispatch<SetStateAction<Restaurant | null>>;
+  config: Config | null;
+  setConfig: Dispatch<SetStateAction<Config | null>>;
   businessType: string;
   isAppointmentBusiness: boolean;
   saving: boolean;
@@ -27,7 +29,7 @@ export default function BusinessTab({
   restaurant, setRestaurant, businessType,
   saving, errors, clearError, onSave,
 }: Props) {
-  const setR = (patch: any, errorKey?: string) => {
+  const setR = (patch: Partial<Restaurant>, errorKey?: string) => {
     setRestaurant({ ...restaurant, ...patch });
     if (errorKey) clearError(errorKey);
   };

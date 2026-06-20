@@ -112,6 +112,7 @@ export interface Restaurant {
   owner_phone?: string;
   billing_email?: string;
   business_phone?: string;
+  phone_number?: string;
   website?: string;
   cuisine_type?: string;
   business_type?: string;
@@ -182,8 +183,9 @@ export interface Config {
   primary_language?: string;
   multilingual_enabled?: boolean;
   additional_languages?: string[];
-  business_rules?: string;
-  escalation_rules?: string;
+  business_rules?: string[];
+  escalation_rules?: string[];
+  escalation_phone_number?: string;
   disclosure_text?: string;
   after_hours_mode?: string;
   operating_hours?: OperatingHours;
