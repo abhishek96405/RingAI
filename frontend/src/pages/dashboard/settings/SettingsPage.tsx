@@ -13,11 +13,12 @@ import HoursTab from "./HoursTab";
 import FulfillmentTab from "./FulfillmentTab";
 import VoiceAndAITab from "./VoiceAndAITab";
 import RulesTab from "./RulesTab";
+import type { Restaurant, Config } from "@/types";
 
 const SettingsPage = () => {
   const { activeRestaurant, refreshSession } = useAppSession();
-  const [restaurant, setRestaurant] = useState<any>(null);
-  const [config, setConfig] = useState<any>(null);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
   const [businessType, setBusinessType] = useState<string>("restaurant");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -82,7 +83,7 @@ const SettingsPage = () => {
     setSaving(true);
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         name: restaurant?.name,
         address: `${restaurant?._street}, ${restaurant?._city}, ${restaurant?._state} ${restaurant?._zip}`.trim(),
         timezone: restaurant?.timezone,
@@ -130,7 +131,7 @@ const SettingsPage = () => {
     setSaving(true);
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         persona: config?.persona,
         voice_id: config?.voice_id,
         primary_language: config?.primary_language,
@@ -165,7 +166,7 @@ const SettingsPage = () => {
     setSaving(true);
     try {
       const restaurantId = activeRestaurant?.id || getRestaurantId();
-      const restaurantFields: any = {
+      const restaurantFields: Record<string, unknown> = {
         pickup_enabled: restaurant?.pickup_enabled,
         delivery_enabled: restaurant?.delivery_enabled,
         reservations_enabled: restaurant?.reservations_enabled,
@@ -183,7 +184,7 @@ const SettingsPage = () => {
         restaurantFields.reservation_max_per_slot = Number(restaurant?.reservation_max_per_slot || 5);
         restaurantFields.reservation_advance_booking_days = Number(restaurant?.reservation_advance_booking_days || 7);
       }
-      const configFields: any = {
+      const configFields: Record<string, unknown> = {
         delivery_enabled: restaurant?.delivery_enabled,
         delivery_minimum: Number(config?.delivery_minimum || 0),
       };
