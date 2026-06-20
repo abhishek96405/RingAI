@@ -70,6 +70,7 @@ async def test_prefetch_call_session_data_active_restaurant_builds_session(
             "name": "Active",
             "phone_number": "+15552222222",
             "is_active": True,
+            "billing_status": "active",
             "plan": "STARTER",
             "business_type": "restaurant",
         }

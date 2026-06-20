@@ -172,6 +172,132 @@ async def test_invoice_paid_resets_monthly_call_count(
     assert updated["billing_status"] == "active"
 
 
+async def test_invoice_payment_succeeded_resets_monthly_call_count(
+    client, patched_server_db, stripe_sdk_mock
+):
+    """PL-07: many Stripe endpoints emit invoice.payment_succeeded (not
+    invoice.paid) for recurring renewals. Must reset the counter the same way,
+    or paying tenants are over-billed for overage from month 2."""
+    await patched_server_db.restaurants.insert_one(
+        {
+            "id": TENANT_A_ID,
+            "stripe_customer_id": "cus_test_1",
+            "monthly_call_count": 130,
+            "billing_status": "past_due",
+        }
+    )
+    event = {
+        "id": "evt_inv_pay_succeeded_1",
+        "type": "invoice.payment_succeeded",
+        "data": {"object": {"customer": "cus_test_1"}},
+    }
+    response = _post_event(client, event)
+    assert response.status_code == 200
+    updated = await patched_server_db.restaurants.find_one({"id": TENANT_A_ID})
+    assert updated["monthly_call_count"] == 0
+    assert updated["billing_status"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# PL-02 loss-of-service notice — fires on transition into a suspended state.
+# ---------------------------------------------------------------------------
+
+
+async def test_subscription_deleted_fires_suspension_notice(
+    client, patched_server_db, stripe_sdk_mock, monkeypatch
+):
+    notices = []
+
+    async def _fake_notify_system(restaurant_id, title, message, data=None):
+        notices.append({"restaurant_id": restaurant_id, "title": title, "data": data})
+
+    monkeypatch.setattr("websocket_notifications.notify_system", _fake_notify_system)
+    await patched_server_db.restaurants.insert_one(
+        {"id": TENANT_A_ID, "stripe_customer_id": "cus_notice_1", "billing_status": "active"}
+    )
+    event = {
+        "id": "evt_sub_deleted_notice",
+        "type": "customer.subscription.deleted",
+        "data": {"object": {"id": "sub_n1", "customer": "cus_notice_1", "items": {"data": []}}},
+    }
+    response = _post_event(client, event)
+    assert response.status_code == 200
+    assert any(n["restaurant_id"] == TENANT_A_ID for n in notices)
+
+
+async def test_subscription_updated_unpaid_suspends_and_notifies(
+    client, patched_server_db, stripe_sdk_mock, monkeypatch
+):
+    """When Stripe's retry window ends unrecovered it flips the subscription to
+    'unpaid' via customer.subscription.updated. Status must persist as unpaid
+    (→ calls denied) and a one-time loss-of-service notice fires."""
+    notices = []
+
+    async def _fake_notify_system(restaurant_id, title, message, data=None):
+        notices.append({"restaurant_id": restaurant_id})
+
+    monkeypatch.setattr("websocket_notifications.notify_system", _fake_notify_system)
+    await patched_server_db.restaurants.insert_one(
+        {
+            "id": TENANT_A_ID,
+            "stripe_customer_id": "cus_notice_2",
+            "stripe_subscription_id": "sub_n2",
+            "billing_status": "past_due",
+        }
+    )
+    event = {
+        "id": "evt_sub_unpaid",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_n2",
+                "customer": "cus_notice_2",
+                "status": "unpaid",
+                "items": {"data": [{"price": {"id": "price_starter_test"}}]},
+            }
+        },
+    }
+    response = _post_event(client, event)
+    assert response.status_code == 200
+    updated = await patched_server_db.restaurants.find_one({"id": TENANT_A_ID})
+    assert updated["billing_status"] == "unpaid"
+    assert any(n["restaurant_id"] == TENANT_A_ID for n in notices)
+
+
+async def test_subscription_updated_to_active_does_not_notify(
+    client, patched_server_db, stripe_sdk_mock, monkeypatch
+):
+    """A paying customer (status active) must never get a suspension notice."""
+    notices = []
+
+    async def _fake_notify_system(restaurant_id, title, message, data=None):
+        notices.append(restaurant_id)
+
+    monkeypatch.setattr("websocket_notifications.notify_system", _fake_notify_system)
+    await patched_server_db.restaurants.insert_one(
+        {
+            "id": TENANT_A_ID,
+            "stripe_customer_id": "cus_notice_3",
+            "billing_status": "past_due",
+        }
+    )
+    event = {
+        "id": "evt_sub_recovered",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_n3",
+                "customer": "cus_notice_3",
+                "status": "active",
+                "items": {"data": [{"price": {"id": "price_starter_test"}}]},
+            }
+        },
+    }
+    response = _post_event(client, event)
+    assert response.status_code == 200
+    assert notices == []
+
+
 # ---------------------------------------------------------------------------
 # Checkout completion
 # ---------------------------------------------------------------------------
