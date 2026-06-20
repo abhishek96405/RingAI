@@ -104,6 +104,38 @@ export interface Restaurant {
   monthly_call_limit?: number;
   ai_containment_rate?: number;
   total_revenue?: number;
+  name?: string;
+  address?: string;
+  timezone?: string;
+  owner_name?: string;
+  owner_email?: string;
+  owner_phone?: string;
+  billing_email?: string;
+  business_phone?: string;
+  website?: string;
+  cuisine_type?: string;
+  business_type?: string;
+  is_active?: boolean;
+  pickup_enabled?: boolean;
+  delivery_enabled?: boolean;
+  dine_in_enabled?: boolean;
+  reservations_enabled?: boolean;
+  offers_delivery?: boolean;
+  offers_reservations?: boolean;
+  catering_enabled?: boolean;
+  delivery_fee?: number;
+  delivery_radius_miles?: number;
+  delivery_zip_codes?: string[];
+  delivery_eta_offset_minutes?: number;
+  avg_prep_time_minutes?: number;
+  reservation_party_limit?: number;
+  reservation_slot_duration?: number;
+  reservation_max_per_slot?: number;
+  reservation_advance_booking_days?: number;
+  _street?: string;
+  _city?: string;
+  _state?: string;
+  _zip?: string;
 }
 
 export interface AdminCostOverall {
@@ -131,4 +163,32 @@ export interface AdminCostPerRestaurant {
 export interface AdminCostAnalytics {
   overall?: AdminCostOverall;
   per_restaurant?: AdminCostPerRestaurant[];
+}
+
+export interface DayHours {
+  open?: string;
+  close?: string;
+  closed?: boolean;
+}
+
+export interface OperatingHours {
+  [day: string]: DayHours;
+}
+
+export interface Config {
+  business_type?: string;
+  persona?: string;
+  voice_id?: string;
+  primary_language?: string;
+  multilingual_enabled?: boolean;
+  additional_languages?: string[];
+  business_rules?: string;
+  escalation_rules?: string;
+  disclosure_text?: string;
+  after_hours_mode?: string;
+  operating_hours?: OperatingHours;
+  sms_payment_enabled?: boolean;
+  upsell_enabled?: boolean;
+  delivery_enabled?: boolean;
+  delivery_minimum?: number;
 }
