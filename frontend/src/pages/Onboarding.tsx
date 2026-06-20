@@ -42,6 +42,7 @@ import { SignOutButton } from "@clerk/clerk-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/errors";
+import type { Restaurant, Config, MenuItem } from "@/types";
 
 // Business type options for horizontal platform
 const businessTypeOptions = [
@@ -100,7 +101,7 @@ export default function Onboarding() {
     return "restaurant";
   });
 
-  const [restaurantData, setRestaurantData] = useState<any>({
+  const [restaurantData, setRestaurantData] = useState<Restaurant>({
     name: "",
     cuisine_type: "",
     address: "",
@@ -128,8 +129,8 @@ export default function Onboarding() {
   });
 
   const [menuText, setMenuText] = useState("");
-  const [parsedItems, setParsedItems] = useState<any[]>([]);
-  const [aiConfig, setAiConfig] = useState<any>({
+  const [parsedItems, setParsedItems] = useState<MenuItem[]>([]);
+  const [aiConfig, setAiConfig] = useState<Config>({
     persona: "friendly",
     disclosure_text: "",
     upsell_enabled: true,
@@ -170,14 +171,14 @@ export default function Onboarding() {
     lastHydratedRestaurantId.current = activeRestaurant.id;
     setRestaurantId(activeRestaurant.id);
 
-    setRestaurantData((prev: any) => ({
+    setRestaurantData((prev) => ({
       ...prev,
       ...activeRestaurant,
       timezone: activeRestaurant.timezone || "America/Chicago",
       primary_language: activeRestaurant.primary_language || "en",
     }));
 
-    setAiConfig((prev: any) => ({
+    setAiConfig((prev) => ({
       ...prev,
       primary_language: activeRestaurant.primary_language || prev.primary_language || "en",
       disclosure_text:
@@ -228,7 +229,7 @@ export default function Onboarding() {
         console.warn("Could not set business_type in config", e);
       }
 
-      setAiConfig((prev: any) => ({
+      setAiConfig((prev) => ({
         ...prev,
         primary_language: createdRestaurant.primary_language || "en",
         disclosure_text:
@@ -336,8 +337,8 @@ export default function Onboarding() {
     }
   };
 
-  const updateHours = (dayKey: keyof typeof defaultHours, field: string, value: any) => {
-    setAiConfig((prev: any) => ({
+  const updateHours = (dayKey: keyof typeof defaultHours, field: string, value: string | boolean) => {
+    setAiConfig((prev) => ({
       ...prev,
       operating_hours: {
         ...prev.operating_hours,
@@ -562,7 +563,7 @@ export default function Onboarding() {
               <Card className="p-0 overflow-hidden border-line">
                 <div className="p-3 bg-cream text-sm font-medium">{parsedItems.length} items parsed</div>
                 <div className="divide-y divide-border max-h-72 overflow-y-auto">
-                  {parsedItems.map((item: any, i: number) => (
+                  {parsedItems.map((item, i: number) => (
                     <div key={i} className="flex items-center justify-between px-4 py-3 text-sm">
                       <div>
                         <p className="font-medium">{item.name}</p>

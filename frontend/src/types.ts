@@ -107,6 +107,7 @@ export interface Restaurant {
   name?: string;
   address?: string;
   timezone?: string;
+  primary_language?: string;
   owner_name?: string;
   owner_email?: string;
   owner_phone?: string;
@@ -191,6 +192,13 @@ export interface Config {
   operating_hours?: OperatingHours;
   sms_payment_enabled?: boolean;
   upsell_enabled?: boolean;
+  voicemail_enabled?: boolean;
   delivery_enabled?: boolean;
   delivery_minimum?: number;
+}
+
+export interface MenuItem {
+  name?: string;
+  category?: string;
+  price?: number;
 }
