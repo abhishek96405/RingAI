@@ -245,3 +245,8 @@ export interface ModifierGroupAssignment {
   override_name?: string | null;
   display_order?: number;
 }
+
+export interface Membership {
+  restaurant_id?: string;
+  role?: string;
+}

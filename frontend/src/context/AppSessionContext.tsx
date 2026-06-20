@@ -16,28 +16,31 @@ import {
   setAuthTokenGetter,
   setRestaurantId,
 } from "@/lib/api";
+import type { Restaurant, Membership } from "@/types";
+
+type ClerkUser = ReturnType<typeof useUser>["user"];
 
 type BootstrapPayload = {
-  active_restaurant?: any;
-  memberships?: any[];
-  restaurants?: any[];
+  active_restaurant?: Restaurant;
+  memberships?: Membership[];
+  restaurants?: Restaurant[];
   onboarding_complete?: boolean;
-  user?: any;
+  user?: unknown;
 };
 
 type SessionContextType = {
   authLoaded: boolean;
   isSignedIn: boolean | undefined;
-  user: any;
+  user: ClerkUser;
   bootstrapping: boolean;
   bootstrapError: boolean;
   bootstrapData: BootstrapPayload | null;
-  activeRestaurant: any | null;
-  memberships: any[];
-  restaurants: any[];
+  activeRestaurant: Restaurant | null;
+  memberships: Membership[];
+  restaurants: Restaurant[];
   onboardingComplete: boolean;
   refreshSession: (preferredRestaurantId?: string | null) => Promise<BootstrapPayload | null>;
-  setActiveRestaurant: (restaurant: any) => Promise<void>;
+  setActiveRestaurant: (restaurant: Restaurant) => Promise<void>;
 };
 
 const AppSessionContext = createContext<SessionContextType | null>(null);
@@ -176,7 +179,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     void refreshSession();
   }, [authLoaded, tokenResolved, isSignedIn, refreshSession, resetSessionState]);
 
-  const setActiveRestaurant = useCallback(async (restaurant: any) => {
+  const setActiveRestaurant = useCallback(async (restaurant: Restaurant) => {
     if (!restaurant?.id) return;
 
     setRestaurantId(restaurant.id);
@@ -192,8 +195,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       }
 
       const existingRestaurants = Array.isArray(current.restaurants) ? current.restaurants : [];
-      const nextRestaurants = existingRestaurants.some((item: any) => item?.id === restaurant.id)
-        ? existingRestaurants.map((item: any) => (item?.id === restaurant.id ? restaurant : item))
+      const nextRestaurants = existingRestaurants.some((item) => item?.id === restaurant.id)
+        ? existingRestaurants.map((item) => (item?.id === restaurant.id ? restaurant : item))
         : [restaurant, ...existingRestaurants];
 
       return {
