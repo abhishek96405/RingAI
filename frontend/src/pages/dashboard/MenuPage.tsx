@@ -14,6 +14,7 @@ import {
   updateItemModifierAssignments, syncMenuFromPOS
 } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
+import type { ModifierGroup, ModifierOption } from "@/types";
 import { CheckCircle2, ChevronDown, ChevronUp, DollarSign, Edit2, GripVertical, Layers, Plus, RefreshCw, Search, Settings2, Trash2, UtensilsCrossed, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -37,12 +38,12 @@ const allergenOptions = ["gluten", "dairy", "nuts", "soy", "eggs", "shellfish"];
 // ── Modifier Library Tab ───────────────────────────────────────────────────
 
 function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
-  const [groups, setGroups] = useState<any[]>([]);
+  const [groups, setGroups] = useState<ModifierGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingGroup, setEditingGroup] = useState<any>(null);
+  const [editingGroup, setEditingGroup] = useState<ModifierGroup | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<any>({
+  const [form, setForm] = useState<ModifierGroup>({
     name: "",
     selection_type: "single",
     required: false,
@@ -78,7 +79,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
     setDialogOpen(true);
   };
 
-  const openEdit = (group: any) => {
+  const openEdit = (group: ModifierGroup) => {
     setEditingGroup(group);
     setForm({ ...group });
     setNewOptionName("");
@@ -100,20 +101,20 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
       display_order: form.options.length,
       ai_aliases: aliases,
     };
-    setForm((prev: any) => ({ ...prev, options: [...prev.options, newOpt] }));
+    setForm((prev) => ({ ...prev, options: [...prev.options, newOpt] }));
     setNewOptionName("");
     setNewOptionPrice("");
     setNewOptionAliases("");
   };
 
   const removeOption = (optId: string) => {
-    setForm((prev: any) => ({ ...prev, options: prev.options.filter((o: any) => o.id !== optId) }));
+    setForm((prev) => ({ ...prev, options: prev.options.filter((o) => o.id !== optId) }));
   };
 
   const toggleOptionStock = (optId: string) => {
-    setForm((prev: any) => ({
+    setForm((prev) => ({
       ...prev,
-      options: prev.options.map((o: any) => o.id === optId ? { ...o, in_stock: !o.in_stock } : o)
+      options: prev.options.map((o) => o.id === optId ? { ...o, in_stock: !o.in_stock } : o)
     }));
   };
 
@@ -198,7 +199,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 </div>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {group.options.map((opt: any) => (
+                {group.options.map((opt) => (
                   <span key={opt.id} className={`text-xs px-2 py-0.5 rounded-full border ${!opt.in_stock ? "opacity-40 line-through" : ""} bg-cream`}>
                     {opt.name}{opt.price_delta > 0 ? ` +$${(opt.price_delta / 100).toFixed(2)}` : ""}
                   </span>
@@ -220,14 +221,14 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
               {/* Name */}
               <div className="space-y-1.5">
                 <Label>Group Name</Label>
-                <Input value={form.name} onChange={(e) => setForm((p: any) => ({ ...p, name: e.target.value }))} placeholder="e.g. Size, Spice Level, Toppings" />
+                <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Size, Spice Level, Toppings" />
               </div>
 
               {/* Selection type */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Selection Type</Label>
-                  <Select value={form.selection_type} onValueChange={(v) => setForm((p: any) => ({ ...p, selection_type: v }))}>
+                  <Select value={form.selection_type} onValueChange={(v) => setForm((p) => ({ ...p, selection_type: v }))}>
                     <SelectTrigger className="h-9 rounded-lg"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="single">Single select</SelectItem>
@@ -238,7 +239,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 <div className="space-y-1.5">
                   <Label>Required?</Label>
                   <div className="flex items-center gap-2 h-9">
-                    <Switch checked={form.required} onCheckedChange={(v) => setForm((p: any) => ({ ...p, required: v, min_selections: v ? 1 : 0 }))} />
+                    <Switch checked={form.required} onCheckedChange={(v) => setForm((p) => ({ ...p, required: v, min_selections: v ? 1 : 0 }))} />
                     <span className="text-sm text-ink-soft">{form.required ? "Required" : "Optional"}</span>
                   </div>
                 </div>
@@ -248,18 +249,18 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Min Selections</Label>
-                    <Input type="number" min={0} value={form.min_selections} onChange={(e) => setForm((p: any) => ({ ...p, min_selections: parseInt(e.target.value) || 0 }))} className="h-9" />
+                    <Input type="number" min={0} value={form.min_selections} onChange={(e) => setForm((p) => ({ ...p, min_selections: parseInt(e.target.value) || 0 }))} className="h-9" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Max Selections</Label>
-                    <Input type="number" min={1} value={form.max_selections} onChange={(e) => setForm((p: any) => ({ ...p, max_selections: parseInt(e.target.value) || 1 }))} className="h-9" />
+                    <Input type="number" min={1} value={form.max_selections} onChange={(e) => setForm((p) => ({ ...p, max_selections: parseInt(e.target.value) || 1 }))} className="h-9" />
                   </div>
                 </div>
               )}
 
               {/* Active toggle */}
               <div className="flex items-center gap-2">
-                <Switch checked={form.active} onCheckedChange={(v) => setForm((p: any) => ({ ...p, active: v }))} />
+                <Switch checked={form.active} onCheckedChange={(v) => setForm((p) => ({ ...p, active: v }))} />
                 <Label>Active</Label>
               </div>
 
@@ -268,7 +269,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                 <Label>Options</Label>
                 {form.options.length > 0 && (
                   <div className="space-y-1.5 mb-2">
-                    {form.options.map((opt: any) => (
+                    {form.options.map((opt) => (
                       <div key={opt.id} className="flex items-center gap-2 p-2 rounded-lg bg-cream border border-line">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
