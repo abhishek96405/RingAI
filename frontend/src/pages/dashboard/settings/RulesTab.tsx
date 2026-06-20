@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { AlertTriangle, Plus, Save, ShieldAlert, X } from "lucide-react";
+import type { Config } from "@/types";
 
 interface Props {
-  config: any;
-  setConfig: (c: any) => void;
+  config: Config | null;
+  setConfig: Dispatch<SetStateAction<Config | null>>;
   saving: boolean;
   onSave: () => Promise<void>;
 }
