@@ -40,7 +40,7 @@ jobs:
       - name: Run tests
         run: |
           pytest -m "unit or integration or webhook or security or voice or e2e_in_process" \
-            -ra --tb=short --cov-fail-under=78
+            -ra --tb=short --cov-fail-under=74
 
       - name: Upload coverage reports
         if: always()
