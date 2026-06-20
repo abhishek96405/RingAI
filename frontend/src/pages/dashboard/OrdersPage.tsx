@@ -5,6 +5,7 @@ import { getCalls, getRestaurantId, refundOrder } from "@/lib/api";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/errors";
+import type { Call, OrderItem } from "@/types";
 import {
   Search,
   ShoppingBag,
@@ -42,13 +43,13 @@ const orderBaseLabel = (t?: string): string =>
   t?.startsWith("delivery") ? "Delivery" : t === "reservation" ? "Reservation" : "Pickup";
 
 const OrdersPage = () => {
-  const [orders, setOrders] = useState<any[]>([]);
-  const [filtered, setFiltered] = useState<any[]>([]);
+  const [orders, setOrders] = useState<Call[]>([]);
+  const [filtered, setFiltered] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [failedOnly, setFailedOnly] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [selectedOrder, setSelectedOrder] = useState<Call | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [refunding, setRefunding] = useState(false);
 
@@ -87,7 +88,7 @@ const OrdersPage = () => {
       const allCalls = [...completedCalls, ...escalatedCalls];
 
       const withOrders = allCalls.filter(
-        (c: any) => c.order_json && c.order_json.items && c.order_json.items.length > 0
+        (c: Call) => c.order_json && c.order_json.items && c.order_json.items.length > 0
       );
       setOrders(withOrders);
       setFiltered(withOrders);
@@ -116,7 +117,7 @@ const OrdersPage = () => {
           o.caller_number?.includes(q) ||
           o.order_json?.customer_name?.toLowerCase().includes(q) ||
           o.call_sid?.toLowerCase().includes(q) ||
-          o.order_json?.items?.some((i: any) => i.name?.toLowerCase().includes(q))
+          o.order_json?.items?.some((i) => i.name?.toLowerCase().includes(q))
       );
     }
     setFiltered(base);
@@ -146,7 +147,7 @@ const OrdersPage = () => {
     return phone;
   };
 
-  const getOrderNumber = (call: any) => {
+  const getOrderNumber = (call: Call) => {
     const sid = call.call_sid || call.id || "";
     return `DTH-${sid.slice(-8).toUpperCase()}`;
   };
@@ -309,7 +310,7 @@ const OrdersPage = () => {
               const name = order.order_json?.customer_name || "Unknown";
               const itemSummary = items
                 .slice(0, 2)
-                .map((it: any) => `${it.quantity}x ${it.name}`)
+                .map((it) => `${it.quantity}x ${it.name}`)
                 .join(", ");
               const extra = items.length > 2 ? ` +${items.length - 2} more` : "";
               const isDelivery = order.order_json?.order_type?.startsWith("delivery");
@@ -456,7 +457,7 @@ const OrdersPage = () => {
                   </p>
                   <div className="space-y-2">
                     {(selectedOrder.order_json?.items || []).map(
-                      (item: any, i: number) => (
+                      (item: OrderItem, i: number) => (
                         <div
                           key={i}
                           className="flex items-start justify-between gap-2"

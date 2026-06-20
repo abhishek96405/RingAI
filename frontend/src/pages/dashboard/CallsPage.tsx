@@ -6,10 +6,12 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { getCall, getCalls } from "@/lib/api";
 import { AlertTriangle, Bot, Calendar, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Phone, Search, Sparkles, Star, User, XCircle } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import type { Call, OrderItem, TranscriptEntry } from "@/types";
 
-const statusIcons: Record<string, any> = {
+const statusIcons: Record<string, LucideIcon> = {
   COMPLETED: CheckCircle2,
   ESCALATED: AlertTriangle,
   FAILED: XCircle,
@@ -43,14 +45,14 @@ const orderTypeLabel = (t?: string): string => {
 };
 
 const CallsPage = () => {
-  const [calls, setCalls] = useState<any[]>([]);
+  const [calls, setCalls] = useState<Call[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
-  const [selectedCall, setSelectedCall] = useState<any>(null);
+  const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Date filter state
@@ -61,7 +63,7 @@ const CallsPage = () => {
   const fetchCalls = useCallback(async () => {
     setLoading(true);
     try {
-      const params: Record<string, any> = {
+      const params: Record<string, unknown> = {
         page,
         limit: 15,
         status: statusFilter !== "ALL" ? statusFilter : undefined,
@@ -119,7 +121,7 @@ const CallsPage = () => {
   const exportToCSV = async () => {
     setExporting(true);
     try {
-      const params: Record<string, any> = {
+      const params: Record<string, unknown> = {
         page: 1,
         limit: 1000,
         status: statusFilter !== "ALL" ? statusFilter : undefined,
@@ -149,7 +151,7 @@ const CallsPage = () => {
         "Escalated",
       ];
 
-      const rows = allCalls.map((call: any) => [
+      const rows = allCalls.map((call: Call) => [
         call.id || "",
         call.started_at || "",
         call.caller_name || "Unknown",
@@ -164,7 +166,7 @@ const CallsPage = () => {
 
       const csvContent = [
         headers.join(","),
-        ...rows.map(row => row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(",")),
+        ...rows.map(row => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")),
       ].join("\n");
 
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -343,7 +345,7 @@ const CallsPage = () => {
                     <div>
                       <h4 className="text-sm font-display font-semibold mb-3">Order Summary</h4>
                       <div className="space-y-2 rounded-xl bg-[#FBF4EC] p-3">
-                        {(selectedCall.order_json.items || []).map((item: any, i: number) => (
+                        {(selectedCall.order_json.items || []).map((item: OrderItem, i: number) => (
                           <div key={i} className="flex justify-between text-sm">
                             <span>
                               {item.quantity}x {item.name}
@@ -395,7 +397,7 @@ const CallsPage = () => {
                   <h4 className="text-sm font-display font-semibold mb-3">Transcript</h4>
                   <ScrollArea className="h-[380px] pr-3">
                     <div className="space-y-3">
-                      {(selectedCall.transcript || []).map((entry: any, i: number) => (
+                      {(selectedCall.transcript || []).map((entry: TranscriptEntry, i: number) => (
                         <div key={i} className={`flex gap-2 ${entry.role === "customer" ? "justify-end" : "justify-start"}`}>
                           {entry.role === "ai" && <div className="w-6 h-6 rounded-full bg-coral/10 flex items-center justify-center flex-shrink-0 mt-0.5"><Bot className="w-3 h-3 text-coral" /></div>}
                           <div className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${entry.role === "customer" ? "bg-coral text-white rounded-br-sm" : "bg-[#F2E8DC] text-ink rounded-bl-sm"}`}>
