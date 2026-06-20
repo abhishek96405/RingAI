@@ -198,9 +198,17 @@ export interface Config {
 }
 
 export interface MenuItem {
+  id?: string;
   name?: string;
+  description?: string;
   category?: string;
   price?: number;
+  prep_time_minutes?: number;
+  available?: boolean;
+  allergens?: string[];
+  modifiers?: LegacyModifier[];
+  modifier_group_assignments?: ModifierGroupAssignment[];
+  special_instructions_enabled?: boolean;
 }
 
 export interface ModifierOption {
@@ -222,4 +230,18 @@ export interface ModifierGroup {
   max_selections?: number;
   active?: boolean;
   options?: ModifierOption[];
+}
+
+export interface LegacyModifier {
+  name?: string;
+  options?: string[];
+}
+
+export interface ModifierGroupAssignment {
+  modifier_group_id?: string;
+  override_required?: boolean | null;
+  override_min?: number | null;
+  override_max?: number | null;
+  override_name?: string | null;
+  display_order?: number;
 }
