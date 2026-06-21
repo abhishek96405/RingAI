@@ -675,7 +675,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db
     elif pos_type == "square":
         if restaurant.get("square_access_token"):
             attempted_pos = "square"
-            result = await _send_to_square(order, restaurant)
+            result = await _send_to_square(order, restaurant, db)
             if result["success"]:
                 return {**result, "attempted_pos": "square", "fallback_saved": False}
             pos_error = result.get("error", "Square dispatch failed")
@@ -694,7 +694,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db
 
         if restaurant.get("square_connected") or restaurant.get("square_access_token"):
             attempted_pos = "square"
-            result = await _send_to_square(order, restaurant)
+            result = await _send_to_square(order, restaurant, db)
             if result["success"]:
                 return {**result, "attempted_pos": "square", "fallback_saved": False}
             pos_error = result.get("error", "Square dispatch failed")
@@ -1000,7 +1000,7 @@ def _build_square_fulfillment(order: LiveOrder) -> Dict[str, Any]:
     return _strip_none(fulfillment)
 
 
-async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[str, Any]:
+async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any], db=None) -> Dict[str, Any]:
     token = restaurant.get("square_access_token")
     location = restaurant.get("square_location_id")
     if not token or not location:
@@ -1028,28 +1028,40 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any]) -> Dict[
             "fulfillments": [_build_square_fulfillment(order)],
         },
     }
-    try:
+    async def _do_request(tok: str):
+        # A fresh client per attempt so the 401-retry issues a clean request.
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
+            return await client.post(
                 f"{base}/v2/orders", json=body,
-                headers={"Authorization": f"Bearer {token}", "Square-Version": "2024-01-18"},
+                headers={"Authorization": f"Bearer {tok}", "Square-Version": "2024-01-18"},
             )
-            data = resp.json()
-            if resp.status_code == 200:
-                oid = data.get("order", {}).get("id", "")
-                return {"success": True, "order_id": oid, "method": "square",
-                        "error": ""}
-            # Short, PII-free error reason (Square error codes/categories only).
+
+    try:
+        # When a db handle is threaded through (the live order-push path), refresh
+        # a near-expiry Square OAuth token before pushing and retry once on a 401
+        # (PL-08 / PL-28) — mirrors _send_to_clover. db=None preserves the
+        # legacy/test path that uses the raw token verbatim.
+        if db is not None:
+            from pos_sync import square_call_with_refresh
+            resp = await square_call_with_refresh(restaurant, db, _do_request)
+        else:
+            resp = await _do_request(token)
+        data = resp.json()
+        if resp.status_code == 200:
+            oid = data.get("order", {}).get("id", "")
+            return {"success": True, "order_id": oid, "method": "square",
+                    "error": ""}
+        # Short, PII-free error reason (Square error codes/categories only).
+        detail = ""
+        try:
+            errs = data.get("errors") or []
+            if errs and isinstance(errs[0], dict):
+                detail = f": {errs[0].get('code') or errs[0].get('category') or ''}".rstrip(": ")
+        except Exception:
             detail = ""
-            try:
-                errs = data.get("errors") or []
-                if errs and isinstance(errs[0], dict):
-                    detail = f": {errs[0].get('code') or errs[0].get('category') or ''}".rstrip(": ")
-            except Exception:
-                detail = ""
-            logger.error(f"Square error {resp.status_code}: {data}")
-            return {"success": False, "order_id": "", "method": "square",
-                    "error": f"Square {resp.status_code}{detail}"}
+        logger.error(f"Square error {resp.status_code}: {data}")
+        return {"success": False, "order_id": "", "method": "square",
+                "error": f"Square {resp.status_code}{detail}"}
     except Exception as e:
         logger.error(f"Square API error: {e}")
         return {"success": False, "order_id": "", "method": "square",
