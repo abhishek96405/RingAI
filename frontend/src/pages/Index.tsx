@@ -97,6 +97,12 @@ const faqs = [
   { q: "Is my data secure?", a: "Your data is encrypted in transit and at rest, and POS connections use each provider's official, permission-based integration." },
 ];
 
+const founders = [
+  { name: "Abhishek Dharmapuri", role: "Co-founder & AI Product Engineer", initials: "AD", bio: "Builds the voice AI that answers every call — and the systems behind it." },
+  { name: "Amogha Abbi", role: "Co-founder", initials: "AA", bio: "Bio coming soon." },
+  { name: "Nagashreya Dachepalli", role: "Co-founder", initials: "ND", bio: "Bio coming soon." },
+];
+
 function Waveform({ color = "#fff", bars = 48 }: { color?: string; bars?: number }) {
   return (
     <div className="wf" style={{ ["--wc" as string]: color } as CSSProperties}>
@@ -205,6 +211,7 @@ const Index = () => {
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-ink-soft absolute left-1/2 -translate-x-1/2">
             <a href="#how" className="hover:text-ink transition">How it works</a>
             <a href="#features" className="hover:text-ink transition">Features</a>
+            <a href="#about" className="hover:text-ink transition">About</a>
             <a href="#pricing" className="hover:text-ink transition">Pricing</a>
             <a href="#faq" className="hover:text-ink transition">FAQ</a>
           </div>
@@ -398,18 +405,69 @@ const Index = () => {
         </div>
       </section>
 
-      {/* FOUNDER NOTE */}
-      <section className="py-12 md:py-16 bg-ink text-cream">
-        <div className="max-w-3xl mx-auto px-5">
-          <div className="reveal"><span className="eyebrow light mb-6 inline-flex">Why we built Duuutah</span></div>
-          <blockquote className="reveal font-display font-semibold text-2xl md:text-[2rem] leading-snug tracking-tight mb-8 mt-2">"Every missed call is a real person who needed something — a table, an order, an appointment — and a business that just lost them."</blockquote>
-          <p className="reveal text-cream/70 leading-relaxed mb-4">We watched restaurant and salon owners juggle a ringing phone while taking care of the people right in front of them — and lose customers either way. There had to be something better than voicemail.</p>
-          <p className="reveal text-cream/70 leading-relaxed">Duuutah comes from the Sanskrit word for <span className="text-coral font-medium">messenger</span> — the one who carries word faithfully between two people. That's exactly what we set out to build: something that answers every call in your voice, gets it right, and makes sure nothing, and no one, slips through.</p>
-          <div className="reveal flex items-center gap-4 mt-9">
-            <span className="h-14 w-14 rounded-full bg-coral/20 border border-white/15 flex items-center justify-center font-display font-bold text-coral text-xl">A</span>
-            <div><p className="font-semibold text-cream">[ Your name ]</p><p className="text-sm text-cream/50">Founder, Duuutah AI</p></div>
+      {/* ABOUT */}
+      <section id="about" className="py-12 md:py-16">
+        <div className="max-w-6xl mx-auto px-5">
+          {/* header */}
+          <div className="reveal text-center max-w-3xl mx-auto mb-14">
+            <div className="flex justify-center mb-4"><span className="eyebrow">About us</span></div>
+            <h2 className="font-display font-extrabold text-4xl md:text-5xl tracking-tight mb-4">Built by people who kept getting voicemail.</h2>
+            <p className="text-lg text-ink-soft">Three former Amazon teammates, building the always-on front desk that independent restaurants and salons deserve.</p>
           </div>
-          <p className="text-xs text-cream/30 mt-6">Placeholder — add your name, photo, and a line or two in your own words.</p>
+
+          {/* story + pull quote */}
+          <div className="grid lg:grid-cols-[1.5fr_1fr] gap-8 lg:gap-12 items-start max-w-5xl mx-auto mb-16">
+            <div className="reveal space-y-5 text-[1.05rem] leading-relaxed text-ink-soft">
+              <p>We met at Amazon, working on systems built to serve millions of people without dropping a single one. Then we split up for our master's degrees and landed on three different continents — Abhishek in the US, Amogha in Australia, Shreya in India.</p>
+              <p>But the same small frustration followed all three of us. You'd call a neighborhood spot to place an order and get a busy signal — or voicemail, or a phone that just rang while the staff, you knew, were heads-down taking care of a full house.</p>
+              <p>That gap stuck with us. The technology that keeps a global company from ever missing a beat had somehow never reached the businesses we love most — the family kitchen, the two-chair salon, the place where the owner knows your name. For them, a missed call isn't a number on a dashboard. It's an empty table, an order lost to the chain down the street, a regular who quietly stops showing up.</p>
+              <p>So we came back together to build the thing we kept wishing existed. Duuutah — from the Sanskrit for <span className="text-coral font-semibold">messenger</span>, the one who carries word faithfully between two people — answers every call in your business's own voice, gets the details right, and makes sure nothing, and no one, slips through. No new hardware. No new number. No call center. Just a front desk that's always there, so you can focus on the person standing right in front of you.</p>
+            </div>
+            <aside className="reveal card border border-line p-8 shadow-soft">
+              <span className="font-display font-extrabold text-5xl leading-none text-coral block mb-3">&ldquo;</span>
+              <blockquote className="font-display font-semibold text-xl leading-snug tracking-tight text-ink">Every missed call is a real person who needed something — a table, an order, an appointment — and a business that just lost them.</blockquote>
+            </aside>
+          </div>
+
+          {/* mission & vision */}
+          <div className="grid md:grid-cols-2 gap-5 max-w-5xl mx-auto mb-16">
+            <div className="reveal card border border-line p-8">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl text-white bg-gradient-to-br from-[#F2763E] to-[#E8502E] shadow-[0_8px_18px_-6px_rgba(232,80,46,0.45)] mb-5">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+              </span>
+              <p className="eyebrow mb-3">Our mission</p>
+              <h3 className="font-display font-bold text-2xl tracking-tight mb-3">Give every small business a front desk that never sleeps.</h3>
+              <p className="text-ink-soft leading-relaxed">We build voice AI that answers every call, takes every order, and books every appointment — so independent restaurants and salons never have to choose between the customer on the phone and the one at the counter.</p>
+            </div>
+            <div className="reveal card border border-line p-8">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl text-white bg-gradient-to-br from-[#F2763E] to-[#E8502E] shadow-[0_8px_18px_-6px_rgba(232,80,46,0.45)] mb-5">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+              </span>
+              <p className="eyebrow mb-3">Our vision</p>
+              <h3 className="font-display font-bold text-2xl tracking-tight mb-3">A world where no one loses a customer to a ringing phone.</h3>
+              <p className="text-ink-soft leading-relaxed">We're working toward a future where the corner café and the neighborhood salon have the same always-on, intelligent service as the biggest chains — and win on what they already do best: taking care of people.</p>
+            </div>
+          </div>
+
+          {/* founders */}
+          <div className="reveal rounded-3xl bg-ink text-cream p-8 md:p-12 shadow-warm">
+            <div className="text-center max-w-2xl mx-auto mb-10">
+              <div className="flex justify-center mb-4"><span className="eyebrow light">The team</span></div>
+              <h3 className="font-display font-extrabold text-3xl md:text-4xl tracking-tight">Meet the founders</h3>
+              <p className="text-cream/60 mt-3">Three ex-Amazon builders who'd rather sweat the details than miss a call.</p>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-5">
+              {founders.map((f) => (
+                <div key={f.name} className="rounded-2xl bg-white/[0.04] border border-white/10 p-6 text-center">
+                  <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-coral/20 border border-white/15 font-display font-bold text-coral text-lg">{f.initials}</span>
+                  <p className="font-semibold text-cream">{f.name}</p>
+                  <p className="text-sm text-coral/90 mt-0.5">{f.role}</p>
+                  <span className="inline-block mt-3 text-[11px] font-bold uppercase tracking-wider text-cream/55 bg-white/[0.06] border border-white/10 px-2.5 py-1 rounded-full">Ex-Amazon</span>
+                  <p className="text-sm text-cream/55 leading-relaxed mt-4">{f.bio}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -471,7 +529,7 @@ const Index = () => {
             <div>
               <p className="text-xs uppercase tracking-[0.14em] text-cream/40 mb-4">Company</p>
               <div className="flex flex-col gap-2.5 text-sm">
-                <a href="#" className="hover:text-cream transition">About</a>
+                <a href="#about" className="hover:text-cream transition">About</a>
                 <a href={`mailto:${CONTACT_EMAIL}`} className="hover:text-cream transition">{CONTACT_EMAIL}</a>
                 <a href="#" className="hover:text-cream transition">Contact</a>
               </div>
