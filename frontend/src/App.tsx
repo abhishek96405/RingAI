@@ -26,6 +26,7 @@ import NotFound from "./pages/NotFound";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import CloverCallbackPage from "./pages/CloverCallbackPage";
 import SquareCallbackPage from "./pages/SquareCallbackPage";
+import About from "./pages/About";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -241,6 +242,7 @@ const AppRoutes = () => (
       <Route path="admin" element={<AdminPage />} />
     </Route>
     <Route path="/payment-success" element={<PaymentSuccessPage />} />
+    <Route path="/about" element={<About />} />
     <Route path="/privacy" element={<PrivacyPolicy />} />
     <Route path="/terms" element={<TermsOfService />} />
     {/* Clover OAuth callback. Top-level (NOT under /dashboard) so the path
