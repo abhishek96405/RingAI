@@ -30,6 +30,7 @@ import SquareCallbackPage from "./pages/SquareCallbackPage";
 import About from "./pages/About";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
+import EULA from "./pages/EULA";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
 
@@ -256,6 +257,7 @@ const AppRoutes = () => (
     <Route path="/about" element={<About />} />
     <Route path="/privacy" element={<PrivacyPolicy />} />
     <Route path="/terms" element={<TermsOfService />} />
+    <Route path="/eula" element={<EULA />} />
     {/* Clover OAuth callback. Top-level (NOT under /dashboard) so the path
         matches CLOVER_REDIRECT_URI exactly. Deliberately NOT wrapped in
         ProtectedAppRoute/PublicAuthRoute — the page handles its own auth states;

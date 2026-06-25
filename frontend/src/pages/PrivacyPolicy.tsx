@@ -196,6 +196,7 @@ export default function PrivacyPolicy() {
           <div className="flex gap-5">
             <Link to="/privacy" className="hover:text-ink transition">Privacy</Link>
             <Link to="/terms" className="hover:text-ink transition">Terms</Link>
+            <Link to="/eula" className="hover:text-ink transition">EULA</Link>
             <a href="mailto:office@duuutah.com" className="hover:text-ink transition">office@duuutah.com</a>
           </div>
         </div>
