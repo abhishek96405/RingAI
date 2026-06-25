@@ -81,9 +81,9 @@ export default function About() {
             {founders.map((f) => (
               <div key={f.name} className="rounded-2xl bg-white/[0.04] border border-white/10 p-6 text-center">
                 {f.photo ? (
-                  <img src={f.photo} alt={f.name} className="mx-auto mb-4 h-28 w-28 rounded-full border border-white/15 object-cover" />
+                  <img src={f.photo} alt={f.name} className="mx-auto mb-4 h-36 w-36 rounded-full border border-white/15 object-cover" />
                 ) : (
-                  <span className="mx-auto mb-4 flex h-28 w-28 items-center justify-center rounded-full bg-coral/20 border border-white/15 font-display font-bold text-coral text-2xl">{f.initials}</span>
+                  <span className="mx-auto mb-4 flex h-36 w-36 items-center justify-center rounded-full bg-coral/20 border border-white/15 font-display font-bold text-coral text-3xl">{f.initials}</span>
                 )}
                 <p className="font-semibold text-cream">{f.name}</p>
                 <p className="text-sm text-coral/90 mt-0.5">{f.role}</p>
