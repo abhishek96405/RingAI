@@ -222,7 +222,7 @@ const DashboardLayout = () => {
   const currentLabel = navItems.find((n) => isActive(n.path))?.label || "Dashboard";
 
   return (
-    <div className="dash-surface min-h-screen flex">
+    <div className="dash-surface h-screen overflow-hidden flex">
       <aside className={`${collapsed ? "w-[72px]" : "w-60"} hidden lg:flex border-r border-border/50 bg-card flex-col transition-all duration-300 shrink-0`}>
         {sidebar}
       </aside>
