@@ -2288,8 +2288,9 @@ async def create_reservation(
         operating_hours=config.get("operating_hours", {}),
         db=db,
         restaurant_timezone=restaurant.get("timezone", "America/Chicago"),
+        restaurant=restaurant,
     )
-    
+
     if not availability.get("available"):
         raise HTTPException(
             status_code=400,
