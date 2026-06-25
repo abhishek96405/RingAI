@@ -1,9 +1,9 @@
 import { Link } from "react-router-dom";
 
 const founders = [
-  { name: "Abhishek Dharmapuri", role: "Co-founder & AI Product Engineer", initials: "AD", bio: "Builds the voice AI that answers every call — and the systems behind it." },
-  { name: "Amogha Abbi", role: "Co-founder", initials: "AA", bio: "Bio coming soon." },
-  { name: "Nagashreya Dachepalli", role: "Co-founder", initials: "ND", bio: "Bio coming soon." },
+  { name: "Abhishek Dharmapuri", role: "Co-founder & AI Product Engineer", initials: "AD", photo: "/Abhishek.jpeg", bio: "Builds the voice AI that answers every call — and the systems behind it." },
+  { name: "Amogha Abbi", role: "Co-founder", initials: "AA", photo: "", bio: "Bio coming soon." },
+  { name: "Nagashreya Dachepalli", role: "Co-founder", initials: "ND", photo: "/Shreya.jpeg", bio: "Bio coming soon." },
 ];
 
 export default function About() {
@@ -80,7 +80,11 @@ export default function About() {
           <div className="grid sm:grid-cols-3 gap-5">
             {founders.map((f) => (
               <div key={f.name} className="rounded-2xl bg-white/[0.04] border border-white/10 p-6 text-center">
-                <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-coral/20 border border-white/15 font-display font-bold text-coral text-lg">{f.initials}</span>
+                {f.photo ? (
+                  <img src={f.photo} alt={f.name} className="mx-auto mb-4 h-16 w-16 rounded-full border border-white/15 object-cover" />
+                ) : (
+                  <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-coral/20 border border-white/15 font-display font-bold text-coral text-lg">{f.initials}</span>
+                )}
                 <p className="font-semibold text-cream">{f.name}</p>
                 <p className="text-sm text-coral/90 mt-0.5">{f.role}</p>
                 <span className="inline-block mt-3 text-[11px] font-bold uppercase tracking-wider text-cream/55 bg-white/[0.06] border border-white/10 px-2.5 py-1 rounded-full">Ex-Amazon</span>
