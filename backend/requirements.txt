@@ -59,7 +59,6 @@ jq==1.11.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 librt==0.8.1
-litellm==1.80.0
 llvmlite==0.44.0
 loguru==0.7.3
 Markdown==3.10.2
