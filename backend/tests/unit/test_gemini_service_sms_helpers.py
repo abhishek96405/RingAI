@@ -309,19 +309,11 @@ async def test_parse_menu_text_uses_mock_when_no_client(monkeypatch):
 async def test_parse_menu_text_with_client(monkeypatch):
     from gemini_service import parse_menu_text
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(
-                            content='{"items": [{"name": "Pizza", "category": "Main", "price": 1500, "description": "", "allergens": []}], "categories": ["Main"], "warnings": []}'
-                        ))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        return SimpleNamespace(text='{"items": [{"name": "Pizza", "category": "Main", "price": 1500, "description": "", "allergens": []}], "categories": ["Main"], "warnings": []}', usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     out = await parse_menu_text("Pizza - $15")
     assert len(out["items"]) == 1
@@ -332,19 +324,11 @@ async def test_parse_menu_text_with_client(monkeypatch):
 async def test_parse_menu_text_strips_code_fence(monkeypatch):
     from gemini_service import parse_menu_text
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(
-                            content='```json\n{"items": [], "categories": [], "warnings": []}\n```'
-                        ))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        return SimpleNamespace(text='```json\n{"items": [], "categories": [], "warnings": []}\n```', usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     out = await parse_menu_text("nothing")
     assert out["items"] == []
@@ -353,19 +337,11 @@ async def test_parse_menu_text_strips_code_fence(monkeypatch):
 async def test_parse_menu_text_falls_back_to_mock_on_invalid_json(monkeypatch):
     from gemini_service import parse_menu_text
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(
-                            content="not json at all"
-                        ))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        return SimpleNamespace(text="not json at all", usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     out = await parse_menu_text("Pizza - $10")
     assert "items" in out  # mock fallback always returns this shape
@@ -405,18 +381,19 @@ def test_mock_parse_menu_returns_default_shape_on_empty():
 def test_is_gemini_available_returns_false_without_keys(monkeypatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     import gemini_service
-    monkeypatch.setattr(gemini_service, "_client", None)
+    monkeypatch.setattr(gemini_service, "_genai_client", None)
     assert gemini_service.is_gemini_available() is False
 
 
 def test_is_gemini_available_initialises_client_with_keys(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
     import gemini_service
-    monkeypatch.setattr(gemini_service, "_client", None)
+    monkeypatch.setattr(gemini_service, "_genai_client", None)
     # We don't actually want to make API calls; check the client got created.
     assert gemini_service.is_gemini_available() is True
-    assert gemini_service._client is not None
+    assert gemini_service._genai_client is not None
 
 
 # ---------------------------------------------------------------------------

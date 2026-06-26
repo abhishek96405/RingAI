@@ -15,16 +15,10 @@ pytestmark = pytest.mark.unit
 
 
 def _patch_gemini(monkeypatch, content):
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-                        usage=None,
-                    )
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    async def _gen(**kwargs):
+        return SimpleNamespace(text=content, usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
 
 # ---------------------------------------------------------------------------
@@ -145,25 +139,18 @@ async def test_analyse_includes_menu_context_when_menu_provided(monkeypatch):
 
     captured = {}
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    captured["messages"] = kwargs["messages"]
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(
-                            content=json.dumps({"quality_score": 80})))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(text=json.dumps({"quality_score": 80}), usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     await analyse_call_transcript(
         transcript=[{"role": "customer", "text": "hi"}],
         menu_items=[{"name": "Pizza", "available": True}, {"name": "Salad", "available": True}],
     )
-    user_msg = captured["messages"][-1]["content"]
+    user_msg = captured["contents"]  # menu context now lives in the user `contents` string
     assert "Pizza" in user_msg
     assert "Salad" in user_msg
 
@@ -171,14 +158,11 @@ async def test_analyse_includes_menu_context_when_menu_provided(monkeypatch):
 async def test_analyse_handles_exception_via_mock_fallback(monkeypatch):
     from gemini_service import analyse_call_transcript
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    raise RuntimeError("API down")
+    async def _gen(**kwargs):
+        raise RuntimeError("API down")
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     out = await analyse_call_transcript(transcript=[{"role": "customer", "text": "hi"}])
     assert "quality_score" in out

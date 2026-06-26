@@ -310,14 +310,11 @@ async def test_extract_reservation_returns_none_without_reservation_signal(monke
     from reservation_service import extract_reservation_from_transcript
     from types import SimpleNamespace
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    raise AssertionError("Should not be called without reservation signal")
+    async def _gen(**kwargs):
+        raise AssertionError("Should not be called without reservation signal")
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_reservation_from_transcript(
         transcript=[{"role": "customer", "text": "do you have spaghetti"}],
@@ -330,21 +327,16 @@ async def test_extract_reservation_happy_path(monkeypatch):
     from reservation_service import extract_reservation_from_transcript
     from types import SimpleNamespace
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content=
-                            '{"reservation_confirmed": true, "customer_name": "Alice", '
-                            '"party_size": 4, "date": "2030-06-15", "time": "7:00 PM", '
-                            '"special_requests": "window seat"}'
-                        ))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        return SimpleNamespace(
+            text=('{"reservation_confirmed": true, "customer_name": "Alice", '
+                  '"party_size": 4, "date": "2030-06-15", "time": "7:00 PM", '
+                  '"special_requests": "window seat"}'),
+            usage_metadata=None,
+        )
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_reservation_from_transcript(
         transcript=[
@@ -365,19 +357,11 @@ async def test_extract_reservation_returns_none_when_not_confirmed(monkeypatch):
     from reservation_service import extract_reservation_from_transcript
     from types import SimpleNamespace
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(
-                            content='{"reservation_confirmed": false}'
-                        ))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        return SimpleNamespace(text='{"reservation_confirmed": false}', usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_reservation_from_transcript(
         transcript=[{"role": "customer", "text": "book a table maybe later"}],
@@ -389,18 +373,12 @@ async def test_extract_reservation_returns_none_when_not_confirmed(monkeypatch):
 async def test_extract_reservation_returns_none_on_malformed_json(monkeypatch):
     from reservation_service import extract_reservation_from_transcript
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    from types import SimpleNamespace as SN
-                    return SN(
-                        choices=[SN(message=SN(content="not json"))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        from types import SimpleNamespace as SN
+        return SN(text="not json", usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_reservation_from_transcript(
         transcript=[{"role": "customer", "text": "book a table"}],

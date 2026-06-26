@@ -267,35 +267,19 @@ async def test_extract_booking_returns_data_on_success(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
-    class _FakeChoices:
-        def __init__(self, content):
-            self.message = SimpleNamespace(content=content)
-
-    class _FakeResp:
-        def __init__(self, content):
-            self.choices = [_FakeChoices(content)]
-            self.usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5)
-
-    class _FakeCompletions:
-        def __init__(self, content):
-            self.content = content
-        def create(self, **kwargs):
-            return _FakeResp(self.content)
-
-    class _FakeChat:
-        def __init__(self, content):
-            self.completions = _FakeCompletions(content)
-
-    class _FakeOpenAI:
-        def __init__(self, *args, **kwargs):
-            self.chat = _FakeChat(
-                '{"booking_confirmed": true, "service_name": "Haircut", "preferred_date": "2030-06-03",'
-                ' "preferred_time": "10:00 AM", "customer_name": "Joe", "customer_phone": "", '
-                '"customer_email": "", "special_instructions": ""}'
-            )
-
-    import openai
-    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
+    _content = (
+        '{"booking_confirmed": true, "service_name": "Haircut", "preferred_date": "2030-06-03",'
+        ' "preferred_time": "10:00 AM", "customer_name": "Joe", "customer_phone": "", '
+        '"customer_email": "", "special_instructions": ""}'
+    )
+    async def _gen(**kwargs):
+        return SimpleNamespace(
+            text=_content,
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=10, candidates_token_count=5, total_token_count=15),
+        )
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_booking_from_transcript(
         transcript=[{"role": "ai", "text": "Your appointment is confirmed for 10:00 AM."}],
@@ -312,20 +296,10 @@ async def test_extract_booking_returns_none_when_not_confirmed(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
-    class _FakeOpenAI:
-        def __init__(self, *args, **kwargs):
-            inner = SimpleNamespace(
-                completions=SimpleNamespace(
-                    create=lambda **k: SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content='{"booking_confirmed": false}'))],
-                        usage=None,
-                    )
-                )
-            )
-            self.chat = inner
-
-    import openai
-    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
+    async def _gen(**kwargs):
+        return SimpleNamespace(text='{"booking_confirmed": false}', usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_booking_from_transcript(
         transcript=[{"role": "customer", "text": "Maybe later"}],
@@ -339,20 +313,10 @@ async def test_extract_booking_returns_none_on_malformed_json(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
-    class _FakeOpenAI:
-        def __init__(self, *args, **kwargs):
-            inner = SimpleNamespace(
-                completions=SimpleNamespace(
-                    create=lambda **k: SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content="not json at all"))],
-                        usage=None,
-                    )
-                )
-            )
-            self.chat = inner
-
-    import openai
-    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
+    async def _gen(**kwargs):
+        return SimpleNamespace(text="not json at all", usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     result = await extract_booking_from_transcript(
         transcript=[{"role": "customer", "text": "Hi"}],

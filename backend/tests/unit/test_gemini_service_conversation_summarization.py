@@ -61,16 +61,10 @@ def test_summarize_with_single_turn_transcript():
 # ---------------------------------------------------------------------------
 
 def _patch_gemini(monkeypatch, content):
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-                        usage=None,
-                    )
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    async def _gen(**kwargs):
+        return SimpleNamespace(text=content, usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
 
 async def test_conversation_response_returns_text_when_client_works(monkeypatch):
@@ -103,18 +97,12 @@ async def test_conversation_response_truncates_long_system_prompt(monkeypatch):
 
     captured = {}
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    captured["messages"] = kwargs["messages"]
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(text="ok", usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     long_prompt = "x" * 5000
     await get_conversation_response(
@@ -122,7 +110,7 @@ async def test_conversation_response_truncates_long_system_prompt(monkeypatch):
         transcript=[],
         new_customer_message="hi",
     )
-    system_message = captured["messages"][0]["content"]
+    system_message = captured["config"].system_instruction  # condensed prompt now in system_instruction
     assert len(system_message) < len(long_prompt)
     assert "truncated" in system_message.lower()
 
@@ -132,18 +120,12 @@ async def test_conversation_response_includes_summarized_transcript(monkeypatch)
 
     captured = {}
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    captured["messages"] = kwargs["messages"]
-                    return SimpleNamespace(
-                        choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
-                        usage=None,
-                    )
+    async def _gen(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(text="ok", usage_metadata=None)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     long_transcript = [
         {"role": "customer" if i % 2 == 0 else "ai", "text": f"turn_{i}"}
@@ -154,22 +136,19 @@ async def test_conversation_response_includes_summarized_transcript(monkeypatch)
         transcript=long_transcript,
         new_customer_message="now",
     )
-    # Messages = system + summarized transcript + new user
-    assert len(captured["messages"]) <= 8  # 1 system + 6 summarized + 1 new
+    # contents = summarized transcript + new user (system_instruction is separate now)
+    assert len(captured["contents"]) <= 7  # 6 summarized + 1 new
 
 
 async def test_conversation_response_handles_budget_exceeded_gracefully(monkeypatch):
     """A 'budget exceeded' error from Gemini falls back to the mock response."""
     from gemini_service import get_conversation_response
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    raise RuntimeError("Budget exceeded for project xyz")
+    async def _gen(**kwargs):
+        raise RuntimeError("Budget exceeded for project xyz")
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     out = await get_conversation_response(
         system_prompt="sys",
@@ -182,14 +161,11 @@ async def test_conversation_response_handles_budget_exceeded_gracefully(monkeypa
 async def test_conversation_response_handles_generic_exception(monkeypatch):
     from gemini_service import get_conversation_response
 
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    raise ConnectionError("connection refused")
+    async def _gen(**kwargs):
+        raise ConnectionError("connection refused")
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
 
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
     out = await get_conversation_response(
         system_prompt="sys",

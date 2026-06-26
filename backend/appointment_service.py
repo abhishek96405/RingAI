@@ -576,10 +576,12 @@ async def extract_booking_from_transcript(
     
     Completely separate from extract_order_from_transcript() which handles restaurant orders.
     """
-    # Get Gemini client
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
-    if not api_key:
-        logger.warning("No Gemini API key — cannot extract booking")
+    # Get Gemini client (shared singleton; supports Developer API + Vertex)
+    from gemini_service import _get_client, TEXT_MODEL
+    from google.genai import types
+    client = _get_client()
+    if not client:
+        logger.warning("No Gemini client — cannot extract booking")
         return None
     
     # Build transcript text
@@ -615,26 +617,19 @@ TRANSCRIPT:
 JSON:"""
 
     try:
-        from openai import OpenAI
-        base_url = os.environ.get(
-            "GEMINI_OPENAI_BASE_URL",
-            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        response = await client.aio.models.generate_content(
+            model=TEXT_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=2000),
         )
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model="gemini-2.5-flash",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=2000,
-        )
-        raw = response.choices[0].message.content.strip()
+        raw = (response.text or "").strip()
         logger.info(f"Booking extraction raw: {raw[:500]}")
         # Capture token usage for cost tracking
-        if hasattr(response, "usage") and response.usage:
+        um = getattr(response, "usage_metadata", None)
+        if um:
             extract_booking_from_transcript._last_tokens = (
-                (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)
+                (getattr(um, "prompt_token_count", 0) or 0)
+                + (getattr(um, "candidates_token_count", 0) or 0)
             )
 
         try:

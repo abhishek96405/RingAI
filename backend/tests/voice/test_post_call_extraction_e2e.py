@@ -54,29 +54,26 @@ def _make_fake_gemini_response(
     return json.dumps(payload)
 
 
-class _FakeChatCompletion:
-    """Stand-in for ``openai.ChatCompletion.create`` return value."""
+class _FakeGenResponse:
+    """Stand-in for google-genai ``generate_content`` return value."""
 
     def __init__(self, content: str):
-        self.choices = [
-            type("C", (), {"message": type("M", (), {"content": content})()})()
-        ]
-        self.usage = type("U", (), {"prompt_tokens": 100, "completion_tokens": 50})()
+        self.text = content
+        self.usage_metadata = type("U", (), {
+            "prompt_token_count": 100, "candidates_token_count": 50, "total_token_count": 150})()
 
 
 def _patch_gemini_client(monkeypatch, response_json: str):
-    """Force ``gemini_service._get_client()`` to return a stub whose chat call
-    returns ``response_json``."""
+    """Force ``gemini_service._get_client()`` to return a native stub whose
+    ``aio.models.generate_content`` returns ``response_json``."""
     import gemini_service
+    from types import SimpleNamespace
 
-    class FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(model, messages, temperature, max_tokens):
-                    return _FakeChatCompletion(response_json)
+    async def _gen(**kwargs):
+        return _FakeGenResponse(response_json)
 
-    monkeypatch.setattr(gemini_service, "_get_client", lambda: FakeClient)
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr(gemini_service, "_get_client", lambda: fake)
 
 
 # ---------------------------------------------------------------------------

@@ -380,7 +380,8 @@ async def extract_reservation_from_transcript(
     Returns:
         Dict with reservation details or None if no reservation detected
     """
-    from gemini_service import _get_client, _repair_json
+    from gemini_service import _get_client, _repair_json, TEXT_MODEL
+    from google.genai import types
     
     client = _get_client()
     if not client:
@@ -426,14 +427,12 @@ TRANSCRIPT:
 JSON:"""
 
     try:
-        resp = await asyncio.to_thread(
-            client.chat.completions.create,
-            model="gemini-2.5-flash",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=500,
+        resp = await client.aio.models.generate_content(
+            model=TEXT_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=500),
         )
-        raw = resp.choices[0].message.content.strip()
+        raw = (resp.text or "").strip()
         logger.info(f"Reservation extraction raw response: {raw}")
         
         data = json.loads(_repair_json(raw))

@@ -25,6 +25,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -174,31 +175,36 @@ def _extract_json_fields(text: str, expected_fields: List[str]) -> Dict[str, Any
 
 
 # ---------------------------------------------------------------------------
-# Client (lazy-init via the official OpenAI-compatible Gemini API)
+# Client (lazy-init via the native google-genai SDK)
 # ---------------------------------------------------------------------------
-_client = None
-MODEL = "gemini-2.5-flash"
+_genai_client = None
+# Text model — override via env. Phase 1 keeps 2.5 for parity; Phase 2 flips the default.
+TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
 
 
 def _get_client():
-    global _client
-    if _client is not None:
-        return _client
-
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
-    if not api_key:
-        logger.warning("GOOGLE_API_KEY not set — Gemini calls will use mock fallback")
-        return None
+    """Singleton google-genai client.
+      • Vertex AI : GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT + GOOGLE_CLOUD_LOCATION (ADC)
+      • Developer API (default): GOOGLE_API_KEY / GOOGLE_GENAI_API_KEY
+    Returns None if no usable creds (callers fall back to mock)."""
+    global _genai_client
+    if _genai_client is not None:
+        return _genai_client
 
     try:
-        from openai import OpenAI
-        base_url = os.environ.get(
-            "GEMINI_OPENAI_BASE_URL",
-            "https://generativelanguage.googleapis.com/v1beta/openai/",
-        )
-        _client = OpenAI(api_key=api_key, base_url=base_url)
-        logger.info(f"Gemini client initialised (model: {MODEL})")
-        return _client
+        from google import genai
+        use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("1", "true", "yes")
+        if use_vertex:
+            _genai_client = genai.Client(vertexai=True)  # project/location from env
+            logger.info(f"Gemini client initialised via Vertex AI (model: {TEXT_MODEL})")
+        else:
+            api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
+            if not api_key:
+                logger.warning("GOOGLE_API_KEY not set — Gemini calls will use mock fallback")
+                return None
+            _genai_client = genai.Client(api_key=api_key)
+            logger.info(f"Gemini client initialised via Developer API (model: {TEXT_MODEL})")
+        return _genai_client
     except Exception as e:
         logger.error(f"Failed to initialise Gemini client: {e}")
         return None
@@ -508,18 +514,18 @@ JSON:"""
     raw = None
     if client:
         try:
-            resp = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=5000,
+            resp = await client.aio.models.generate_content(
+                model=TEXT_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=5000),
             )
-            raw = resp.choices[0].message.content.strip()
+            raw = (resp.text or "").strip()
             # Capture token usage for cost tracking
-            if hasattr(resp, "usage") and resp.usage:
+            um = getattr(resp, "usage_metadata", None)
+            if um:
                 extract_order_from_transcript._last_tokens = (
-                    (resp.usage.prompt_tokens or 0) + (resp.usage.completion_tokens or 0)
+                    (getattr(um, "prompt_token_count", 0) or 0)
+                    + (getattr(um, "candidates_token_count", 0) or 0)
                 )
         except Exception as e:
             logger.error(f"Order extraction error: {e}")
@@ -2065,23 +2071,28 @@ async def get_conversation_response(
         if len(system_prompt) > 1500:
             condensed_prompt = system_prompt[:1500] + "\n\n[Additional rules truncated for brevity]"
 
-        messages = [{"role": "system", "content": condensed_prompt}]
+        contents = []
         for entry in summarized_transcript:
-            role = "user" if entry.get("role") == "customer" else "assistant"
+            role = "user" if entry.get("role") == "customer" else "model"
             content = entry["text"][:300] if len(entry.get("text", "")) > 300 else entry.get("text", "")
-            messages.append({"role": role, "content": content})
+            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=content)]))
 
         if new_customer_message:
-            messages.append({"role": "user", "content": new_customer_message[:500]})
+            contents.append(types.Content(role="user", parts=[types.Part.from_text(text=new_customer_message[:500])]))
 
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=MODEL,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=250,
-        )
-        text = response.choices[0].message.content.strip()
+        # Greeting/opening case (no turns yet): send the prompt as the sole input,
+        # mirroring the old single system-message request.
+        if contents:
+            _cfg = types.GenerateContentConfig(
+                system_instruction=condensed_prompt, temperature=0.7, max_output_tokens=250)
+            _contents = contents
+        else:
+            _cfg = types.GenerateContentConfig(temperature=0.7, max_output_tokens=250)
+            _contents = condensed_prompt
+
+        response = await client.aio.models.generate_content(
+            model=TEXT_MODEL, contents=_contents, config=_cfg)
+        text = (response.text or "").strip()
         return text if text else _mock_conversation_response(new_customer_message)
     except Exception as e:
         error_msg = str(e).lower()
@@ -2116,11 +2127,11 @@ async def parse_menu_text(menu_text: str) -> Dict[str, Any]:
         return _mock_parse_menu(menu_text)
 
     try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": """You are a menu parser. Extract menu items from the text and return valid JSON.
+        response = await client.aio.models.generate_content(
+            model=TEXT_MODEL,
+            contents=f"Parse this restaurant menu into structured data:\n\n{menu_text}",
+            config=types.GenerateContentConfig(
+                system_instruction="""You are a menu parser. Extract menu items from the text and return valid JSON.
 Return ONLY a JSON object with this exact structure:
 {
   "items": [{"name": "...", "category": "...", "price": 1299, "description": "...", "allergens": []}],
@@ -2129,14 +2140,13 @@ Return ONLY a JSON object with this exact structure:
 }
 - price must be in cents (e.g., $12.99 = 1299)
 - allergens should be common allergens like: gluten, dairy, nuts, soy, eggs, shellfish
-- If a price is missing, set it to 0"""},
-                {"role": "user", "content": f"Parse this restaurant menu into structured data:\n\n{menu_text}"}
-            ],
-            temperature=0.2,
-            max_tokens=2000,
+- If a price is missing, set it to 0""",
+                temperature=0.2,
+                max_output_tokens=2000,
+            ),
         )
 
-        text = response.choices[0].message.content.strip()
+        text = (response.text or "").strip()
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
@@ -2273,18 +2283,17 @@ async def analyse_call_transcript(
             menu_context = "\n\nMENU ITEMS (exact names): " + ", ".join(item_names[:60])
 
     try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": f"TRANSCRIPT:\n{transcript_text}{menu_context}"}
-            ],
-            temperature=0.1,
-            max_tokens=700,
+        response = await client.aio.models.generate_content(
+            model=TEXT_MODEL,
+            contents=f"TRANSCRIPT:\n{transcript_text}{menu_context}",
+            config=types.GenerateContentConfig(
+                system_instruction=ANALYSIS_SYSTEM_PROMPT,
+                temperature=0.1,
+                max_output_tokens=700,
+            ),
         )
 
-        raw_text = response.choices[0].message.content.strip()
+        raw_text = (response.text or "").strip()
         logger.debug(f"Gemini analysis raw response: {raw_text[:200]}...")
 
         repaired_text = _repair_json(raw_text)

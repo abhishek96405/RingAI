@@ -455,23 +455,16 @@ def test_readback_delivery_phrasing():
 # extract_order_from_transcript — end-to-end with mocked Gemini
 # ---------------------------------------------------------------------------
 
-def _mock_openai_completion(content):
-    """Create a fake OpenAI response chain."""
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
-    )
-
-
 def _patch_gemini_response(monkeypatch, content):
-    """Patch _get_client to return a fake client returning ``content``."""
-    class _FakeClient:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kwargs):
-                    return _mock_openai_completion(content)
-    monkeypatch.setattr("gemini_service._get_client", lambda: _FakeClient)
+    """Patch _get_client to return a native google-genai fake returning ``content``."""
+    async def _gen(**kwargs):
+        return SimpleNamespace(
+            text=content,
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=10, candidates_token_count=5, total_token_count=15),
+        )
+    fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=_gen)))
+    monkeypatch.setattr("gemini_service._get_client", lambda: fake)
 
 
 async def test_extract_order_returns_none_when_client_unavailable(monkeypatch):
