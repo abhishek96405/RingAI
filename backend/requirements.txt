@@ -30,7 +30,6 @@ flatbuffers==25.12.19
 frozenlist==1.8.0
 fsspec==2026.2.0
 future==1.0.0
-google-ai-generativelanguage==0.6.15
 google-api-core==2.29.0
 google-api-python-client==2.190.0
 google-auth==2.49.0.dev0
@@ -38,7 +37,6 @@ google-auth-httplib2==0.3.0
 google-cloud-speech==2.36.1
 google-cloud-texttospeech==2.34.0
 google-genai==1.63.0
-google-generativeai==0.8.6
 googleapis-common-protos==1.72.0
 grpcio==1.78.0
 grpcio-status==1.71.2
