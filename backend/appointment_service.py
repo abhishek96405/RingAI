@@ -577,7 +577,7 @@ async def extract_booking_from_transcript(
     Completely separate from extract_order_from_transcript() which handles restaurant orders.
     """
     # Get Gemini client (shared singleton; supports Developer API + Vertex)
-    from gemini_service import _get_client, TEXT_MODEL
+    from gemini_service import _get_client, TEXT_MODEL, _thinking_config
     from google.genai import types
     client = _get_client()
     if not client:
@@ -620,7 +620,11 @@ JSON:"""
         response = await client.aio.models.generate_content(
             model=TEXT_MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=2000),
+            config=types.GenerateContentConfig(
+                temperature=0.0, max_output_tokens=2000,
+                response_mime_type="application/json",  # JSON mode (optional)
+                thinking_config=_thinking_config("low"),
+            ),
         )
         raw = (response.text or "").strip()
         logger.info(f"Booking extraction raw: {raw[:500]}")

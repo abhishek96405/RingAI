@@ -179,7 +179,7 @@ def _extract_json_fields(text: str, expected_fields: List[str]) -> Dict[str, Any
 # ---------------------------------------------------------------------------
 _genai_client = None
 # Text model — override via env. Phase 1 keeps 2.5 for parity; Phase 2 flips the default.
-TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite")
 
 
 def _get_client():
@@ -212,6 +212,16 @@ def _get_client():
 
 def is_gemini_available() -> bool:
     return _get_client() is not None
+
+
+def _thinking_config(level: str = "low"):
+    """ThinkingConfig for Gemini 3.x (which use thinking_level). Returns None for 2.x
+    (which use thinking_budget — passing thinking_level to them is a 400), so flipping
+    GEMINI_TEXT_MODEL back to a 2.5 model keeps working with no code change. 3.1 Flash-Lite
+    defaults to HIGH thinking, so we pin it low to stay fast and cheap for extraction."""
+    if TEXT_MODEL.startswith("gemini-3"):
+        return types.ThinkingConfig(thinking_level=level)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +527,11 @@ JSON:"""
             resp = await client.aio.models.generate_content(
                 model=TEXT_MODEL,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=5000),
+                config=types.GenerateContentConfig(
+                    temperature=0.0, max_output_tokens=5000,
+                    response_mime_type="application/json",  # JSON mode (optional)
+                    thinking_config=_thinking_config("low"),
+                ),
             )
             raw = (resp.text or "").strip()
             # Capture token usage for cost tracking
@@ -2084,10 +2098,13 @@ async def get_conversation_response(
         # mirroring the old single system-message request.
         if contents:
             _cfg = types.GenerateContentConfig(
-                system_instruction=condensed_prompt, temperature=0.7, max_output_tokens=250)
+                system_instruction=condensed_prompt, temperature=0.7, max_output_tokens=250,
+                thinking_config=_thinking_config("low"))
             _contents = contents
         else:
-            _cfg = types.GenerateContentConfig(temperature=0.7, max_output_tokens=250)
+            _cfg = types.GenerateContentConfig(
+                temperature=0.7, max_output_tokens=250,
+                thinking_config=_thinking_config("low"))
             _contents = condensed_prompt
 
         response = await client.aio.models.generate_content(
@@ -2143,6 +2160,8 @@ Return ONLY a JSON object with this exact structure:
 - If a price is missing, set it to 0""",
                 temperature=0.2,
                 max_output_tokens=2000,
+                response_mime_type="application/json",  # JSON mode (optional)
+                thinking_config=_thinking_config("low"),
             ),
         )
 
@@ -2290,6 +2309,8 @@ async def analyse_call_transcript(
                 system_instruction=ANALYSIS_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_output_tokens=700,
+                response_mime_type="application/json",  # JSON mode (optional)
+                thinking_config=_thinking_config("low"),
             ),
         )
 

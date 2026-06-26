@@ -1248,7 +1248,7 @@ class CallSession:
         # Estimated future cost: ~$0.008/min when priced
         cost_gemini_live = 0.0  # free preview
 
-        # Gemini extraction tokens: $0.075/1M input + $0.30/1M output
+        # Gemini extraction tokens: $0.25/1M input + $1.50/1M output (3.1 Flash-Lite)
         # We track total tokens as combined input+output approximation
         # Real split unavailable without modifying return signature
         from gemini_service import extract_order_from_transcript
@@ -1259,8 +1259,8 @@ class CallSession:
             extract_tokens = getattr(extract_booking_from_transcript, "_last_tokens", 0)
         # Approximate: 70% input, 30% output
         cost_gemini_extract = (
-            (extract_tokens * 0.7 / 1_000_000) * 0.075 +
-            (extract_tokens * 0.3 / 1_000_000) * 0.30
+            (extract_tokens * 0.7 / 1_000_000) * 0.25 +
+            (extract_tokens * 0.3 / 1_000_000) * 1.50
         )
 
         cost_total = cost_voice + cost_sms + cost_gemini_live + cost_gemini_extract

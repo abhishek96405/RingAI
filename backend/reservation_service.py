@@ -380,7 +380,7 @@ async def extract_reservation_from_transcript(
     Returns:
         Dict with reservation details or None if no reservation detected
     """
-    from gemini_service import _get_client, _repair_json, TEXT_MODEL
+    from gemini_service import _get_client, _repair_json, TEXT_MODEL, _thinking_config
     from google.genai import types
     
     client = _get_client()
@@ -430,7 +430,11 @@ JSON:"""
         resp = await client.aio.models.generate_content(
             model=TEXT_MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=500),
+            config=types.GenerateContentConfig(
+                temperature=0.0, max_output_tokens=500,
+                response_mime_type="application/json",  # JSON mode (optional)
+                thinking_config=_thinking_config("low"),
+            ),
         )
         raw = (resp.text or "").strip()
         logger.info(f"Reservation extraction raw response: {raw}")
