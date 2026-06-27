@@ -4682,6 +4682,49 @@ def _build_ivr_speak_payload(digit_to_lang: Dict[str, str]) -> str:
     return " ".join(parts)
 
 
+async def _demo_line_decline_reason(*, demo_id: str, caller_number: str, call_sid: str) -> Optional[str]:
+    """Admission control for the PUBLIC demo line only (the single restaurant whose
+    id == DEMO_LINE_RESTAURANT_ID). Returns a short reason code to decline the call,
+    or None to allow it. Never invoked for any other restaurant, so production and
+    other demo restaurants are unaffected.
+
+    Knobs (env, with safe defaults):
+      DEMO_LINE_ENABLED         "true"/"false" kill switch (default true)
+      DEMO_MAX_CONCURRENT       max simultaneous demo calls (default 5)
+      DEMO_MAX_CALLS_PER_DAY    max calls per caller per rolling 24h (default 5)
+    """
+    # Kill switch
+    if os.environ.get("DEMO_LINE_ENABLED", "true").strip().lower() != "true":
+        return "disabled"
+
+    # Concurrency cap — counts OTHER in-flight demo calls (this call is not yet in
+    # active_calls; it's upserted later in the call.initiated handler).
+    try:
+        max_concurrent = int(os.environ.get("DEMO_MAX_CONCURRENT", "5"))
+    except ValueError:
+        max_concurrent = 5
+    live = await db.active_calls.count_documents({"restaurant_id": demo_id})
+    if live >= max_concurrent:
+        return f"concurrency {live}>={max_concurrent}"
+
+    # Per-caller rolling-24h throttle (call_records.started_at is a tz-aware ISO
+    # string, so a lexicographic >= compare is chronological).
+    try:
+        max_per_day = int(os.environ.get("DEMO_MAX_CALLS_PER_DAY", "5"))
+    except ValueError:
+        max_per_day = 5
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    used = await db.call_records.count_documents({
+        "restaurant_id": demo_id,
+        "caller_number": caller_number,
+        "started_at": {"$gte": since},
+    })
+    if used >= max_per_day:
+        return f"throttle {used}>={max_per_day}"
+
+    return None
+
+
 @api_router.post("/telnyx/incoming")
 async def telnyx_incoming_call(request: Request):
     """Telnyx Call Control webhook — full event flow:
@@ -4734,6 +4777,17 @@ async def telnyx_incoming_call(request: Request):
             logger.warning(f"[Telnyx] Inactive number called: {to_number}, hanging up")
             await telnyx_service.hang_up_call(call_control_id)
             return Response(status_code=200)
+
+        # ── Public demo line admission control — ONLY the one demo restaurant ──
+        _demo_id = os.environ.get("DEMO_LINE_RESTAURANT_ID", "").strip()
+        if _demo_id and active_call_data.get("restaurant_id") == _demo_id:
+            _decline = await _demo_line_decline_reason(
+                demo_id=_demo_id, caller_number=from_number, call_sid=call_control_id,
+            )
+            if _decline:
+                logger.info(f"[Telnyx] demo line declined {from_number} ({_decline}); hanging up")
+                await telnyx_service.hang_up_call(call_control_id)
+                return Response(status_code=200)
 
         routing = _compute_language_routing(active_call_data)
         active_call_data["lang"] = routing["lang"]
