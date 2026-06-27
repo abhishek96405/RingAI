@@ -1605,10 +1605,90 @@ async def voice_preview(voice_name: str, user: Dict[str, Any] = Depends(get_curr
 # ---------------------------------------------------------------------------
 # PUBLIC MENU PAGE (no auth required)
 # ---------------------------------------------------------------------------
+_MENU_PAGE_CSS = """
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;background:#FBF7F2;color:#1E1813;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.hero{background:linear-gradient(135deg,#F2763E 0%,#E8502E 55%,#C63F1E 100%);color:#fff;padding:38px 22px 30px;text-align:center;position:relative}
+.hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;background:linear-gradient(90deg,#F2A93B,#FBE7DD)}
+.hero-inner{max-width:640px;margin:0 auto}
+.eyebrow{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;opacity:.88;margin-bottom:10px}
+.hero h1{font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:30px;line-height:1.12;letter-spacing:-.02em}
+.cuisine{margin-top:8px;font-size:14.5px;font-weight:500;opacity:.9;text-transform:capitalize}
+.nav{position:sticky;top:0;z-index:20;background:rgba(251,247,242,.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid #EBE2D8}
+.nav-inner{max-width:640px;margin:0 auto;display:flex;gap:8px;overflow-x:auto;padding:11px 16px;scrollbar-width:none}
+.nav-inner::-webkit-scrollbar{display:none}
+.pill{flex:0 0 auto;text-decoration:none;font-size:13px;font-weight:600;color:#6F6259;background:#FFFDF9;border:1px solid #EBE2D8;padding:7px 14px;border-radius:999px;white-space:nowrap;transition:all .15s ease}
+.pill:hover{color:#C63F1E;border-color:#E8502E}
+.pill.active{background:#E8502E;border-color:#E8502E;color:#fff}
+.container{max-width:640px;margin:0 auto;padding:22px 16px 40px}
+.category{scroll-margin-top:64px;margin-bottom:26px}
+.cat-label{display:flex;align-items:center;gap:11px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:#1E1813;margin:0 2px 12px}
+.cat-label .bar{width:26px;height:2px;background:#E8502E;border-radius:2px;flex:0 0 auto}
+.card{background:#FFFDF9;border:1px solid #EBE2D8;border-radius:18px;box-shadow:0 1px 3px rgba(40,25,15,.05),0 1px 2px rgba(40,25,15,.06);overflow:hidden}
+.item{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #EBE2D8}
+.item:last-child{border-bottom:none}
+.item-main{min-width:0}
+.item-name{display:block;font-size:15.5px;font-weight:600;color:#1E1813;line-height:1.3}
+.desc{margin-top:4px;font-size:13px;line-height:1.45;color:#6F6259}
+.chips{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9A5A1E;background:#FBEEDD;border:1px solid #F4DFC2;padding:2px 8px;border-radius:999px}
+.item-price{flex:0 0 auto;font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:15px;color:#C63F1E;padding-top:1px;white-space:nowrap}
+.footer{text-align:center;padding:26px 10px 6px;font-size:12.5px;color:#6F6259}
+.footer strong{color:#C63F1E;font-weight:700}
+.empty{background:#FFFDF9;border:1px solid #EBE2D8;border-radius:18px;box-shadow:0 1px 3px rgba(40,25,15,.05);padding:46px 24px;text-align:center}
+.empty h2{font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;color:#1E1813;font-weight:700}
+.empty p{margin-top:8px;font-size:13.5px;color:#6F6259}
+@media(min-width:560px){.hero{padding:46px 22px 34px}.hero h1{font-size:34px}}
+"""
+
+_MENU_SCROLLSPY_JS = """
+(function(){
+  var pills=[].slice.call(document.querySelectorAll('.pill'));
+  if(!pills.length)return;
+  var map={};
+  pills.forEach(function(p){var h=p.getAttribute('href');if(h)map[h.slice(1)]=p;});
+  var secs=[].slice.call(document.querySelectorAll('.category'));
+  if(!('IntersectionObserver' in window)||!secs.length)return;
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){
+        pills.forEach(function(p){p.classList.remove('active');});
+        var a=map[e.target.id];
+        if(a){a.classList.add('active');a.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}
+      }
+    });
+  },{rootMargin:'-55% 0px -42% 0px',threshold:0});
+  secs.forEach(function(s){io.observe(s);});
+})();
+"""
+
+
+def _menu_shell_html(title: str, body: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#E8502E">
+<title>{html.escape(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<style>{_MENU_PAGE_CSS}</style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
+
+
 @app.get("/menu/{restaurant_id}", include_in_schema=False)
 @limiter.limit("30/minute")
 async def public_menu_page(request: Request, restaurant_id: str):
     import asyncio as _asyncio
+    import re as _re
+
     results = await _asyncio.gather(
         db.restaurants.find_one({"id": restaurant_id}, {"_id": 0}),
         db.clinics.find_one({"id": restaurant_id}, {"_id": 0}),
@@ -1618,90 +1698,113 @@ async def public_menu_page(request: Request, restaurant_id: str):
     )
     restaurant = next((r for r in results if r), None)
     if not restaurant:
-        return HTMLResponse("<h2>Menu not found</h2>", status_code=404)
+        not_found = (
+            '<div class="container" style="padding-top:48px">'
+            '<div class="empty"><h2>Menu not found</h2>'
+            '<p>This menu link may have expired or been moved.</p></div></div>'
+        )
+        return HTMLResponse(_menu_shell_html("Menu not found", not_found), status_code=404)
 
+    # Only show items the AI can actually take orders for.
     items = await db.menu_items.find(
-        {"restaurant_id": restaurant_id}, {"_id": 0}
+        {"restaurant_id": restaurant_id, "available": True}, {"_id": 0}
     ).to_list(500)
+
+    # Preferred category ordering: known categories first (in this order),
+    # everything else after, alphabetical.
+    _CATEGORY_ORDER = [
+        "appetizers", "starters", "small plates", "soups", "salads",
+        "pizza", "pasta", "mains", "main courses", "entrees", "entrées",
+        "sides", "sandwiches", "specials", "kids", "desserts",
+        "beverages", "drinks",
+    ]
+
+    def _cat_rank(name: str) -> int:
+        key = name.strip().lower()
+        try:
+            return _CATEGORY_ORDER.index(key)
+        except ValueError:
+            return len(_CATEGORY_ORDER)
 
     # Group by category
     categories: Dict[str, list] = {}
-    for item in sorted(items, key=lambda x: (x.get("category", ""), x.get("name", ""))):
-        cat = item.get("category", "Other").title()
-        if cat not in categories:
-            categories[cat] = []
-        price = f"${item.get('price', 0) / 100:.2f}"
-        categories[cat].append({
-            "name": item.get("name", ""),
-            "price": price,
-            "description": item.get("description", ""),
+    for item in items:
+        cat = (item.get("category") or "Other").strip().title()
+        categories.setdefault(cat, []).append({
+            "name": item.get("name", "") or "",
+            "price": f"${(item.get('price', 0) or 0) / 100:.2f}",
+            "description": item.get("description", "") or "",
+            "allergens": item.get("allergens", []) or [],
         })
+    for cat_items in categories.values():
+        cat_items.sort(key=lambda x: x["name"].lower())
+    ordered_cats = sorted(categories.keys(), key=lambda c: (_cat_rank(c), c.lower()))
 
-    restaurant_name = restaurant.get("name", "Restaurant")
-    cuisine = restaurant.get("cuisine_type", "")
+    restaurant_name = restaurant.get("name", "Restaurant") or "Restaurant"
+    cuisine = restaurant.get("cuisine_type", "") or ""
 
-    # Build HTML
-    category_html = ""
-    for cat_name, cat_items in categories.items():
-        items_html = ""
-        for i in cat_items:
-            desc_html = f'<p class="desc">{html.escape(i["description"])}</p>' if i["description"] else ""
-            items_html += f"""
-            <div class="item">
-                <div class="item-header">
-                    <span class="item-name">{html.escape(i["name"])}</span>
-                    <span class="item-price">{html.escape(str(i["price"]))}</span>
-                </div>
-                {desc_html}
-            </div>"""
-        category_html += f"""
-        <div class="category">
-            <h2>{html.escape(cat_name)}</h2>
-            {items_html}
-        </div>"""
+    def _slug(s: str) -> str:
+        return _re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "cat"
 
-    page_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{html.escape(restaurant_name)} Menu</title>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
-                background: #f9f5f0; color: #1a1a1a; }}
-        .header {{ background: #c8602a; color: white; padding: 24px 20px; text-align: center; }}
-        .header h1 {{ font-size: 1.8rem; font-weight: 700; }}
-        .header p {{ font-size: 0.95rem; opacity: 0.85; margin-top: 4px; }}
-        .container {{ max-width: 600px; margin: 0 auto; padding: 16px; }}
-        .category {{ background: white; border-radius: 12px; margin-bottom: 16px; 
-                     overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
-        .category h2 {{ background: #f0e8df; color: #c8602a; padding: 12px 16px; 
-                        font-size: 0.85rem; font-weight: 700; text-transform: uppercase; 
-                        letter-spacing: 0.05em; }}
-        .item {{ padding: 12px 16px; border-bottom: 1px solid #f5f5f5; }}
-        .item:last-child {{ border-bottom: none; }}
-        .item-header {{ display: flex; justify-content: space-between; align-items: baseline; }}
-        .item-name {{ font-size: 0.95rem; font-weight: 500; }}
-        .item-price {{ font-size: 0.95rem; font-weight: 600; color: #c8602a; 
-                       margin-left: 12px; white-space: nowrap; }}
-        .desc {{ font-size: 0.8rem; color: #888; margin-top: 3px; }}
-        .footer {{ text-align: center; padding: 20px; font-size: 0.75rem; color: #aaa; }}
-    </style>
-</head>
-<body>
-    <div class="header">
+    nav_html = ""
+    sections_html = ""
+    if not ordered_cats:
+        sections_html = (
+            '<div class="empty"><h2>Menu coming soon</h2>'
+            '<p>Items are being added. Please check back shortly.</p></div>'
+        )
+    else:
+        for cat_name in ordered_cats:
+            slug = _slug(cat_name)
+            nav_html += f'<a class="pill" href="#cat-{slug}">{html.escape(cat_name)}</a>'
+            items_html = ""
+            for i in categories[cat_name]:
+                desc_html = (
+                    f'<p class="desc">{html.escape(i["description"])}</p>'
+                    if i["description"] else ""
+                )
+                chips_html = ""
+                if i["allergens"]:
+                    chips_html = '<div class="chips">' + "".join(
+                        f'<span class="chip">{html.escape(str(a))}</span>'
+                        for a in i["allergens"]
+                    ) + "</div>"
+                items_html += f"""
+                <div class="item">
+                    <div class="item-main">
+                        <span class="item-name">{html.escape(i["name"])}</span>
+                        {desc_html}
+                        {chips_html}
+                    </div>
+                    <span class="item-price">{html.escape(i["price"])}</span>
+                </div>"""
+            sections_html += f"""
+            <section class="category" id="cat-{slug}">
+                <div class="cat-label"><span class="bar"></span>{html.escape(cat_name)}</div>
+                <div class="card">{items_html}</div>
+            </section>"""
+
+    cuisine_html = (
+        f'<p class="cuisine">{html.escape(cuisine)} cuisine</p>' if cuisine else ""
+    )
+    nav_block = f'<nav class="nav"><div class="nav-inner">{nav_html}</div></nav>' if nav_html else ""
+
+    body = f"""
+<header class="hero">
+    <div class="hero-inner">
+        <span class="eyebrow">Menu</span>
         <h1>{html.escape(restaurant_name)}</h1>
-        <p>{html.escape(cuisine)} cuisine</p>
+        {cuisine_html}
     </div>
-    <div class="container">
-        {category_html}
-        <div class="footer">Powered by RingAI</div>
-    </div>
-</body>
-</html>"""
+</header>
+{nav_block}
+<main class="container">
+    {sections_html}
+    <div class="footer">Powered by <strong>Duuutah&nbsp;AI</strong></div>
+</main>
+<script>{_MENU_SCROLLSPY_JS}</script>"""
 
-    return HTMLResponse(content=page_html)
+    return HTMLResponse(content=_menu_shell_html(f"{restaurant_name} · Menu", body))
 
 
 # ============================================================
