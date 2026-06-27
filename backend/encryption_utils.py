@@ -32,12 +32,16 @@ def _get_encryption_key() -> bytes:
     if _ENCRYPTION_KEY is not None:
         return _ENCRYPTION_KEY
     
-    # Use dedicated encryption key or fall back to other secrets
-    secret = (
-        os.environ.get("ENCRYPTION_SECRET_KEY") or
-        os.environ.get("CLERK_SECRET_KEY") or
-        "duuutah-ai-default-encryption-key-change-in-production"
-    )
+    # Dedicated encryption key ONLY — no fallback. Deriving the key from
+    # CLERK_SECRET_KEY coupled credential encryption to Clerk (rotating Clerk
+    # would have made every stored POS credential undecryptable); the old
+    # hardcoded default was a public string in this repo — no encryption at all.
+    secret = os.environ.get("ENCRYPTION_SECRET_KEY")
+    if not secret:
+        raise RuntimeError(
+            "ENCRYPTION_SECRET_KEY is not set — refusing to derive an encryption "
+            "key from a fallback. Set a dedicated ENCRYPTION_SECRET_KEY."
+        )
     
     # SHA-256 produces 32 bytes, which we base64 encode to get Fernet key
     key_bytes = hashlib.sha256(secret.encode()).digest()
@@ -67,9 +71,10 @@ def encrypt_value(plaintext: str) -> str:
         encrypted = fernet.encrypt(plaintext.encode())
         return f"enc:{encrypted.decode()}"
     except Exception as e:
+        # FAIL CLOSED: never persist an unencrypted credential. Returning the
+        # plaintext here would silently write a POS token to Mongo in the clear.
         logger.error(f"Encryption failed: {e}")
-        # Return original if encryption fails - log for investigation
-        return plaintext
+        raise
 
 
 def decrypt_value(ciphertext: str) -> str:

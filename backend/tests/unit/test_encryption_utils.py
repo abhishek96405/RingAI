@@ -47,15 +47,20 @@ def test_get_encryption_key_uses_dedicated_env_var(monkeypatch):
     assert isinstance(k, bytes) and len(k) > 0
 
 
-def test_get_encryption_key_falls_back_to_clerk(monkeypatch):
+def test_get_encryption_key_does_not_fall_back_to_clerk(monkeypatch):
+    # PL-17: the Clerk fallback was removed. With no dedicated
+    # ENCRYPTION_SECRET_KEY, a present CLERK_SECRET_KEY must NOT be used —
+    # _get_encryption_key must refuse rather than derive a key from it.
+    import pytest
+
     import encryption_utils
 
     monkeypatch.delenv("ENCRYPTION_SECRET_KEY", raising=False)
     monkeypatch.setenv("CLERK_SECRET_KEY", "clerk-fallback")
     encryption_utils._ENCRYPTION_KEY = None
 
-    k = encryption_utils._get_encryption_key()
-    assert isinstance(k, bytes) and len(k) > 0
+    with pytest.raises(RuntimeError):
+        encryption_utils._get_encryption_key()
 
 
 # ---------------------------------------------------------------------------
