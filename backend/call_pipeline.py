@@ -421,6 +421,10 @@ class CallSession:
             call_sid=call_sid,
             caller_number=caller_number,
         )
+        # Last cart the live model rang up via compute_order_total (items only).
+        # Retained as a deterministic fallback to rebuild the order if post-call
+        # extraction fails. None until the tool fires at least once.
+        self._last_computed_cart: Optional[List[Dict]] = None
         self._order_dispatched  = False
         self._order_confirmed_handled = False  # guards _handle_order_confirmed re-entry
         self._escalated         = False
@@ -950,10 +954,23 @@ class CallSession:
                 logger.warning(
                     f"[{self.call_sid}] Confirmed but no items extracted after {max_retries} attempts"
                 )
-                # D3-8: reset so a later retry in the same call can re-attempt —
-                # the other guard branches reset too; this one must as well.
-                self._order_dispatched = False
-                return False
+                # Extraction failed (Gemini text model erroring/empty). Fall back to the
+                # last cart the live model rang up via compute_order_total — a clean,
+                # menu-validated copy that needs no text-model call. Recovers the
+                # confirmed order in the exact case extraction can't.
+                rebuilt = self._rebuild_order_from_computed_cart()
+                if rebuilt and rebuilt.items:
+                    self.order = rebuilt
+                    logger.info(
+                        f"[{self.call_sid}] Recovered order from compute_order_total "
+                        f"cart ({len(rebuilt.items)} items) after extraction failed"
+                    )
+                    # fall through to delivery validation + dispatch below
+                else:
+                    # D3-8: reset so a later retry in the same call can re-attempt —
+                    # the other guard branches reset too; this one must as well.
+                    self._order_dispatched = False
+                    return False
 
         # Post-call delivery eligibility (ZIP allowlist + distance).
         # startswith covers both "delivery" and the combined "delivery+reservation".
@@ -1037,6 +1054,72 @@ class CallSession:
         result = await send_order_to_kitchen(self.order, self.restaurant, self.db)
         self._apply_dispatch_result(result)
         return True
+
+    def _rebuild_order_from_computed_cart(self) -> Optional["LiveOrder"]:
+        """Rebuild a LiveOrder from the last cart the live model rang up via
+        compute_order_total (captured in the function handler). A deterministic,
+        no-text-model fallback for when post-call extraction fails.
+
+        The cart carries item names/quantities/modifiers ONLY — no customer name,
+        no address, no special instructions. order_type comes from the type detected
+        during the call. A delivery order can't be rebuilt safely (no address, and
+        the downstream delivery check can't fail-closed on a blank), so we refuse
+        delivery here and let it fall through to manual operator handling, where the
+        owner reads the address off the saved transcript. Pickup orders (the common
+        case) rebuild fine. Returns None if no cart was captured, the order is
+        delivery, or nothing resolves against the menu.
+        """
+        cart = self._last_computed_cart
+        if not cart:
+            return None
+        _ot = self._detected_order_type or "pickup"
+        if "delivery" in _ot:
+            logger.info(
+                f"[{self.call_sid}] compute_order_total cart present but order is "
+                f"delivery (no address in cart) — not rebuilding; routing to manual"
+            )
+            return None
+        from gemini_service import (
+            LiveOrder, OrderItem, OrderState, resolve_modifier_deltas,
+        )
+        order = LiveOrder(
+            restaurant_id=self.restaurant_id,
+            call_sid=self.call_sid,
+            caller_number=self.caller_number,
+            state=OrderState.CONFIRMED,
+            order_type="pickup+reservation" if "reservation" in _ot else "pickup",
+            confirmed_at=datetime.now(timezone.utc).isoformat(),
+        )
+        for it in cart:
+            name = (it.get("name") or "").strip()
+            if not name:
+                continue
+            menu_item = self.menu_index.find(name) if self.menu_index else None
+            if not menu_item:
+                logger.warning(
+                    f"[{self.call_sid}] [CART_DROP] '{name}' not on menu — "
+                    f"dropped from recovered order"
+                )
+                order.dropped_items.append(name)
+                continue
+            _mod_delta, _unmatched = resolve_modifier_deltas(
+                menu_item, it.get("modifiers", []) or []
+            )
+            try:
+                qty = int(it.get("quantity", 1))
+            except (TypeError, ValueError):
+                qty = 1
+            order.items.append(OrderItem(
+                name=menu_item["name"],
+                menu_item_id=menu_item["id"],
+                category=menu_item.get("category", ""),
+                unit_price=menu_item["price"],
+                quantity=max(1, qty),
+                modifiers=it.get("modifiers", []) or [],
+                modifier_total=_mod_delta,
+                allergens=menu_item.get("allergens", []),
+            ))
+        return order if order.items else None
 
     def _apply_dispatch_result(self, result: Dict[str, Any]) -> None:
         """Apply a send_order_to_kitchen() result to order state.
@@ -1993,6 +2076,12 @@ async def create_call_pipeline(
                         f"{result['total_dollars']} "
                         f"({len(resolved)} resolved, {len(unresolved)} unresolved)"
                     )
+                    # Retain the rung-up cart on the session as a deterministic fallback:
+                    # if post-call extraction later fails, the order is rebuilt from this
+                    # (menu-validated items the live model just confirmed) with no model
+                    # call. Keep only when something resolved; the last good cart wins.
+                    if resolved:
+                        session._last_computed_cart = items_request
                     await params.result_callback(result)
                 except Exception as _e:
                     logger.error(f"[{call_sid}] compute_order_total error: {_e}")
@@ -2387,6 +2476,17 @@ async def create_call_pipeline(
                                 session.transcript, session.menu_index,
                                 detected_order_type=session._detected_order_type,
                             )
+                            # Extraction failed (model erroring/empty) — fall back to the
+                            # last compute_order_total cart so a confirmed order isn't lost
+                            # on this single-shot path either. Deterministic, no model call.
+                            if not extracted:
+                                extracted = session._rebuild_order_from_computed_cart()
+                                if extracted:
+                                    logger.info(
+                                        f"[{call_sid}] Recovered order from "
+                                        f"compute_order_total cart ({len(extracted.items)} "
+                                        f"items) on disconnect path"
+                                    )
                             if extracted:
                                 extracted.restaurant_id = restaurant_id
                                 extracted.call_sid      = call_sid
