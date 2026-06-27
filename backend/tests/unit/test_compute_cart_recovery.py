@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from call_pipeline import CallSession
+from gemini_service import OrderState
 
 pytestmark = pytest.mark.unit
 
@@ -14,8 +15,8 @@ _MENU = [
 ]
 
 
-def _session(menu_items=_MENU):
-    return CallSession(
+def _session(menu_items=_MENU, confirmed=True):
+    session = CallSession(
         call_sid="test-call",
         restaurant_id="rest-1",
         caller_number="+15555550123",
@@ -23,6 +24,11 @@ def _session(menu_items=_MENU):
         config={},
         menu_items=menu_items,
     )
+    # The cart fallback only rebuilds a CONFIRMED order, so default the test session
+    # to a confirmed call. The decline case passes confirmed=False to prove the guard.
+    if confirmed:
+        session.order.state = OrderState.CONFIRMED
+    return session
 
 
 def test_rebuild_returns_none_when_no_cart_captured():
@@ -65,4 +71,14 @@ def test_rebuild_refuses_delivery_without_address():
     session._last_computed_cart = [{"name": "Samosa", "quantity": 1, "modifiers": []}]
     # The cart has no address; a delivery order can't be safely rebuilt from items
     # alone, so it routes to manual handling instead.
+    assert session._rebuild_order_from_computed_cart() is None
+
+
+def test_rebuild_refuses_unconfirmed_order_even_with_cart():
+    # Cart was rung up at the readback, but the customer declined (or hung up) without
+    # confirming — the order never reached CONFIRMED. The cart must NOT be dispatched:
+    # rebuilding here would push an order the customer rejected.
+    session = _session(confirmed=False)
+    session._last_computed_cart = [{"name": "Samosa", "quantity": 1, "modifiers": []}]
+    assert session.order.state != OrderState.CONFIRMED
     assert session._rebuild_order_from_computed_cart() is None

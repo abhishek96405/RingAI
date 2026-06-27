@@ -1085,6 +1085,19 @@ class CallSession:
         cart = self._last_computed_cart
         if not cart:
             return None
+        # Confirmation gate: the cart is captured at the readback, which happens
+        # BEFORE the customer confirms — so a cart on its own does NOT mean an order
+        # was placed. If the customer declined after the readback (or hung up without
+        # confirming), the live ORDER_CONFIRMED signal never fired and the order state
+        # is not CONFIRMED; rebuilding here would dispatch an order the customer
+        # rejected. Extraction only ever returns a confirmed order, so the cart
+        # fallback must hold to the same bar.
+        if self.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED):
+            logger.info(
+                f"[{self.call_sid}] compute_order_total cart present but order not "
+                f"confirmed (state={self.order.state}) — not rebuilding"
+            )
+            return None
         _ot = self._detected_order_type or "pickup"
         if "delivery" in _ot:
             logger.info(
@@ -1092,9 +1105,11 @@ class CallSession:
                 f"delivery (no address in cart) — not rebuilding; routing to manual"
             )
             return None
-        from gemini_service import (
-            LiveOrder, OrderItem, OrderState, resolve_modifier_deltas,
-        )
+        # LiveOrder/OrderState come from the module-level import (line 68); importing
+        # them again here would make OrderState function-local and shadow the gate
+        # above with an UnboundLocalError. Only OrderItem/resolve_modifier_deltas
+        # aren't already imported at module scope.
+        from gemini_service import OrderItem, resolve_modifier_deltas
         order = LiveOrder(
             restaurant_id=self.restaurant_id,
             call_sid=self.call_sid,
@@ -2562,12 +2577,15 @@ async def create_call_pipeline(
                                         f"items) on disconnect path"
                                     )
                                 elif (
-                                    session._last_computed_cart is not None
+                                    session.order.state in (OrderState.CONFIRMED, OrderState.COMPLETED)
+                                    and session._last_computed_cart is not None
                                     and not session._extraction_failure_notified
                                 ):
                                     # Cart was rung up but unrecoverable (delivery / off-menu)
                                     # and extraction failed on this single-shot path too —
                                     # alert the operator instead of dropping a confirmed order.
+                                    # Gated on CONFIRMED so a declined-after-readback call (cart
+                                    # present, never confirmed) doesn't trigger a spurious alert.
                                     session._extraction_failure_notified = True
                                     session._spawn_tracked(
                                         session._notify_extraction_failure(),
