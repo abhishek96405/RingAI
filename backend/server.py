@@ -4340,12 +4340,10 @@ async def send_menu_sms_endpoint(
     if not caller_number:
         raise HTTPException(status_code=400, detail="caller_number required")
 
-    base_url = str(request.base_url).rstrip("/")
     success = await send_menu_sms(
         caller_number=caller_number,
         restaurant_name=restaurant.get("name", "the restaurant"),
         restaurant_id=restaurant_id,
-        base_url=base_url,
     )
     return {"sent": success}
 

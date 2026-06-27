@@ -2494,8 +2494,15 @@ async def send_menu_sms(
     caller_number: str,
     restaurant_name: str,
     restaurant_id: str,
-    base_url: str = "https://ringai-v2.onrender.com",
+    base_url: str = None,
 ) -> bool:
+    if not base_url:
+        base_url = (
+            os.environ.get("MENU_PUBLIC_URL")
+            or os.environ.get("BACKEND_PUBLIC_URL")
+            or "https://ringai-v2.onrender.com"
+        )
+    base_url = base_url.rstrip("/")
     menu_url = f"{base_url}/menu/{restaurant_id}"
     body = f"Here's the {restaurant_name} menu with prices:\n{menu_url}"
 

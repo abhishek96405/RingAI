@@ -1927,7 +1927,6 @@ async def create_call_pipeline(
                         caller_number=session.caller_number,
                         restaurant_name=session.restaurant.get("name", "the restaurant"),
                         restaurant_id=session.restaurant_id,
-                        base_url="https://ringai-v2.onrender.com",
                     ),
                     "send_menu_sms",
                 )
