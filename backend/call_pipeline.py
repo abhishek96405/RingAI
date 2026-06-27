@@ -182,8 +182,9 @@ try:
                                         items=_genai_types.Schema(type=_genai_types.Type.STRING),
                                         description=(
                                             "Confirmed modifier option names for THIS item, e.g. "
-                                            "['Large','Extra Cheese']. Use exact names from the menu's "
-                                            "[Group: ...] brackets. Empty list if none."
+                                            "['Large','Extra Cheese']. Use only the option name itself "
+                                            "— do NOT include the group's square brackets or the '*' "
+                                            "required-marker. Empty list if none."
                                         ),
                                     ),
                                 },

@@ -255,6 +255,20 @@ def _format_modifiers_compact(resolved_modifiers: List[Dict]) -> str:
     return " " + "".join(parts) if parts else ""
 
 
+def _normalize_match_key(s: str) -> str:
+    """Normalize a name for menu-item / modifier matching. The live and text
+    models sometimes echo the menu's own formatting into names — e.g.
+    "[Regular]", "Hot*", "'regular'" — which broke exact matching, so the tool
+    returned a wrong/unresolved result and the live model re-rang or stalled.
+    Strip the asterisk anywhere plus bracket/quote decoration at the ends, and
+    collapse whitespace. Clean names are unaffected; internal apostrophes (e.g.
+    "Mom's") are preserved because quotes are stripped only at the ends."""
+    s = (s or "").strip().lower()
+    s = s.replace("*", "")
+    s = s.strip(" []'\"")
+    return " ".join(s.split())
+
+
 def resolve_modifier_deltas(menu_item: Dict, modifier_names: list) -> tuple:
     """Resolve chosen modifier option names → total price_delta (cents) for an
     item. Returns (total_delta_cents, unmatched_names). Case-insensitive match
@@ -269,10 +283,10 @@ def resolve_modifier_deltas(menu_item: Dict, modifier_names: list) -> tuple:
             delta = int(opt.get("price_delta", 0) or 0)
             for k in [opt.get("name", "")] + list(opt.get("ai_aliases", []) or []):
                 if k:
-                    lookup[k.strip().lower()] = delta
+                    lookup[_normalize_match_key(k)] = delta
     total, unmatched = 0, []
     for name in modifier_names:
-        key = (name or "").strip().lower()
+        key = _normalize_match_key(name)
         if key in lookup:
             total += lookup[key]
         else:
@@ -291,22 +305,22 @@ class MenuIndex:
         for item in menu_items:
             if item.get("available", True):
                 # Index by name
-                self.name_index[item["name"].lower().strip()] = item["id"]
+                self.name_index[_normalize_match_key(item["name"])] = item["id"]
                 
                 # Index by aliases (auto-learned)
                 for alias in item.get("aliases", []):
-                    self.alias_index[alias.lower().strip()] = item["id"]
+                    self.alias_index[_normalize_match_key(alias)] = item["id"]
         
         self.word_index: Dict[str, List[str]] = {}
         for item in menu_items:
             if item.get("available", True):
-                for word in item["name"].lower().split():
+                for word in _normalize_match_key(item["name"]).split():
                     if len(word) > 3:
                         self.word_index.setdefault(word, []).append(item["id"])
 
     def find(self, name: str) -> Optional[Dict[str, Any]]:
-        key = name.lower().strip()
-        
+        key = _normalize_match_key(name)
+
         # 1. Exact name match
         if key in self.name_index:
             return self.items.get(self.name_index[key])
