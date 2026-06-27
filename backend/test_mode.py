@@ -18,6 +18,13 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# Application code (sandbox/integration status helpers), NOT a pytest module —
+# but the filename matches python_files=test_*.py and TestModeStatus matches
+# python_classes=Test*, so pytest tries to collect it, can't (it's an Enum), and
+# filterwarnings=error turns the collection warning into a hard abort. Mark the
+# module non-test so pytest skips it entirely. (PL-38)
+__test__ = False
+
 
 class TestModeStatus(str, Enum):
     SANDBOX = "sandbox"      # Real sandbox credentials configured
