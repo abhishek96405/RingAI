@@ -425,6 +425,8 @@ class CallSession:
         # Retained as a deterministic fallback to rebuild the order if post-call
         # extraction fails. None until the tool fires at least once.
         self._last_computed_cart: Optional[List[Dict]] = None
+        # Guard: at most one extraction-failure operator alert per call.
+        self._extraction_failure_notified = False
         self._order_dispatched  = False
         self._order_confirmed_handled = False  # guards _handle_order_confirmed re-entry
         self._escalated         = False
@@ -967,6 +969,17 @@ class CallSession:
                     )
                     # fall through to delivery validation + dispatch below
                 else:
+                    # Couldn't auto-recover. If a cart WAS rung up (so we know a real
+                    # order existed) but rebuild still failed — delivery (no address in
+                    # cart) or all items off-menu — alert the operator to enter it
+                    # manually from the saved transcript, rather than losing a confirmed
+                    # order silently. No cart at all → no clean signal an order existed,
+                    # so we don't alert (would false-fire on every no-order call).
+                    if self._last_computed_cart is not None and not self._extraction_failure_notified:
+                        self._extraction_failure_notified = True
+                        self._spawn_tracked(
+                            self._notify_extraction_failure(), "notify_extraction_failure"
+                        )
                     # D3-8: reset so a later retry in the same call can re-attempt —
                     # the other guard branches reset too; this one must as well.
                     self._order_dispatched = False
@@ -1208,6 +1221,67 @@ class CallSession:
                 logger.error(f"[{self.call_sid}] dispatch-failure SMS error: {sms_err}")
         except Exception as e:
             logger.error(f"[{self.call_sid}] _notify_dispatch_failure unexpected error: {e}")
+
+    async def _notify_extraction_failure(self) -> None:
+        """Alert the operator that a confirmed order could not be auto-recovered.
+
+        Fires only when the live model rang up a cart (so we KNOW a real order was
+        placed) but neither post-call extraction nor the cart-rebuild produced a
+        dispatchable order — in practice a delivery order (the cart carries no
+        address) or one whose items no longer resolve to the menu. The full
+        transcript is on the call record; the operator reads the details off it and
+        enters the order manually. Extraction twin of _notify_dispatch_failure (A7-1).
+
+        NEVER raises and NEVER blocks call teardown.
+        """
+        try:
+            # (a) Real-time dashboard push — reuse the dispatch-failure surface; from
+            # the operator's POV this is an order that needs manual handling.
+            try:
+                from websocket_notifications import notify_order_dispatch_failed
+                await notify_order_dispatch_failed(
+                    restaurant_id=self.restaurant_id,
+                    call_sid=self.call_sid,
+                    caller_number=self.caller_number,
+                    attempted_pos="order extraction",
+                    error="confirmed order could not be auto-recovered",
+                    total=self.order.total,
+                )
+            except Exception as ws_err:
+                logger.error(f"[{self.call_sid}] extraction-failure WS notify error: {ws_err}")
+
+            # (b) Operator SMS — same destination resolution as dispatch failures.
+            alert_phone = (
+                (self.config.get("dispatch_alert_phone") if self.config else None)
+                or (self.config.get("escalation_phone_number") if self.config else None)
+                or self.restaurant.get("owner_phone")
+            )
+            if not alert_phone:
+                logger.warning(
+                    f"[{self.call_sid}] Extraction failed but no operator number configured "
+                    f"(dispatch_alert_phone/escalation_phone_number/owner_phone) — SMS skipped"
+                )
+                return
+            try:
+                import telnyx_service
+                await telnyx_service.send_sms(
+                    to=alert_phone,
+                    body=(
+                        f"Duuutah AI: an order from {self.caller_number} was confirmed on the call "
+                        f"but couldn't be processed automatically. The full call is saved in your "
+                        f"dashboard — please review it and enter the order manually."
+                    ),
+                    idempotency_key=f"extract_fail:{self.call_sid}",
+                    metadata={
+                        "purpose": "extraction_failure_alert",
+                        "restaurant_id": self.restaurant_id,
+                        "call_sid": self.call_sid,
+                    },
+                )
+            except Exception as sms_err:
+                logger.error(f"[{self.call_sid}] extraction-failure SMS error: {sms_err}")
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] _notify_extraction_failure unexpected error: {e}")
 
     async def _notify_delivery_unverifiable(self, validation: Dict[str, Any]) -> None:
         """Alert the operator that a delivery order's address could not be verified
@@ -2486,6 +2560,18 @@ async def create_call_pipeline(
                                         f"[{call_sid}] Recovered order from "
                                         f"compute_order_total cart ({len(extracted.items)} "
                                         f"items) on disconnect path"
+                                    )
+                                elif (
+                                    session._last_computed_cart is not None
+                                    and not session._extraction_failure_notified
+                                ):
+                                    # Cart was rung up but unrecoverable (delivery / off-menu)
+                                    # and extraction failed on this single-shot path too —
+                                    # alert the operator instead of dropping a confirmed order.
+                                    session._extraction_failure_notified = True
+                                    session._spawn_tracked(
+                                        session._notify_extraction_failure(),
+                                        "notify_extraction_failure",
                                     )
                             if extracted:
                                 extracted.restaurant_id = restaurant_id
