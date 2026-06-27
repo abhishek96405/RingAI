@@ -7,9 +7,10 @@ import { Link } from "react-router-dom";
    • Founder name + photo (Founder note section)
    • Footer: socials, company city
    ────────────────────────────────────────────────────────────── */
-const DEMO_TEL = "+15550100100";
-const DEMO_TEL_DISPLAY = "(555) 010-0100";
+const DEMO_TEL = "+17747121719";
+const DEMO_TEL_DISPLAY = "(774) 712-1719";
 const CONTACT_EMAIL = "office@duuutah.com";
+const SMS_DISCLAIMER = "By calling, you agree to receive text messages about your order (and the menu, if you ask). Message & data rates may apply; reply STOP to opt out. This demo line is limited to 5 calls per number per day.";
 
 const Check = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E8502E" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
@@ -245,6 +246,7 @@ const Index = () => {
               <Link to="/signup" className="inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/25 text-white font-semibold px-7 py-4 rounded-full backdrop-blur transition text-base">Start free trial</Link>
             </div>
             <p className="mt-4 text-sm text-white/60">Or dial {DEMO_TEL_DISPLAY} · works with Clover &amp; Square · 7-day free trial</p>
+            <p className="mt-3 text-xs text-white/45 max-w-xl leading-relaxed">{SMS_DISCLAIMER}</p>
           </div>
         </div>
       </section>
@@ -429,6 +431,7 @@ const Index = () => {
             <a href={`tel:${DEMO_TEL}`} className="inline-flex items-center justify-center gap-2 bg-white text-coral font-semibold px-7 py-4 rounded-full btn-lift"><PhoneIcon />Call our AI now</a>
             <Link to="/signup" className="inline-flex items-center justify-center gap-2 bg-coral-deep/40 border border-white/40 text-white font-semibold px-7 py-4 rounded-full hover:bg-coral-deep/60 transition">Start free trial</Link>
           </div>
+          <p className="text-xs text-white/50 mt-6 max-w-md mx-auto leading-relaxed">{SMS_DISCLAIMER}</p>
           <div className="max-w-md mx-auto mt-12"><Waveform color="#fff" /></div>
         </div>
       </section>
