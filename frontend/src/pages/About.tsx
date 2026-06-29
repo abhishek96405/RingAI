@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 
 const founders = [
   { name: "Abhishek Dharmapuri", role: "Co-founder & AI Product Engineer", initials: "AD", photo: "/Abhishek.jpeg", bio: "Co-founder and AI Product Engineer at Duuutah AI, where he leads the company's entire technical build. With a master's in Computer Information Technology and a foundation in data science and machine learning, he owns the product end to end — from architecture to the systems that handle live customer calls. His passion for building businesses led him to try many things over the years, and the lessons from those shaped Duuutah AI — the voice platform he committed to and built into a working product." },
-  { name: "Amogha Abbi", role: "Co-founder & Product Strategist and Engineering Manager", initials: "AA", photo: "/Amogha.jpeg", bio: "Co-founder and Product Strategist and Engineering Manager at Duuutah AI with 5+ years untangling complex operational processes. Though her academic roots are in electronics and communication, her work has always centered on solving real operational headaches — cutting testing times, optimizing service workflows, and leading cross-functional teams. Today she works in the B2B SaaS and enterprise AI space, leading product features, managing strict compliance standards, and translating dense technical requirements into clean, jargon-free solutions. She's focused on closing the gap between hardcore engineering and everyday usability — building software that doesn't just look good on paper, but actually makes people's workdays easier." },
+  { name: "Amogha Abbi", role: "Co-founder & Product Strategist and Engineering Manager", initials: "AA", photo: "/Amogha.jpeg", bio: "Co-founder and Product Strategist & Engineering Manager at Duuutah AI with untangling complex operational processes. She has always centered on solving real operational headaches — cutting testing times, optimizing service workflows, and leading cross-functional teams. Today she works in the B2B SaaS and enterprise AI space, leading product features, managing strict compliance standards, and translating dense technical requirements into clean, jargon-free solutions." },
   { name: "Nagashreya Dachepalli", role: "Co-founder & Marketing & Creative Lead", initials: "ND", photo: "/Shreya.jpeg", bio: "Co-founder and Marketing & Creative Lead at Duuutah AI. She comes from a background in data analytics, turning large, messy datasets into insights teams could actually act on. At Duuutah AI she owns marketing and creative — setting the strategy, shaping the brand, and deciding how the product reaches the restaurants and service businesses it serves. It's a creative role grounded in an analyst's habit of starting from the data." },
 ];
 
@@ -87,7 +87,6 @@ export default function About() {
                 )}
                 <p className="font-semibold text-cream">{f.name}</p>
                 <p className="text-sm text-coral/90 mt-0.5">{f.role}</p>
-                <span className="inline-block mt-3 text-[11px] font-bold uppercase tracking-wider text-cream/55 bg-white/[0.06] border border-white/10 px-2.5 py-1 rounded-full">Ex-Amazon</span>
                 <p className="text-sm text-cream/55 leading-relaxed mt-4">{f.bio}</p>
               </div>
             ))}
