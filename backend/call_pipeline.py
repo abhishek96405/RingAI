@@ -1216,7 +1216,41 @@ class CallSession:
                 return
             if self.business_type != "restaurant":
                 return
+            # If the order already confirmed (e.g. confirm-then-ask-for-human
+            # deferred escalation), it's a real order already heading to the POS
+            # via dispatch_order_if_ready — don't park a duplicate draft. Parking
+            # is only for UNCONFIRMED in-progress carts.
+            if self.order.state in (OrderState.CONFIRMED, OrderState.COMPLETED) or self._order_dispatched:
+                return
             parked_order = self._build_parked_order_from_cart()
+            if not parked_order or not parked_order.items:
+                # No computed cart: compute_order_total only fires at readback, and
+                # a long order cut off mid-stream usually hasn't reached one — so the
+                # cart is empty even though the customer ordered. Recover the items
+                # from the transcript so the human still gets the order instead of the
+                # customer repeating it. Build a TRANSIENT order only — do NOT assign
+                # it to self.order, or the order-confirmation SMS / call-record paths
+                # could fire on this unconfirmed, escalated call.
+                if self.transcript:
+                    extracted = await extract_order_from_transcript(
+                        self.transcript, self.menu_index,
+                        detected_order_type=self._detected_order_type,
+                    )
+                    if extracted and extracted.items:
+                        extracted.restaurant_id = self.restaurant_id
+                        extracted.call_sid      = self.call_sid
+                        extracted.caller_number = self.caller_number
+                        _ot = self._detected_order_type or extracted.order_type or "pickup"
+                        extracted.order_type = (
+                            "delivery"
+                            if ("delivery" in _ot or extracted.order_type == "delivery")
+                            else "pickup"
+                        )
+                        parked_order = extracted
+                        logger.info(
+                            f"[{self.call_sid}] No computed cart — recovered "
+                            f"{len(extracted.items)} item(s) from transcript for handoff"
+                        )
             if not parked_order or not parked_order.items:
                 logger.info(f"[{self.call_sid}] No in-progress cart to park for handoff")
                 return
