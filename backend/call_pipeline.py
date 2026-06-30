@@ -2647,8 +2647,14 @@ async def create_call_pipeline(
                         if session.order.state == OrderState.CONFIRMED and not session._order_dispatched and not session._hangup_scheduled:
                             await session.dispatch_order_if_ready()
 
-                        # Last-chance extraction if still no items
-                        if not session.order.items and session.transcript:
+                        # Last-chance extraction if still no items.
+                        # Skipped on escalated calls: the call was handed to a human and the
+                        # in-progress cart is parked to the POS as an OPEN draft by
+                        # _park_in_progress_cart. Firing here would (a) push an unconfirmed
+                        # order the customer never agreed to and (b) duplicate the parked
+                        # order. ORDER_CONFIRMED (the signal, not extraction) is the source
+                        # of truth for a real order.
+                        if not session.order.items and session.transcript and not session._escalated:
                             extracted = await extract_order_from_transcript(
                                 session.transcript, session.menu_index,
                                 detected_order_type=session._detected_order_type,
