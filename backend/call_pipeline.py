@@ -431,6 +431,7 @@ class CallSession:
         self._order_dispatched  = False
         self._order_confirmed_handled = False  # guards _handle_order_confirmed re-entry
         self._escalated         = False
+        self._cart_parked       = False   # in-progress cart parked on POS for handoff
         self._escalation_deferred = False  # escalation deferred until order completes
         self._hangup_scheduled  = False  # "we've committed to ending this call"
         self._on_call_complete_fired = False  # "call_records insert + dashboard notify has run"
@@ -751,6 +752,12 @@ class CallSession:
             # be saved asynchronously; the helper is idempotent so any
             # downstream cleanup that also calls it is a no-op.
             asyncio.create_task(self._fire_on_call_complete())
+
+            # Hand the in-progress cart to the human who answers, so the customer
+            # doesn't have to repeat their order. Spawned (not awaited) so the
+            # POS writes happen while Telnyx dials — zero added hold time.
+            self._spawn_tracked(self._park_in_progress_cart(), "park_in_progress_cart")
+
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
             if escalation_phone:
                 transferred = await self._transfer_call(escalation_phone)
@@ -1149,6 +1156,87 @@ class CallSession:
                 allergens=menu_item.get("allergens", []),
             ))
         return order if order.items else None
+
+    def _build_parked_order_from_cart(self):
+        """Build a LiveOrder from the in-progress cart for the AI->human handoff.
+
+        UNLIKE _rebuild_order_from_computed_cart, this does NOT require the order
+        to be CONFIRMED — an in-progress cart is precisely what we hand to the
+        human, who becomes the confirmation gate. Menu validation is kept
+        (off-menu items dropped). Delivery IS allowed here (we only park items;
+        the human collects the address live). Returns None if no usable cart.
+        """
+        cart = self._last_computed_cart
+        if not cart:
+            return None
+        from gemini_service import OrderItem, resolve_modifier_deltas
+        _ot = self._detected_order_type or "pickup"
+        # Transient: park functions only read .items / .order_type /
+        # .caller_number. State is left as-is — parking is NOT a confirmation.
+        order = LiveOrder(
+            restaurant_id=self.restaurant_id,
+            call_sid=self.call_sid,
+            caller_number=self.caller_number,
+            state=self.order.state,
+            order_type=_ot,
+        )
+        for it in cart:
+            name = (it.get("name") or "").strip()
+            if not name:
+                continue
+            menu_item = self.menu_index.find(name) if self.menu_index else None
+            if not menu_item:
+                logger.warning(f"[{self.call_sid}] [PARK_DROP] '{name}' not on menu — dropped from handoff")
+                order.dropped_items.append(name)
+                continue
+            _mod_delta, _unmatched = resolve_modifier_deltas(menu_item, it.get("modifiers", []) or [])
+            try:
+                qty = int(it.get("quantity", 1))
+            except (TypeError, ValueError):
+                qty = 1
+            order.items.append(OrderItem(
+                name=menu_item["name"],
+                menu_item_id=menu_item["id"],
+                category=menu_item.get("category", ""),
+                unit_price=menu_item["price"],
+                quantity=max(1, qty),
+                modifiers=it.get("modifiers", []) or [],
+                modifier_total=_mod_delta,
+                allergens=menu_item.get("allergens", []),
+            ))
+        return order if order.items else None
+
+    async def _park_in_progress_cart(self):
+        """Park the in-progress cart on the POS as an OPEN, un-fired order for
+        the human receiving the transfer. Never raises, never blocks the
+        transfer. Only parks restaurant orders that actually have a cart.
+        """
+        try:
+            if getattr(self, "_cart_parked", False):
+                return
+            if self.business_type != "restaurant":
+                return
+            parked_order = self._build_parked_order_from_cart()
+            if not parked_order or not parked_order.items:
+                logger.info(f"[{self.call_sid}] No in-progress cart to park for handoff")
+                return
+            self._cart_parked = True
+            from gemini_service import park_in_progress_order
+            result = await park_in_progress_order(parked_order, self.restaurant, self.db)
+            if result.get("success"):
+                logger.info(
+                    f"[{self.call_sid}] Parked in-progress cart on POS "
+                    f"({result.get('method')} order {result.get('order_id')}, "
+                    f"{len(parked_order.items)} item(s)) for human handoff"
+                )
+            else:
+                # Non-fatal. Future: dashboard/SMS-to-reception fallback here.
+                logger.warning(
+                    f"[{self.call_sid}] Could not park cart on POS "
+                    f"({result.get('error')}) — fall back to dashboard/SMS handoff"
+                )
+        except Exception as e:
+            logger.error(f"[{self.call_sid}] Park-in-progress-cart error (non-fatal): {e}", exc_info=True)
 
     def _apply_dispatch_result(self, result: Dict[str, Any]) -> None:
         """Apply a send_order_to_kitchen() result to order state.

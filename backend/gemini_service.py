@@ -1102,6 +1102,178 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any], db=None)
                 "error": f"Square request error: {type(e).__name__}"}
 
 
+async def park_in_progress_order(order, restaurant, db=None):
+    """Park a customer's in-progress cart on the POS as an OPEN, un-fired order
+    so the human receiving a duration-escalation transfer can continue it.
+
+    Routes by pos_type, mirroring send_order_to_kitchen. Best-effort: never
+    raises, always returns a result dict. A miss here is non-fatal.
+    """
+    pos_type = (restaurant.get("pos_type") or "").lower()
+    try:
+        if pos_type == "clover":
+            if restaurant.get("clover_api_token") and restaurant.get("clover_merchant_id"):
+                return await _park_to_clover(order, restaurant, db)
+        elif pos_type == "square":
+            if restaurant.get("square_access_token") and restaurant.get("square_location_id"):
+                return await _park_to_square(order, restaurant, db)
+        return {"success": False, "order_id": "", "method": "none",
+                "error": f"no parkable POS (pos_type={pos_type or 'none'})"}
+    except Exception as e:  # noqa: BLE001 — park is strictly best-effort
+        logger.error(f"[park] router error: {e}", exc_info=True)
+        return {"success": False, "order_id": "", "method": "error",
+                "error": f"{type(e).__name__}"}
+
+
+async def _park_to_clover(order, restaurant=None, db=None):
+    """Create an OPEN (un-fired) order in Clover for the AI->human handoff.
+
+    IDENTICAL to _send_to_clover EXCEPT it deliberately skips Step 3
+    (print_event). The order is visible in Register for staff to open, finish,
+    and check out — that checkout is what fires it to the kitchen.
+    """
+    if db is not None:
+        from pos_sync import get_valid_clover_token
+        api_token = await get_valid_clover_token(restaurant or {}, db)
+    else:
+        api_token = (restaurant or {}).get("clover_api_token", "")
+    merchant_id = (restaurant or {}).get("clover_merchant_id", "")
+    clover_env = (restaurant or {}).get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
+    base_url = (
+        "https://sandbox.dev.clover.com" if clover_env == "sandbox"
+        else "https://api.clover.com"
+    )
+    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Step 1 — OPEN order, tagged as an in-progress handoff. Caller
+            # number in the title so staff can match it to the person on the line.
+            order_payload = {
+                "state": "open",
+                "title": f"IN PROGRESS (call transfer) — {order.caller_number or 'caller'}",
+                "note": (
+                    f"Duuutah AI handoff — customer is being transferred to you now. "
+                    f"Items so far are below; confirm with the caller, add anything "
+                    f"missing, then check out. Type: {order.order_type.upper()}"
+                ).strip(),
+            }
+            resp = await client.post(
+                f"{base_url}/v3/merchants/{merchant_id}/orders",
+                headers=headers, json=order_payload,
+            )
+            if resp.status_code not in (200, 201):
+                logger.error(f"[park] Clover create order failed: {resp.status_code} {resp.text}")
+                return {"success": False, "order_id": "", "method": "clover_park",
+                        "error": f"Clover create order {resp.status_code}"}
+            clover_order_id = resp.json().get("id")
+            logger.info(f"[park] Clover in-progress order created: {clover_order_id}")
+
+            # Step 2 — line items (one POST per unit, same as the fired path).
+            failed_items = []
+            for item in order.items:
+                _mods = f" ({', '.join(item.modifiers)})" if item.modifiers else ""
+                line_item = {
+                    "name": item.name + _mods,
+                    "price": max(0, item.unit_price + item.modifier_total),
+                }
+                if item.special_instructions:
+                    line_item["note"] = item.special_instructions
+                units = item.quantity if (item.quantity and item.quantity > 0) else 1
+                for _ in range(units):
+                    li_resp = await client.post(
+                        f"{base_url}/v3/merchants/{merchant_id}/orders/{clover_order_id}/line_items",
+                        headers=headers, json=line_item,
+                    )
+                    if li_resp.status_code not in (200, 201):
+                        logger.warning(f"[park] Clover line item failed for {item.name}: {li_resp.text}")
+                        failed_items.append(item.name)
+
+            # A PARTIAL parked order is acceptable — the human reconciles it live
+            # with the customer and there is no kitchen ticket to ship wrong.
+            logger.info(
+                f"[park] Clover order {clover_order_id} parked with "
+                f"{len(order.items)} item(s); partial={bool(failed_items)}"
+            )
+            # NOTE: intentionally NO print_event. Parked, not fired.
+            return {"success": True, "order_id": clover_order_id, "method": "clover_park",
+                    "partial": bool(failed_items), "failed_items": failed_items,
+                    "printed": False, "error": ""}
+
+    except Exception as e:
+        logger.error(f"[park] Clover park error: {e}", exc_info=True)
+        return {"success": False, "order_id": "", "method": "clover_park",
+                "error": f"Clover park error: {type(e).__name__}"}
+
+
+async def _park_to_square(order, restaurant, db=None):
+    """Create an OPEN (un-fired) order in Square for the AI->human handoff.
+
+    *** SQUARE NEEDS A SANDBOX TEST — see INCLUDE_FULFILLMENT below. ***
+    Per the A7-2 behavior, REST orders without a `fulfillments` array may not
+    surface. A parked order intentionally should NOT route to the kitchen, so we
+    omit the fulfillment by default. Sandbox-verify the human can still see the
+    order; if not, set INCLUDE_FULFILLMENT = True (adds a PROPOSED fulfillment,
+    which may also surface it on the KDS).
+    """
+    INCLUDE_FULFILLMENT = False  # flip only if the sandbox test requires it
+
+    token = restaurant.get("square_access_token")
+    location = restaurant.get("square_location_id")
+    if not token or not location:
+        return {"success": False, "order_id": "", "method": "square_park",
+                "error": "missing Square credentials"}
+    env = restaurant.get("pos_env") or os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+    base = "https://connect.squareupsandbox.com" if env == "sandbox" else "https://connect.squareup.com"
+
+    order_body = {
+        "location_id": location,
+        "source": {"name": "Duuutah AI — In Progress (transfer)"},
+        "state": "OPEN",
+        "line_items": [
+            {
+                "name": i.name + (f" ({', '.join(i.modifiers)})" if i.modifiers else ""),
+                "quantity": str(i.quantity if (i.quantity and i.quantity > 0) else 1),
+                "base_price_money": {"amount": max(0, i.unit_price + i.modifier_total), "currency": "USD"},
+                "note": i.special_instructions or None,
+            }
+            for i in order.items
+        ],
+    }
+    if INCLUDE_FULFILLMENT:
+        order_body["fulfillments"] = [_build_square_fulfillment(order)]
+
+    # Distinct idempotency key from the fired path (which keys on call_sid) so a
+    # later real push on the same call can't be deduped into this parked order.
+    body = {"idempotency_key": f"{order.call_sid}-park", "order": order_body}
+
+    async def _do_request(tok):
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            return await client.post(
+                f"{base}/v2/orders", json=body,
+                headers={"Authorization": f"Bearer {tok}", "Square-Version": "2024-01-18"},
+            )
+
+    try:
+        if db is not None:
+            from pos_sync import square_call_with_refresh
+            resp = await square_call_with_refresh(restaurant, db, _do_request)
+        else:
+            resp = await _do_request(token)
+        data = resp.json()
+        if resp.status_code == 200:
+            oid = data.get("order", {}).get("id", "")
+            logger.info(f"[park] Square order parked: {oid}")
+            return {"success": True, "order_id": oid, "method": "square_park", "error": ""}
+        logger.error(f"[park] Square error {resp.status_code}: {data}")
+        return {"success": False, "order_id": "", "method": "square_park",
+                "error": f"Square {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"[park] Square park error: {e}")
+        return {"success": False, "order_id": "", "method": "square_park",
+                "error": f"Square park error: {type(e).__name__}"}
+
+
 # ---------------------------------------------------------------------------
 # Rule-based call quality evaluation
 # ---------------------------------------------------------------------------
