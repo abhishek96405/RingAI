@@ -93,7 +93,7 @@ const faqs = [
   { q: "Which POS systems do you support?", a: "Clover and Square today, connected securely through their official integrations. Orders flow straight into your POS automatically." },
   { q: "What happens if Duuutah can't handle a call?", a: "You set the rules. Duuutah can take a message or hand the call off, and anything important is always logged with a full transcript so nothing gets lost." },
   { q: "What languages does it support?", a: "English today. Multi-language support is on the way and will be available on the Pro plan." },
-  { q: "How does pricing work past my included calls?", a: "Each plan includes a monthly call allowance — 500 on Starter, 1,000 on Pro. Beyond that it's a simple per-call rate: $0.30 on Starter, $0.25 on Pro." },
+  { q: "How does pricing work past my included calls?", a: "Each plan includes a monthly call allowance — 500 on Starter, 1,000 on Pro. Beyond that it's a simple per-call rate: $0.40 on Starter, $0.35 on Pro." },
   { q: "Can I cancel anytime?", a: "Yes. There's a 7-day free trial, and you can cancel whenever you like — no long-term contract." },
   { q: "Is my data secure?", a: "Your data is encrypted in transit and at rest, and POS connections use each provider's official, permission-based integration." },
 ];
@@ -120,17 +120,17 @@ function Waveform({ color = "#fff", bars = 48 }: { color?: string; bars?: number
 
 function PricingCalculator() {
   const [calls, setCalls] = useState(700);
-  const sOver = Math.max(0, calls - 500) * 0.3;
-  const pOver = Math.max(0, calls - 1000) * 0.25;
-  const s = 199 + sOver;
-  const p = 349 + pOver;
+  const sOver = Math.max(0, calls - 500) * 0.4;
+  const pOver = Math.max(0, calls - 1000) * 0.35;
+  const s = 249 + sOver;
+  const p = 399 + pOver;
   const money = (n: number) => "$" + Math.round(n).toLocaleString();
   const starterHi = s <= p;
   const proHi = p < s;
 
   let rec: ReactNode;
   if (Math.abs(s - p) < 0.5) {
-    rec = "Right at the crossover — both plans cost the same around 1,000 calls/month.";
+    rec = "Right at the crossover — both plans cost the same around 875 calls/month.";
   } else if (s < p) {
     rec = (<><span className="text-coral font-bold">Starter</span> is cheaper by {money(p - s)}/month at this volume.</>);
   } else {
@@ -149,12 +149,12 @@ function PricingCalculator() {
         <div className="rounded-2xl border-2 p-5 text-center transition" style={{ borderColor: starterHi ? "#E8502E" : "#EBE2D8", background: starterHi ? "rgba(251,231,220,.5)" : "transparent" }}>
           <p className="text-sm font-semibold text-ink-soft mb-1">Starter</p>
           <p className="font-display font-extrabold text-3xl">{money(s)}</p>
-          <p className="text-xs text-ink-soft mt-1">{sOver > 0 ? `$199 + ${money(sOver)} overage` : "base plan"}</p>
+          <p className="text-xs text-ink-soft mt-1">{sOver > 0 ? `$249 + ${money(sOver)} overage` : "base plan"}</p>
         </div>
         <div className="rounded-2xl border-2 p-5 text-center transition" style={{ borderColor: proHi ? "#E8502E" : "#EBE2D8", background: proHi ? "rgba(251,231,220,.5)" : "transparent" }}>
           <p className="text-sm font-semibold text-ink-soft mb-1">Pro</p>
           <p className="font-display font-extrabold text-3xl">{money(p)}</p>
-          <p className="text-xs text-ink-soft mt-1">{pOver > 0 ? `$349 + ${money(pOver)} overage` : "base plan"}</p>
+          <p className="text-xs text-ink-soft mt-1">{pOver > 0 ? `$399 + ${money(pOver)} overage` : "base plan"}</p>
         </div>
       </div>
       <p className="text-center mt-6 text-sm font-medium text-ink">{rec}</p>
@@ -337,8 +337,8 @@ const Index = () => {
             <div className="reveal card border border-line p-8">
               <h3 className="font-display font-bold text-xl mb-1">Starter</h3>
               <p className="text-ink-soft text-sm mb-5">For pickup-focused restaurants.</p>
-              <div className="flex items-end gap-1 mb-1"><span className="font-display font-extrabold text-5xl">$199</span><span className="text-ink-soft mb-1.5">/month</span></div>
-              <p className="text-sm text-ink-soft mb-6">500 AI calls included · $0.30/call after</p>
+              <div className="flex items-end gap-1 mb-1"><span className="font-display font-extrabold text-5xl">$249</span><span className="text-ink-soft mb-1.5">/month</span></div>
+              <p className="text-sm text-ink-soft mb-6">500 AI calls included · $0.40/call after</p>
               <Link to="/signup" className="block text-center bg-ink text-cream font-semibold py-3.5 rounded-full hover:bg-black transition mb-7">Start free trial</Link>
               <ul className="space-y-3 text-sm">
                 {starterFeatures.map((t) => (
@@ -351,8 +351,8 @@ const Index = () => {
               <span className="absolute -top-3 left-8 bg-coral text-white text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">Most popular</span>
               <h3 className="font-display font-bold text-xl mb-1">Pro</h3>
               <p className="text-ink-soft text-sm mb-5">For full-service restaurants &amp; salons.</p>
-              <div className="flex items-end gap-1 mb-1"><span className="font-display font-extrabold text-5xl">$349</span><span className="text-ink-soft mb-1.5">/month</span></div>
-              <p className="text-sm text-ink-soft mb-6">1,000 AI calls included · $0.25/call after</p>
+              <div className="flex items-end gap-1 mb-1"><span className="font-display font-extrabold text-5xl">$399</span><span className="text-ink-soft mb-1.5">/month</span></div>
+              <p className="text-sm text-ink-soft mb-6">1,000 AI calls included · $0.35/call after</p>
               <Link to="/signup" className="block text-center bg-coral text-white font-semibold py-3.5 rounded-full hover:bg-coral-deep transition mb-7">Start free trial</Link>
               <ul className="space-y-3 text-sm">
                 {proFeatures.map((t, i) => (

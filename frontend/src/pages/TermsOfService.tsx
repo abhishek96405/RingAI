@@ -61,8 +61,8 @@ export default function TermsOfService() {
             the plan fee, unless you cancel during the trial.
           </P>
           <P>
-            <strong>Plans.</strong> Starter is $199/month and includes 500 AI-answered calls, then $0.30 per
-            call after that. Pro is $349/month and includes 1,000 calls, then $0.25 per call. Fees are billed to
+            <strong>Plans.</strong> Starter is $249/month and includes 500 AI-answered calls, then $0.40 per
+            call after that. Pro is $399/month and includes 1,000 calls, then $0.35 per call. Fees are billed to
             the card on file each month. You authorize us to charge that card on a recurring basis for your plan
             fee, any calls over your monthly allowance, and applicable taxes, until you cancel.
           </P>

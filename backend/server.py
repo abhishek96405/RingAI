@@ -46,7 +46,7 @@ PLAN_CONFIG = {
     "STARTER": {
         "price_env": "STRIPE_PRICE_STARTER",
         "monthly_call_limit": 500,
-        "overage_per_call_cents": 25,
+        "overage_per_call_cents": 40,
         "max_call_duration_sec": 180,
         "warn_at_sec": 150,
         "phone_numbers": 1,
@@ -62,7 +62,7 @@ PLAN_CONFIG = {
     "PRO": {
         "price_env": "STRIPE_PRICE_PRO",
         "monthly_call_limit": 1000,
-        "overage_per_call_cents": 20,
+        "overage_per_call_cents": 35,
         "max_call_duration_sec": None,
         "warn_at_sec": None,
         "phone_numbers": 1,

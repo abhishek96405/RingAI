@@ -672,8 +672,8 @@ export default function Onboarding() {
           <div className="space-y-5">
             <div className="grid sm:grid-cols-2 gap-4">
               {[
-                { key: "STARTER" as const, name: "Starter", price: 199, calls: "500", overage: "0.30", features: ["AI order taking", "1 AI voice", "POS integration", "SMS confirmations", "Analytics dashboard", "Email support"] },
-                { key: "PRO" as const, name: "Pro", price: 349, calls: "1,000", overage: "0.25", popular: true, features: ["Everything in Starter, plus:", "Delivery handling", "Table reservations", "AI upselling", "Customer recognition", "Auto AI learning", "8 AI voices (multi-language coming soon)", "Priority support"] },
+                { key: "STARTER" as const, name: "Starter", price: 249, calls: "500", overage: "0.40", features: ["AI order taking", "1 AI voice", "POS integration", "SMS confirmations", "Analytics dashboard", "Email support"] },
+                { key: "PRO" as const, name: "Pro", price: 399, calls: "1,000", overage: "0.35", popular: true, features: ["Everything in Starter, plus:", "Delivery handling", "Table reservations", "AI upselling", "Customer recognition", "Auto AI learning", "8 AI voices (multi-language coming soon)", "Priority support"] },
               ].map((plan) => (
                 <Card
                   key={plan.key}

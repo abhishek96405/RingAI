@@ -20,10 +20,10 @@ import type { Restaurant, Invoice } from "@/types";
 const plans = [
   {
     name: "Starter",
-    price: 199,
+    price: 249,
     calls: 500,
     features: [
-      "500 AI calls/month ($0.30/call overage)",
+      "500 AI calls/month ($0.40/call overage)",
       "AI pickup order taking",
       "1 AI voice (default)",
       "1 language",
@@ -38,11 +38,11 @@ const plans = [
   },
   {
     name: "Pro",
-    price: 349,
+    price: 399,
     calls: 1000,
     features: [
       "Everything in Starter, plus:",
-      "1,000 AI calls/month ($0.25/call overage)",
+      "1,000 AI calls/month ($0.35/call overage)",
       "AI delivery order handling",
       "AI table reservations",
       "AI upselling during calls",
@@ -332,7 +332,7 @@ const BillingPage = () => {
           <div>
             <p className="font-medium text-sm">What happens if I exceed my call limit?</p>
             <p className="text-sm text-ink-soft mt-1">
-              You'll be notified when approaching your limit. Overage calls are billed at $0.30/call (Starter) or $0.25/call (Pro).
+              You'll be notified when approaching your limit. Overage calls are billed at $0.40/call (Starter) or $0.35/call (Pro).
             </p>
           </div>
           <Separator />
