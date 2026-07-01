@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 /* ──────────────────────────────────────────────────────────────
@@ -163,8 +163,6 @@ function PricingCalculator() {
 }
 
 const Index = () => {
-  const playIconRef = useRef<HTMLSpanElement>(null);
-
   // Reveal-on-scroll
   useEffect(() => {
     const io = new IntersectionObserver(
@@ -181,18 +179,6 @@ const Index = () => {
     document.querySelectorAll(".landing .reveal").forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, []);
-
-  // Hero "Hear Duuutah on a live call" — speaks a sample line
-  const handlePlay = () => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance("Thanks for calling Bella Napoli! Would you like pickup, delivery, or a table?");
-    u.rate = 1;
-    u.pitch = 1;
-    playIconRef.current?.classList.add("animate-pulse");
-    u.onend = () => playIconRef.current?.classList.remove("animate-pulse");
-    window.speechSynthesis.speak(u);
-  };
 
   return (
     <div className="landing min-h-screen antialiased text-ink">
@@ -221,12 +207,12 @@ const Index = () => {
       <section className="hero-bg relative min-h-[86vh] flex items-center">
         <div className="max-w-6xl mx-auto px-5 w-full py-20">
           <div className="max-w-2xl text-white">
-            <button onClick={handlePlay} className="group inline-flex items-center gap-3 bg-black/30 hover:bg-black/45 backdrop-blur border border-white/15 rounded-full pl-1.5 pr-5 py-1.5 mb-8 transition">
-              <span ref={playIconRef} className="flex h-9 w-9 items-center justify-center rounded-full bg-coral text-white">
+            <a href={`tel:${DEMO_TEL}`} className="group inline-flex items-center gap-3 bg-black/30 hover:bg-black/45 backdrop-blur border border-white/15 rounded-full pl-1.5 pr-5 py-1.5 mb-8 transition">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-coral text-white">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
               </span>
               <span className="text-sm font-semibold">Hear Duuutah on a live call</span>
-            </button>
+            </a>
             <h1 className="font-display font-extrabold leading-[0.98] tracking-tight" style={{ fontSize: "clamp(3rem,7vw,5.75rem)" }}>
               Never miss{" "}
               <span className="relative inline-block" style={{ whiteSpace: "nowrap" }}>
