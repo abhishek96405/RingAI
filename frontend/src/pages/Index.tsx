@@ -409,7 +409,7 @@ const Index = () => {
       </section>
 
       {/* FINAL CTA */}
-      <section className="relative overflow-hidden bg-coral text-white">
+      <section className="relative overflow-hidden bg-[#D9491F] text-white">
         <div className="max-w-4xl mx-auto px-5 py-20 md:py-24 text-center">
           <h2 className="font-display font-extrabold text-4xl md:text-5xl tracking-tight mb-5">Ready to never miss a call?</h2>
           <p className="text-white/85 text-lg mb-9 max-w-xl mx-auto">Call our AI and hear it for yourself, or start your 7-day free trial today.</p>
