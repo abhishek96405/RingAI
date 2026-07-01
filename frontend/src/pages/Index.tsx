@@ -311,15 +311,16 @@ const Index = () => {
           <div className="flex justify-center mb-4"><span className="eyebrow">See it in action</span></div>
           <h2 className="font-display font-extrabold text-4xl md:text-5xl tracking-tight mb-4">Watch Duuutah take a call.</h2>
           <p className="text-lg text-ink-soft mb-10 max-w-xl mx-auto">A real call from hello to confirmed order — start to finish.</p>
-          <div className="reveal relative rounded-3xl overflow-hidden border border-line shadow-warm" style={{ aspectRatio: "16/9", background: "linear-gradient(115deg,#46291a,#23150c 60%,#120b06)" }}>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="flex h-20 w-20 items-center justify-center rounded-full bg-coral text-white btn-lift cursor-pointer shadow-warm">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-              </span>
-            </div>
-            <span className="absolute bottom-4 left-5 text-white/80 text-sm font-medium">Duuutah · a 2-minute call</span>
+          <div className="reveal relative rounded-3xl overflow-hidden border border-line shadow-warm" style={{ aspectRatio: "16/9" }}>
+            <iframe
+              className="absolute inset-0 h-full w-full"
+              src="https://www.youtube-nocookie.com/embed/UGuj1SHOPJY?rel=0&modestbranding=1&cc_load_policy=1"
+              title="Watch Duuutah take a call"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              loading="lazy"
+            />
           </div>
-          <p className="text-xs text-ink-soft mt-3">Demo video coming soon.</p>
         </div>
       </section>
 
