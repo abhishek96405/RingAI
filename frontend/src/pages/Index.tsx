@@ -9,6 +9,8 @@ import { Link } from "react-router-dom";
    ────────────────────────────────────────────────────────────── */
 const DEMO_TEL = "+17747121719";
 const DEMO_TEL_DISPLAY = "(774) 712-1719";
+const CONTACT_TEL = "+18157794775";
+const CONTACT_TEL_DISPLAY = "+1 (815) 779-4775";
 const CONTACT_EMAIL = "office@duuutah.com";
 const SMS_DISCLAIMER = "By calling, you agree to receive text messages about your order (and the menu, if you ask). Message & data rates may apply; reply STOP to opt out. This demo line is limited to 5 calls per number per day.";
 
@@ -162,6 +164,42 @@ function PricingCalculator() {
   );
 }
 
+// Click-to-play demo video: shows a clean custom poster + play button so the
+// resting state carries no YouTube chrome (title / share / "Watch on YouTube").
+function DemoVideo() {
+  const VIDEO_ID = "UGuj1SHOPJY";
+  const [playing, setPlaying] = useState(false);
+  return (
+    <div className="reveal relative rounded-3xl overflow-hidden border border-line shadow-warm" style={{ aspectRatio: "16/9", background: "#120b06" }}>
+      {playing ? (
+        <iframe
+          className="absolute inset-0 h-full w-full"
+          src={`https://www.youtube-nocookie.com/embed/${VIDEO_ID}?autoplay=1&rel=0&modestbranding=1&cc_load_policy=1&playsinline=1`}
+          title="Watch Duuutah take a call"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      ) : (
+        <button type="button" onClick={() => setPlaying(true)} aria-label="Play demo video" className="group absolute inset-0 h-full w-full cursor-pointer">
+          <img
+            src={`https://i.ytimg.com/vi/${VIDEO_ID}/maxresdefault.jpg`}
+            onError={(e) => { e.currentTarget.src = `https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg`; }}
+            alt="Watch Duuutah take a call"
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          <span className="absolute inset-0 bg-black/25 group-hover:bg-black/15 transition" />
+          <span className="absolute inset-0 flex items-center justify-center">
+            <span className="flex h-20 w-20 items-center justify-center rounded-full bg-coral text-white btn-lift shadow-warm">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+            </span>
+          </span>
+          <span className="absolute bottom-4 left-5 text-white/80 text-sm font-medium">Duuutah · a 2-minute call</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 const Index = () => {
   // Reveal-on-scroll
   useEffect(() => {
@@ -311,16 +349,7 @@ const Index = () => {
           <div className="flex justify-center mb-4"><span className="eyebrow">See it in action</span></div>
           <h2 className="font-display font-extrabold text-4xl md:text-5xl tracking-tight mb-4">Watch Duuutah take a call.</h2>
           <p className="text-lg text-ink-soft mb-10 max-w-xl mx-auto">A real call from hello to confirmed order — start to finish.</p>
-          <div className="reveal relative rounded-3xl overflow-hidden border border-line shadow-warm" style={{ aspectRatio: "16/9" }}>
-            <iframe
-              className="absolute inset-0 h-full w-full"
-              src="https://www.youtube-nocookie.com/embed/UGuj1SHOPJY?rel=0&modestbranding=1&cc_load_policy=1"
-              title="Watch Duuutah take a call"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              loading="lazy"
-            />
-          </div>
+          <DemoVideo />
         </div>
       </section>
 
@@ -449,7 +478,7 @@ const Index = () => {
               <div className="flex flex-col gap-2.5 text-sm">
                 <Link to="/about" className="hover:text-cream transition">About</Link>
                 <a href={`mailto:${CONTACT_EMAIL}`} className="hover:text-cream transition">{CONTACT_EMAIL}</a>
-                <a href="#" className="hover:text-cream transition">Contact</a>
+                <a href={`tel:${CONTACT_TEL}`} className="hover:text-cream transition">{CONTACT_TEL_DISPLAY}</a>
               </div>
             </div>
             <div>
