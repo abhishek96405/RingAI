@@ -1235,6 +1235,7 @@ class CallSession:
                     extracted = await extract_order_from_transcript(
                         self.transcript, self.menu_index,
                         detected_order_type=self._detected_order_type,
+                        require_confirmed=False,  # park hands UNCONFIRMED carts to the human
                     )
                     if extracted and extracted.items:
                         extracted.restaurant_id = self.restaurant_id

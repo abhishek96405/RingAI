@@ -482,6 +482,7 @@ async def extract_order_from_transcript(
     transcript: List[Dict],
     menu_index: MenuIndex,
     detected_order_type: Optional[str] = None,
+    require_confirmed: bool = True,
 ) -> Optional[LiveOrder]:
     extract_order_from_transcript._last_tokens = 0  # reset each call
     """Parse a transcript and return a validated LiveOrder. Returns None if no confirmed order."""
@@ -573,10 +574,13 @@ JSON:"""
     items = data.get("items", [])
     logger.info(f"Order extraction parsed: confirmed={confirmed}, items={items}")
 
-    # Only reject if explicitly False.
-    # None means the field was missing (truncated JSON) — ORDER_CONFIRMED signal
-    # already fired upstream, so we trust the signal and proceed.
-    if confirmed is False:
+    # Only reject if explicitly False AND the caller requires a confirmed order
+    # (the fire paths). None means the field was missing (truncated JSON) — the
+    # ORDER_CONFIRMED signal already fired upstream, so we trust it and proceed.
+    # The park passes require_confirmed=False: it hands UNCONFIRMED in-progress
+    # carts to a human (the human is the confirmation gate), so it must recover
+    # the items even when the customer was cut off before confirming.
+    if confirmed is False and require_confirmed:
         return None
 
     order = LiveOrder(
