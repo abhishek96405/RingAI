@@ -779,6 +779,12 @@ class CallSession:
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
             if escalation_phone:
                 if announce_transfer:
+                    # Set BEFORE stopping the stream: stopping the stream closes
+                    # the websocket and fires on_client_disconnected during the
+                    # announcement window. This flag tells the disconnect handler
+                    # a transfer is imminent so it must NOT hang up the A-leg
+                    # (see the hangup guard in on_disconnect).
+                    self._announce_transfer_pending = True
                     # Duration-triggered escalation: the AI has NOT told the
                     # customer a transfer is coming (unlike the AI-signal path,
                     # which announces in the AI's own voice). Stop the media
@@ -2662,7 +2668,10 @@ async def create_call_pipeline(
                                     logger.info(f"[{call_sid}] Call duration limit ({max_seconds}s) — escalating")
                                     session._escalated = True
                                     session.order.transition(OrderState.ESCALATED, "call duration limit")
-                                    await session._schedule_hangup(reason="escalation", announce_transfer=True)
+                                    session._spawn_tracked(
+                                        session._schedule_hangup(reason="escalation", announce_transfer=True),
+                                        "duration_escalation_hangup",
+                                    )
                                 return
 
                             # STARTER — warn at warn_at seconds, escalate at max_seconds
@@ -2686,12 +2695,18 @@ async def create_call_pipeline(
                                         logger.info(f"[{call_sid}] STARTER extended duration exceeded — escalating")
                                         session._escalated = True
                                         session.order.transition(OrderState.ESCALATED, "starter call duration limit extended")
-                                        await session._schedule_hangup(reason="escalation", announce_transfer=True)
+                                        session._spawn_tracked(
+                                            session._schedule_hangup(reason="escalation", announce_transfer=True),
+                                            "duration_escalation_hangup",
+                                        )
                                 else:
                                     logger.info(f"[{call_sid}] STARTER call duration limit ({max_seconds}s) — escalating to reception")
                                     session._escalated = True
                                     session.order.transition(OrderState.ESCALATED, "starter call duration limit")
-                                    await session._schedule_hangup(reason="escalation", announce_transfer=True)
+                                    session._spawn_tracked(
+                                        session._schedule_hangup(reason="escalation", announce_transfer=True),
+                                        "duration_escalation_hangup",
+                                    )
                         except asyncio.CancelledError:
                             pass
                     session._call_timer_task = asyncio.create_task(_call_duration_guard())
@@ -2819,7 +2834,10 @@ async def create_call_pipeline(
                 # For non-transfer disconnects (customer hangs up normally,
                 # network drop, etc.) we still explicitly hang up — the
                 # serializer's auto_hang_up=False means nothing else will.
-                if session is None or not getattr(session, "_transfer_in_progress", False):
+                if session is None or not (
+                    getattr(session, "_transfer_in_progress", False)
+                    or getattr(session, "_announce_transfer_pending", False)
+                ):
                     try:
                         import telnyx_service
                         await telnyx_service.hang_up_call(call_sid)
