@@ -373,6 +373,24 @@ TRANSFER_FAIL_HANGUP_DELAY_SECS = float(
     os.environ.get("TRANSFER_FAIL_HANGUP_DELAY_SECS", "4.0")
 )
 
+# Spoken to the caller (Telnyx TTS) right before a DURATION-triggered
+# escalation transfer, so they aren't yanked to a ringing line unannounced.
+# Deliberately does NOT mention "duration exceeded" — that's internal jargon;
+# the customer just needs to know they're being connected and nothing is lost.
+# The AI-signal escalation path announces itself in the AI's own voice and
+# must not use this (see announce_transfer flag).
+TRANSFER_ANNOUNCE_TEXT = os.environ.get(
+    "TRANSFER_ANNOUNCE_TEXT",
+    "Please stay on the line while I connect you with our team to finish your order.",
+)
+# How long to let the announcement play before dialing the transfer.
+# speak_text returns as soon as Telnyx ACCEPTS the TTS job — the audio plays
+# asynchronously — so we pause for roughly the message's spoken length
+# (same pattern as the PL-26 transfer-failure apology below).
+TRANSFER_ANNOUNCE_DELAY_SECS = float(
+    os.environ.get("TRANSFER_ANNOUNCE_DELAY_SECS", "4.0")
+)
+
 # Telnyx-side ring timeout on /actions/transfer — destination has this long to
 # answer before Telnyx aborts the outbound dial and fires call.hangup on the
 # B-leg. Durable across our backend restarts.
@@ -730,7 +748,7 @@ class CallSession:
     # Schedule hangup — calls on_call_complete FIRST, then terminates
     # ------------------------------------------------------------------
 
-    async def _schedule_hangup(self, reason: str = "order_confirmed", _skip_guard: bool = False):
+    async def _schedule_hangup(self, reason: str = "order_confirmed", _skip_guard: bool = False, announce_transfer: bool = False):
         if not _skip_guard and self._hangup_scheduled:
             return
         self._hangup_scheduled = True
@@ -760,6 +778,34 @@ class CallSession:
 
             escalation_phone = self.config.get("escalation_phone_number") if self.config else None
             if escalation_phone:
+                if announce_transfer:
+                    # Duration-triggered escalation: the AI has NOT told the
+                    # customer a transfer is coming (unlike the AI-signal path,
+                    # which announces in the AI's own voice). Stop the media
+                    # stream FIRST so the AI's audio can't talk over the
+                    # announcement (also stops Gemini billing a few seconds
+                    # early), then play the Telnyx TTS announcement and give it
+                    # time to finish before dialing. All best-effort: a TTS or
+                    # stream-stop failure must never block the transfer.
+                    try:
+                        await telnyx_service.stop_streaming(self.call_sid)
+                        self._stream_stopped_for_announce = True
+                    except Exception as e:
+                        logger.warning(
+                            f"[{self.call_sid}] Pre-announce stream stop failed "
+                            f"(continuing): {e}"
+                        )
+                    try:
+                        spoke = await telnyx_service.speak_text(
+                            self.call_sid, TRANSFER_ANNOUNCE_TEXT
+                        )
+                        if spoke:
+                            await asyncio.sleep(TRANSFER_ANNOUNCE_DELAY_SECS)
+                    except Exception as e:
+                        logger.warning(
+                            f"[{self.call_sid}] Transfer announcement TTS failed "
+                            f"(continuing to transfer): {e}"
+                        )
                 transferred = await self._transfer_call(escalation_phone)
                 if transferred:
                     # Transfer accepted by Telnyx (200 OK). Telnyx is now
@@ -774,7 +820,8 @@ class CallSession:
                     # The pipeline is cancelled later in _handle_transfer_bridged
                     # (fired by the call.bridged webhook) or _handle_transfer_timeout.
                     self._transfer_in_progress = True
-                    await telnyx_service.stop_streaming(self.call_sid)
+                    if not getattr(self, "_stream_stopped_for_announce", False):
+                        await telnyx_service.stop_streaming(self.call_sid)
                     self._transfer_fallback_task = asyncio.create_task(
                         self._transfer_fallback_watchdog()
                     )
@@ -2615,24 +2662,17 @@ async def create_call_pipeline(
                                     logger.info(f"[{call_sid}] Call duration limit ({max_seconds}s) — escalating")
                                     session._escalated = True
                                     session.order.transition(OrderState.ESCALATED, "call duration limit")
-                                    await session._schedule_hangup(reason="escalation")
+                                    await session._schedule_hangup(reason="escalation", announce_transfer=True)
                                 return
 
                             # STARTER — warn at warn_at seconds, escalate at max_seconds
                             await asyncio.sleep(warn_at)
                             if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
-                                logger.info(f"[{call_sid}] STARTER call duration warning at {warn_at}s")
-                                # Inject system warning for AI to relay to customer
-                                if hasattr(session, '_gemini_llm') and session._gemini_llm:
-                                    try:
-                                        await session._gemini_llm.send_text_message(
-                                            "SYSTEM NOTICE: This call will be forwarded to our reception team in 30 seconds. "
-                                            "Please let the customer know by saying something like: "
-                                            "'Just so you know, I'll be connecting you with our team in about 30 seconds.' "
-                                            "Then continue helping with the order."
-                                        )
-                                    except Exception as _e:
-                                        logger.warning(f"[{call_sid}] Could not inject duration warning: {_e}")
+                                # Checkpoint only. The customer-facing 30-second warning was
+                                # removed: the transfer is now announced at transfer time via
+                                # Telnyx TTS (announce_transfer), which is less awkward than
+                                # interrupting the order mid-flow.
+                                logger.info(f"[{call_sid}] STARTER duration checkpoint at {warn_at}s")
 
                             await asyncio.sleep(max_seconds - warn_at)
                             if session.order.state not in (OrderState.CONFIRMED, OrderState.COMPLETED) and not session._escalated:
@@ -2646,12 +2686,12 @@ async def create_call_pipeline(
                                         logger.info(f"[{call_sid}] STARTER extended duration exceeded — escalating")
                                         session._escalated = True
                                         session.order.transition(OrderState.ESCALATED, "starter call duration limit extended")
-                                        await session._schedule_hangup(reason="escalation")
+                                        await session._schedule_hangup(reason="escalation", announce_transfer=True)
                                 else:
                                     logger.info(f"[{call_sid}] STARTER call duration limit ({max_seconds}s) — escalating to reception")
                                     session._escalated = True
                                     session.order.transition(OrderState.ESCALATED, "starter call duration limit")
-                                    await session._schedule_hangup(reason="escalation")
+                                    await session._schedule_hangup(reason="escalation", announce_transfer=True)
                         except asyncio.CancelledError:
                             pass
                     session._call_timer_task = asyncio.create_task(_call_duration_guard())
