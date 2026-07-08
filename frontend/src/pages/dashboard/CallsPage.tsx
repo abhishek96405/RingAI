@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -51,7 +52,13 @@ const CallsPage = () => {
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
+  // Seed the status filter from the URL (?status=ESCALATED) so the "Needs you"
+  // Review button on the dashboard lands here pre-filtered. Ignore unknown values.
+  const [searchParams] = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const s = searchParams.get("status");
+    return s && ["COMPLETED", "ESCALATED", "FAILED"].includes(s) ? s : "ALL";
+  });
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 

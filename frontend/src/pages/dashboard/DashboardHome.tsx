@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, AudioLines, CheckCircle2, DollarSign, Download, ShieldCheck, Sparkles, Star } from "lucide-react";
+import { AlertTriangle, AudioLines, CheckCircle2, DollarSign, Download, ShieldCheck, Star } from "lucide-react";
 import { activateRestaurant, exportAnalytics, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
 import { toast } from "sonner";
@@ -171,7 +171,6 @@ const DashboardHome = () => {
         <div className="relative">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <p className="eyebrow">Your daily briefing · {dateLabel}</p>
-            <span className="ai-tag"><Sparkles className="w-3 h-3" />AI summary</span>
           </div>
           <p className="font-display font-semibold mt-5 max-w-2xl leading-snug tracking-tight text-xl lg:text-2xl">{briefing}</p>
 
@@ -200,8 +199,7 @@ const DashboardHome = () => {
                 {WAVE_DELAYS.map((delay, i) => <span key={i} style={{ animationDelay: `-${delay}s` }} />)}
               </div>
               <div className="text-right">
-                <span className="text-xs font-bold b-coral px-2 py-0.5 rounded-full inline-flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-coral animate-pulse" />LIVE</span>
-                <p className="text-xs text-ink-soft mt-1">Answering 24/7</p>
+                <p className="text-xs text-ink-soft">Answering 24/7</p>
               </div>
             </div>
           </div>
@@ -218,7 +216,7 @@ const DashboardHome = () => {
               <p className="text-sm font-semibold">{escalated} call{escalated === 1 ? "" : "s"} needed a human this {periodWord}</p>
               <p className="text-xs text-ink-soft mt-0.5">Review the transcripts to see what those callers needed.</p>
             </div>
-            <Link to="/dashboard/calls" className="text-xs font-semibold text-coral hover:text-coral-deep shrink-0">Review →</Link>
+            <Link to="/dashboard/calls?status=ESCALATED" className="text-xs font-semibold text-coral hover:text-coral-deep shrink-0">Review →</Link>
           </div>
         ) : (
           <div className="dash-card p-5 flex items-center gap-3.5">
