@@ -121,17 +121,30 @@ const CallsPage = () => {
   const exportToCSV = async () => {
     setExporting(true);
     try {
-      const params: Record<string, unknown> = {
-        page: 1,
-        limit: 1000,
+      // Fetch every matching call across all pages. The backend caps `limit` at
+      // 100, so page through at that size instead of requesting one huge page
+      // (limit=1000 fails validation with a 422). MAX_PAGES is a stopgap safety
+      // cap (50 × 100 = 5k calls) mirroring the OrdersPage loader.
+      const MAX_PAGES = 50;
+      const baseParams: Record<string, unknown> = {
+        limit: 100,
         status: statusFilter !== "ALL" ? statusFilter : undefined,
         search: search || undefined,
       };
-      if (dateFrom) params.date_from = dateFrom;
-      if (dateTo) params.date_to = dateTo;
+      if (dateFrom) baseParams.date_from = dateFrom;
+      if (dateTo) baseParams.date_to = dateTo;
 
-      const res = await getCalls(null, params);
-      const allCalls = res.data.calls || [];
+      const first = await getCalls(null, { ...baseParams, page: 1 });
+      const allCalls: Call[] = [...(first.data.calls || [])];
+      const pages = Math.min(first.data.pages || 1, MAX_PAGES);
+      if (pages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: pages - 1 }, (_, i) =>
+            getCalls(null, { ...baseParams, page: i + 2 })
+          )
+        );
+        rest.forEach((r) => allCalls.push(...(r.data.calls || [])));
+      }
 
       if (allCalls.length === 0) {
         toast.error("No calls to export");
