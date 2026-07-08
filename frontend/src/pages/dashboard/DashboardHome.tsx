@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, AudioLines, CheckCircle2, DollarSign, Download, ShieldCheck, Star } from "lucide-react";
+import { AlertTriangle, AudioLines, CheckCircle2, Download } from "lucide-react";
 import { activateRestaurant, exportAnalytics, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
 import { toast } from "sonner";
@@ -26,20 +26,6 @@ function buildBriefing(calls: number, escalated: number, busiest: string | null,
     ? `${escalated} ${escalated === 1 ? "call needed" : "calls needed"} a human hand-off.`
     : "Every one was handled without a hand-off.";
   return s;
-}
-
-function sparkPoints(values: number[], w = 100, h = 26, pad = 3) {
-  if (!values || values.length < 2) return "";
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const span = max - min || 1;
-  return values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = h - pad - ((v - min) / span) * (h - 2 * pad);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
 }
 
 interface ChartTooltipProps {
@@ -161,7 +147,6 @@ const DashboardHome = () => {
 
   const briefing = buildBriefing(calls, escalated, busiest, periodWord);
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-  const revSpark = sparkPoints(chartData.map((x) => Number(x.revenue) || 0));
 
   return (
     <div className="dash space-y-8">
@@ -198,9 +183,6 @@ const DashboardHome = () => {
               <div className="wf w-24">
                 {WAVE_DELAYS.map((delay, i) => <span key={i} style={{ animationDelay: `-${delay}s` }} />)}
               </div>
-              <div className="text-right">
-                <p className="text-xs text-ink-soft">Answering 24/7</p>
-              </div>
             </div>
           </div>
         </div>
@@ -227,37 +209,6 @@ const DashboardHome = () => {
             </div>
           </div>
         )}
-      </section>
-
-      {/* AT A GLANCE */}
-      <section>
-        <p className="eyebrow mb-4">At a glance · this {periodWord}</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          <div className="dash-card card-hover p-5">
-            <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#4FB089] to-[#3E9E78]" style={{ boxShadow: "0 10px 20px -8px rgba(62,158,120,.5)" }}><DollarSign className="w-[18px] h-[18px]" /></span>
-            <p className="font-display font-extrabold text-3xl mt-4">${revenue.toLocaleString()}</p>
-            <p className="text-sm text-ink-soft">Revenue captured</p>
-            {revSpark && <svg className="mt-3 w-full" height="26" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points={revSpark} fill="none" stroke="#3E9E78" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-          </div>
-          <div className="dash-card card-hover p-5">
-            <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F6BE5C] to-[#F2A93B]" style={{ boxShadow: "0 10px 20px -8px rgba(242,169,59,.5)" }}><Star className="w-[18px] h-[18px]" /></span>
-            <p className="font-display font-extrabold text-3xl mt-4">{quality}<span className="text-lg text-ink-soft font-bold">/100</span></p>
-            <p className="text-sm text-ink-soft">Avg quality score</p>
-            <div className="track mt-4"><div className="fill" style={{ width: `${Math.min(quality, 100)}%`, background: "linear-gradient(90deg,#F6BE5C,#F2A93B)" }} /></div>
-          </div>
-          <div className="dash-card card-hover p-5">
-            <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#3A2C22] to-[#1E1813]" style={{ boxShadow: "0 10px 20px -8px rgba(30,24,19,.45)" }}><ShieldCheck className="w-[18px] h-[18px]" /></span>
-            <p className="font-display font-extrabold text-3xl mt-4">{containment}<span className="text-lg text-ink-soft font-bold">%</span></p>
-            <p className="text-sm text-ink-soft">Handled by AI</p>
-            <div className="track mt-4"><div className="fill" style={{ width: `${Math.min(containment, 100)}%` }} /></div>
-          </div>
-          <div className="dash-card card-hover p-5">
-            <span className={`h-10 w-10 rounded-2xl flex items-center justify-center ${escalated > 0 ? "b-honey" : "b-muted"}`}><AlertTriangle className="w-[18px] h-[18px]" /></span>
-            <p className="font-display font-extrabold text-3xl mt-4">{escalated}</p>
-            <p className="text-sm text-ink-soft">Escalated to a human</p>
-            <p className="text-xs text-ink-soft/80 mt-3">{escalated > 0 ? "Tap a call to read the transcript" : "No hand-offs needed"}</p>
-          </div>
-        </div>
       </section>
 
       {/* CHART + TOP ITEMS */}
