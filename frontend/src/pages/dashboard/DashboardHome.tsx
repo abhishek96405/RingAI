@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle, AudioLines, CheckCircle2, Download } from "lucide-react";
@@ -58,6 +58,11 @@ const DashboardHome = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  // Tracks whether we've ever loaded data. fetchData is a useCallback([]) so it
+  // can't read the `data` state without going stale — the ref lets the catch
+  // block tell an initial-load failure (worth alerting) from a transient
+  // background-poll failure (data already on screen; self-heals next tick).
+  const hasLoadedRef = useRef(false);
   const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
   const [exporting, setExporting] = useState(false);
   const [exportStart, setExportStart] = useState(() => {
@@ -99,9 +104,13 @@ const DashboardHome = () => {
       if (!restaurantId) { setData(null); return; }
       const res = await getAnalyticsSummary(restaurantId);
       setData(res.data);
+      hasLoadedRef.current = true;
     } catch (err) {
       console.error("Dashboard fetch error", err);
-      toast.error("Failed to load dashboard data");
+      // Only alarm the user if there's nothing on screen yet. A failed
+      // background poll (30s interval / tab-focus refresh) is transient and
+      // recovers on the next tick, so it shouldn't raise a toast.
+      if (!hasLoadedRef.current) toast.error("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
