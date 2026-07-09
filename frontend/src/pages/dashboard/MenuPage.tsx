@@ -385,31 +385,36 @@ function ModifierLibrary({ restaurantId, items, onItemsChanged }: { restaurantId
                         placeholder="Search menu items…"
                         className="h-8 text-sm"
                       />
-                      <ScrollArea className="max-h-48 pr-2">
-                        <div className="space-y-1.5">
-                          {items
-                            .filter((it) => !itemSearch.trim() || (it.name || "").toLowerCase().includes(itemSearch.trim().toLowerCase()))
-                            .map((it) => {
-                              const checked = (it.modifier_group_assignments || []).some((a) => a.modifier_group_id === editingGroup.id);
-                              return (
-                                <div
-                                  key={it.id}
-                                  className={`flex items-center justify-between gap-2 p-2 rounded-lg border ${checked ? "border-coral/50 bg-coral/5" : "border-line"}`}
-                                >
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-medium truncate">{it.name}</p>
-                                    <p className="text-xs text-ink-soft truncate">{it.category}</p>
-                                  </div>
-                                  <Switch
-                                    checked={checked}
-                                    disabled={busyItemId === it.id}
-                                    onCheckedChange={() => toggleItemAssignment(it, editingGroup)}
-                                  />
+                      <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1 -mr-1">
+                        {[...items]
+                          .filter((it) => !itemSearch.trim() || (it.name || "").toLowerCase().includes(itemSearch.trim().toLowerCase()))
+                          .sort((a, b) => {
+                            // Assigned items float to the top so the "used by" ones are visible first.
+                            const ua = (a.modifier_group_assignments || []).some((x) => x.modifier_group_id === editingGroup.id) ? 0 : 1;
+                            const ub = (b.modifier_group_assignments || []).some((x) => x.modifier_group_id === editingGroup.id) ? 0 : 1;
+                            return ua - ub || (a.name || "").localeCompare(b.name || "");
+                          })
+                          .map((it) => {
+                            const checked = (it.modifier_group_assignments || []).some((a) => a.modifier_group_id === editingGroup.id);
+                            return (
+                              <div
+                                key={it.id}
+                                className={`flex items-center justify-between gap-3 p-2 rounded-lg border ${checked ? "border-coral/50 bg-coral/5" : "border-line"}`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">{it.name}</p>
+                                  <p className="text-xs text-ink-soft truncate">{it.category}</p>
                                 </div>
-                              );
-                            })}
-                        </div>
-                      </ScrollArea>
+                                <Switch
+                                  className="shrink-0"
+                                  checked={checked}
+                                  disabled={busyItemId === it.id}
+                                  onCheckedChange={() => toggleItemAssignment(it, editingGroup)}
+                                />
+                              </div>
+                            );
+                          })}
+                      </div>
                     </>
                   )}
                 </div>
