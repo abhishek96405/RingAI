@@ -260,7 +260,7 @@ function ModifierLibrary({ restaurantId, items, onItemsChanged }: { restaurantId
           <DialogHeader>
             <DialogTitle>{editingGroup ? "Edit Modifier Group" : "New Modifier Group"}</DialogTitle>
           </DialogHeader>
-          <ScrollArea className="max-h-[60vh] pr-2">
+          <div className="max-h-[60vh] overflow-y-auto pr-1">
             <div className="space-y-4 py-1">
               {/* Name */}
               <div className="space-y-1.5">
@@ -385,7 +385,7 @@ function ModifierLibrary({ restaurantId, items, onItemsChanged }: { restaurantId
                         placeholder="Search menu items…"
                         className="h-8 text-sm"
                       />
-                      <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1 -mr-1">
+                      <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
                         {[...items]
                           .filter((it) => !itemSearch.trim() || (it.name || "").toLowerCase().includes(itemSearch.trim().toLowerCase()))
                           .sort((a, b) => {
@@ -424,7 +424,7 @@ function ModifierLibrary({ restaurantId, items, onItemsChanged }: { restaurantId
                 </p>
               )}
             </div>
-          </ScrollArea>
+          </div>
           <DialogFooter className="pt-4 border-t">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white">
