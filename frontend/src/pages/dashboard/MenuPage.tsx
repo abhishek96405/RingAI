@@ -37,7 +37,7 @@ const allergenOptions = ["gluten", "dairy", "nuts", "soy", "eggs", "shellfish"];
 
 // ── Modifier Library Tab ───────────────────────────────────────────────────
 
-function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
+function ModifierLibrary({ restaurantId, items, onItemsChanged }: { restaurantId: string; items: MenuItem[]; onItemsChanged: () => void | Promise<void> }) {
   const [groups, setGroups] = useState<ModifierGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingGroup, setEditingGroup] = useState<ModifierGroup | null>(null);
@@ -55,6 +55,9 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
   const [newOptionName, setNewOptionName] = useState("");
   const [newOptionPrice, setNewOptionPrice] = useState("");
   const [newOptionAliases, setNewOptionAliases] = useState("");
+  // Item-assignment (reverse mapping) state for the edit dialog.
+  const [itemSearch, setItemSearch] = useState("");
+  const [busyItemId, setBusyItemId] = useState<string | null>(null);
 
   const fetchGroups = useCallback(async () => {
     setLoading(true);
@@ -76,6 +79,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
     setNewOptionName("");
     setNewOptionPrice("");
     setNewOptionAliases("");
+    setItemSearch("");
     setDialogOpen(true);
   };
 
@@ -85,6 +89,7 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
     setNewOptionName("");
     setNewOptionPrice("");
     setNewOptionAliases("");
+    setItemSearch("");
     setDialogOpen(true);
   };
 
@@ -149,6 +154,31 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
     }
   };
 
+  // Reverse mapping: which menu items currently carry this group. Derived by
+  // scanning each item's assignments — no separate index to keep in sync.
+  const itemsUsingGroup = (groupId?: string) =>
+    items.filter((it) => (it.modifier_group_assignments || []).some((a) => a.modifier_group_id === groupId));
+
+  // Attach/detach this group to a single item, preserving the item's other
+  // assignments. Reuses the per-item assignments endpoint the Items tab uses.
+  const toggleItemAssignment = async (item: MenuItem, group: ModifierGroup) => {
+    if (!item.id || !group.id) return;
+    const current = item.modifier_group_assignments || [];
+    const has = current.some((a) => a.modifier_group_id === group.id);
+    const next = has
+      ? current.filter((a) => a.modifier_group_id !== group.id)
+      : [...current, { modifier_group_id: group.id, display_order: current.length }];
+    setBusyItemId(item.id);
+    try {
+      await updateItemModifierAssignments(item.id, next);
+      await onItemsChanged();
+    } catch {
+      toast.error("Couldn't update that item");
+    } finally {
+      setBusyItemId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -205,6 +235,20 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                   </span>
                 ))}
               </div>
+              {(() => {
+                const used = itemsUsingGroup(group.id).length;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => openEdit(group)}
+                    className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-coral hover:text-coral-deep"
+                    title="Manage which menu items use this group"
+                  >
+                    <UtensilsCrossed className="w-3 h-3" />
+                    {used === 0 ? "Not used yet — assign items" : `Used by ${used} item${used === 1 ? "" : "s"}`}
+                  </button>
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -322,6 +366,58 @@ function ModifierLibrary({ restaurantId }: { restaurantId: string }) {
                   </Button>
                 </div>
               </div>
+
+              {/* Menu items using this group (reverse mapping) */}
+              {editingGroup ? (
+                <div className="space-y-2 pt-3 border-t">
+                  <div className="flex items-center justify-between">
+                    <Label>Menu items using this group</Label>
+                    <span className="text-xs text-ink-soft">{itemsUsingGroup(editingGroup.id).length} assigned</span>
+                  </div>
+                  <p className="text-xs text-ink-soft">Toggle an item to add or remove this modifier. Changes save instantly.</p>
+                  {items.length === 0 ? (
+                    <p className="text-xs text-ink-soft py-2">No menu items yet — add items in the Items tab first.</p>
+                  ) : (
+                    <>
+                      <Input
+                        value={itemSearch}
+                        onChange={(e) => setItemSearch(e.target.value)}
+                        placeholder="Search menu items…"
+                        className="h-8 text-sm"
+                      />
+                      <ScrollArea className="max-h-48 pr-2">
+                        <div className="space-y-1.5">
+                          {items
+                            .filter((it) => !itemSearch.trim() || (it.name || "").toLowerCase().includes(itemSearch.trim().toLowerCase()))
+                            .map((it) => {
+                              const checked = (it.modifier_group_assignments || []).some((a) => a.modifier_group_id === editingGroup.id);
+                              return (
+                                <div
+                                  key={it.id}
+                                  className={`flex items-center justify-between gap-2 p-2 rounded-lg border ${checked ? "border-coral/50 bg-coral/5" : "border-line"}`}
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium truncate">{it.name}</p>
+                                    <p className="text-xs text-ink-soft truncate">{it.category}</p>
+                                  </div>
+                                  <Switch
+                                    checked={checked}
+                                    disabled={busyItemId === it.id}
+                                    onCheckedChange={() => toggleItemAssignment(it, editingGroup)}
+                                  />
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </ScrollArea>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-ink-soft pt-3 border-t">
+                  Tip: save this group, then reopen it to choose which menu items use it.
+                </p>
+              )}
             </div>
           </ScrollArea>
           <DialogFooter className="pt-4 border-t">
@@ -698,7 +794,7 @@ const MenuPage = () => {
         </TabsContent>
 
         <TabsContent value="modifiers" className="mt-4">
-          <ModifierLibrary restaurantId={restaurantId} />
+          <ModifierLibrary restaurantId={restaurantId} items={items} onItemsChanged={fetchItems} />
         </TabsContent>
       </Tabs>
 
