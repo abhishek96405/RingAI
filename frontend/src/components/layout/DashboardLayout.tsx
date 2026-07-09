@@ -192,7 +192,7 @@ const DashboardLayout = () => {
               key={item.path}
               to={item.path}
               onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive(item.path) ? "bg-coral text-white shadow-[0_12px_24px_-10px_rgba(232,80,46,0.6)]" : "text-ink-soft hover:text-ink hover:bg-coral/5"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive(item.path) ? "bg-coral text-white shadow-[0_12px_24px_-10px_rgba(232,122,94,0.5)]" : "text-ink-soft hover:text-ink hover:bg-coral/5"}`}
             >
               <item.icon className="w-5 h-5 shrink-0" />
               {!collapsed && <span>{item.label}</span>}

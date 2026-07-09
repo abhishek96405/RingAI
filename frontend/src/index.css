@@ -21,6 +21,11 @@
     --primary: 11 80% 55%;
     --primary-foreground: 0 0% 100%;
 
+    /* Brand coral, consumed by the Tailwind `coral` token. Kept at the bright
+       default here (landing/marketing); the dashboard softens it via a
+       scoped override on .dash-surface. */
+    --coral: 11 80% 55%;
+
     --secondary: 220 14% 96%;
     --secondary-foreground: 222 47% 11%;
 
@@ -511,6 +516,14 @@
    Does not affect the landing or auth pages.
    ============================================================ */
 .dash-surface {
+  /* Softer, less-bright coral for the logged-in app only. Overrides the brand
+     tokens for everything inside the dashboard (sidebar active tab, toggles,
+     charts, focus rings) without touching the landing/marketing pages. */
+  --coral: 12 75% 64%;
+  --primary: 12 75% 64%;
+  --ring: 12 75% 64%;
+  --sidebar-primary: 12 75% 64%;
+  --sidebar-ring: 12 75% 64%;
   position: relative;
   background-color: #FBF7F2;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='p' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.01' numOctaves='5' seed='4' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' lighting-color='%23ffffff' surfaceScale='4.5' diffuseConstant='1.5'%3E%3CfeDistantLight azimuth='235' elevation='38'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='600' height='600' filter='url(%23p)'/%3E%3C/svg%3E");
@@ -519,7 +532,7 @@
 }
 .dash-surface::before {
   content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  background: radial-gradient(1100px 560px at 88% -8%, rgba(232,80,46,.12), transparent 60%),
+  background: radial-gradient(1100px 560px at 88% -8%, hsl(var(--coral) / .12), transparent 60%),
               radial-gradient(900px 500px at 0% 100%, rgba(242,169,59,.08), transparent 55%);
 }
 .dash-surface > * { position: relative; z-index: 1; }
@@ -533,18 +546,18 @@
 .dash .dash-card { background: #FFFDF9; border: 1px solid #EBE2D8; border-radius: 1.5rem; box-shadow: 0 14px 38px -26px rgba(60,30,15,.26); }
 .dash .card-hover { transition: transform .2s ease, box-shadow .2s ease; }
 .dash .card-hover:hover { transform: translateY(-2px); box-shadow: 0 26px 56px -30px rgba(60,30,15,.34); }
-.dash .icon-tile { box-shadow: 0 10px 20px -8px rgba(232,80,46,.45); }
+.dash .icon-tile { box-shadow: 0 10px 20px -8px hsl(var(--coral) / .45); }
 .dash .eyebrow { display: inline-flex; align-items: center; gap: .6rem; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .16em; color: #6F6259; }
-.dash .eyebrow::before { content: ""; width: 26px; height: 2px; background: #E8502E; }
-.dash .ai-tag { display: inline-flex; align-items: center; gap: .35rem; font-size: 11px; font-weight: 800; letter-spacing: .03em; color: #c63f1e; background: rgba(232,80,46,.10); padding: 4px 11px; border-radius: 999px; }
+.dash .eyebrow::before { content: ""; width: 26px; height: 2px; background: hsl(var(--coral)); }
+.dash .ai-tag { display: inline-flex; align-items: center; gap: .35rem; font-size: 11px; font-weight: 800; letter-spacing: .03em; color: #c63f1e; background: hsl(var(--coral) / .10); padding: 4px 11px; border-radius: 999px; }
 .dash .chip { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 .dash .b-success { background: rgba(62,158,120,.12); color: #2f7d5e; }
 .dash .b-honey { background: rgba(242,169,59,.18); color: #a26d0d; }
-.dash .b-coral { background: rgba(232,80,46,.12); color: #c63f1e; }
+.dash .b-coral { background: hsl(var(--coral) / .12); color: #c63f1e; }
 .dash .b-muted { background: rgba(30,24,19,.06); color: #6F6259; }
 .dash .wf { display: flex; align-items: center; gap: 3px; height: 34px; }
-.dash .wf span { flex: 1; min-width: 2px; max-width: 4px; border-radius: 99px; background: #E8502E; transform: scaleY(.25); animation: dash-wave 1.3s ease-in-out infinite; }
+.dash .wf span { flex: 1; min-width: 2px; max-width: 4px; border-radius: 99px; background: hsl(var(--coral)); transform: scaleY(.25); animation: dash-wave 1.3s ease-in-out infinite; }
 @keyframes dash-wave { 0%, 100% { transform: scaleY(.2); } 50% { transform: scaleY(1); } }
 .dash .track { height: 7px; border-radius: 99px; background: #F3E7DC; overflow: hidden; }
-.dash .fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg,#F2763E,#E8502E); }
+.dash .fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, hsl(var(--coral) / .75), hsl(var(--coral))); }
 @media (prefers-reduced-motion: reduce) { .dash .wf span { animation: none; } }
