@@ -596,7 +596,7 @@ const MenuPage = () => {
           {!loading && menuStats.total > 0 && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="dash-card card-hover p-5">
-                <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F2946E] to-[#E87A5E] icon-tile">
+                <span className="h-10 w-10 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-[#F4AA8D] to-[#EE9377] icon-tile">
                   <UtensilsCrossed className="w-[18px] h-[18px]" />
                 </span>
                 <p className="font-display font-extrabold text-3xl mt-4">{menuStats.total}</p>

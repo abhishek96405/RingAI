@@ -519,11 +519,11 @@
   /* Softer, less-bright coral for the logged-in app only. Overrides the brand
      tokens for everything inside the dashboard (sidebar active tab, toggles,
      charts, focus rings) without touching the landing/marketing pages. */
-  --coral: 12 75% 64%;
-  --primary: 12 75% 64%;
-  --ring: 12 75% 64%;
-  --sidebar-primary: 12 75% 64%;
-  --sidebar-ring: 12 75% 64%;
+  --coral: 14 78% 70%;
+  --primary: 14 78% 70%;
+  --ring: 14 78% 70%;
+  --sidebar-primary: 14 78% 70%;
+  --sidebar-ring: 14 78% 70%;
   position: relative;
   background-color: #FBF7F2;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='p' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.01' numOctaves='5' seed='4' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' lighting-color='%23ffffff' surfaceScale='4.5' diffuseConstant='1.5'%3E%3CfeDistantLight azimuth='235' elevation='38'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='600' height='600' filter='url(%23p)'/%3E%3C/svg%3E");

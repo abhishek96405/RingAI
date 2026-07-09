@@ -224,7 +224,7 @@ const BillingPage = () => {
           {plans.map((plan) => (
             <div
               key={plan.name}
-              className={`dash-card p-6 relative ${plan.popular ? "ring-2 ring-coral/40 shadow-[0_24px_60px_-32px_rgba(232,122,94,0.45)]" : ""}`}
+              className={`dash-card p-6 relative ${plan.popular ? "ring-2 ring-coral/40 shadow-[0_24px_60px_-32px_rgba(238,147,119,0.45)]" : ""}`}
               data-testid={`plan-card-${plan.name.toLowerCase()}`}
             >
               {plan.popular && (
@@ -281,7 +281,7 @@ const BillingPage = () => {
 
       {/* Trial Status */}
       {billingStatus === "trialing" && trialEndsAt && (
-        <div className="dash-card p-6 border-coral/20" style={{ background: "rgba(232,122,94,0.04)" }}>
+        <div className="dash-card p-6 border-coral/20" style={{ background: "rgba(238,147,119,0.04)" }}>
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h3 className="font-display font-bold text-lg flex items-center gap-2">
