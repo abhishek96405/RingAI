@@ -173,7 +173,7 @@ const DashboardHome = () => {
               <span className="relative font-display font-extrabold leading-[0.9]" style={{ fontSize: "clamp(3rem,6.5vw,4.75rem)" }}>
                 {calls}
                 <svg className="absolute left-0 -bottom-2 w-full" style={{ height: 12, overflow: "visible" }} viewBox="0 0 200 12" preserveAspectRatio="none" fill="none">
-                  <path d="M3,8 C56,2 150,2 197,7" stroke="#EE9377" strokeWidth={3.5} strokeLinecap="round" fill="none" vectorEffect="non-scaling-stroke" />
+                  <path d="M3,8 C56,2 150,2 197,7" stroke="#F1C4B0" strokeWidth={3.5} strokeLinecap="round" fill="none" vectorEffect="non-scaling-stroke" />
                 </svg>
               </span>
               <div className="mb-1.5">
@@ -247,7 +247,7 @@ const DashboardHome = () => {
               <YAxis yAxisId="left" tick={{ fontSize: 12, fill: "#6F6259" }} stroke="#EBE2D8" />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12, fill: "#6F6259" }} stroke="#EBE2D8" />
               <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(238,147,119,0.06)" }} />
-              <Bar yAxisId="left" dataKey="calls" fill="#EE9377" radius={[6, 6, 0, 0]} name="calls" />
+              <Bar yAxisId="left" dataKey="calls" fill="#F8D4C9" radius={[6, 6, 0, 0]} name="calls" />
               <Bar yAxisId="right" dataKey="revenue" fill="#3E9E78" radius={[6, 6, 0, 0]} name="revenue" />
             </BarChart>
           </ResponsiveContainer>
