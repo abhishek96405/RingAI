@@ -381,6 +381,7 @@ from reservation_service import (
     ReservationStatus,
     create_reservation_doc,
     get_reservation_settings,
+    ai_reservations_enabled,
     get_reservation_slots,
     check_reservation_availability,
     extract_reservation_from_transcript,
@@ -585,6 +586,7 @@ class RestaurantBase(BaseModel):
     delivery_eta_offset_minutes: int = 15
     dine_in_enabled: bool = True
     reservations_enabled: bool = False
+    ai_accepts_reservations: bool = True  # whether the AI takes reservations on calls
     catering_enabled: bool = False
     avg_prep_time_minutes: int = 20
     reservation_party_limit: int = 8
@@ -644,6 +646,7 @@ class RestaurantUpdate(BaseModel):
     delivery_eta_offset_minutes: Optional[int] = None
     dine_in_enabled: Optional[bool] = None
     reservations_enabled: Optional[bool] = None
+    ai_accepts_reservations: Optional[bool] = None
     catering_enabled: Optional[bool] = None
     avg_prep_time_minutes: Optional[int] = None
     reservation_party_limit: Optional[int] = None
@@ -1478,6 +1481,7 @@ class _FulfillmentRestaurantFields(BaseModel):
     pickup_enabled: Optional[bool] = None
     delivery_enabled: Optional[bool] = None
     reservations_enabled: Optional[bool] = None
+    ai_accepts_reservations: Optional[bool] = None
     offers_delivery: Optional[bool] = None
     offers_reservations: Optional[bool] = None
     avg_prep_time_minutes: Optional[int] = None
@@ -3606,8 +3610,9 @@ async def simulate_call(restaurant_id: str = Query(...), user: Dict[str, Any] = 
     config = await get_config_collection(business_type).find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     system_prompt = None
     if config and is_gemini_available():
-        # Get reservation settings if enabled
-        reservations_enabled = restaurant.get("reservations_enabled", config.get("reservations_enabled", False))
+        # AI reservations require both the master toggle and the "AI takes
+        # reservations" opt-in; manual dashboard bookings are gated separately.
+        reservations_enabled = ai_reservations_enabled(restaurant, config)
         reservation_settings = None
         available_slots = None
         
@@ -4502,7 +4507,7 @@ async def _prefetch_call_session_data(
 
     from gemini_service import get_system_prompt
 
-    reservations_enabled = restaurant.get("reservations_enabled", config.get("reservations_enabled", False) if config else False)
+    reservations_enabled = ai_reservations_enabled(restaurant, config or {})
     reservation_settings = None
     available_reservation_slots = None
 

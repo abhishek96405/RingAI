@@ -580,6 +580,7 @@ async def test_handle_reservation_confirmed_extracts_and_dispatches(
     fake_module = types.ModuleType("reservation_service")
     fake_module.extract_reservation_from_transcript = fake_extract
     fake_module.dispatch_reservation = fake_dispatch
+    fake_module.ai_reservations_enabled = lambda restaurant, config: True
     monkeypatch.setitem(sys.modules, "reservation_service", fake_module)
 
     on_complete = AsyncMock()
@@ -629,6 +630,7 @@ async def test_handle_reservation_confirmed_no_extraction_skips_dispatch(
     fake_module = types.ModuleType("reservation_service")
     fake_module.extract_reservation_from_transcript = fake_extract
     fake_module.dispatch_reservation = fake_dispatch
+    fake_module.ai_reservations_enabled = lambda restaurant, config: True
     monkeypatch.setitem(sys.modules, "reservation_service", fake_module)
 
     # Reservations enabled + a non-empty transcript so the shared
@@ -667,6 +669,7 @@ async def test_handle_reservation_confirmed_swallows_exceptions(
     fake_module = types.ModuleType("reservation_service")
     fake_module.extract_reservation_from_transcript = boom
     fake_module.dispatch_reservation = AsyncMock()
+    fake_module.ai_reservations_enabled = lambda restaurant, config: True
     monkeypatch.setitem(sys.modules, "reservation_service", fake_module)
 
     on_complete = AsyncMock()
@@ -717,6 +720,7 @@ def _stub_reservation_module(monkeypatch, *, dispatch_results):
     fake_module.extract_reservation_from_transcript = fake_extract
     fake_module.dispatch_reservation = fake_dispatch
     fake_module.send_reservation_unavailable_sms = fake_unavailable_sms
+    fake_module.ai_reservations_enabled = lambda restaurant, config: True
     monkeypatch.setitem(sys.modules, "reservation_service", fake_module)
     return sms_calls
 

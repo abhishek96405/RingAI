@@ -73,6 +73,7 @@ def create_reservation_doc(
 
 DEFAULT_RESERVATION_SETTINGS = {
     "reservations_enabled": True,
+    "ai_accepts_reservations": True,  # whether the AI takes reservations on calls
     "max_party_size": 8,
     "min_party_size": 1,
     "advance_booking_days": 30,  # How far ahead can book
@@ -106,6 +107,11 @@ def get_reservation_settings(config: Dict[str, Any], restaurant: Dict[str, Any] 
         # in dispatch_reservation couldn't see a restaurant-level "off".
         if "reservations_enabled" in restaurant:
             settings["reservations_enabled"] = restaurant["reservations_enabled"]
+        # Independent sub-toggle: reservations can be on (manual bookings work)
+        # while the AI is told not to take them on calls. Defaults to True so
+        # existing customers keep taking AI reservations.
+        if "ai_accepts_reservations" in restaurant:
+            settings["ai_accepts_reservations"] = restaurant["ai_accepts_reservations"]
         if restaurant.get("reservation_slot_duration"):
             settings["slot_interval_minutes"] = restaurant["reservation_slot_duration"]
         if restaurant.get("reservation_max_per_slot"):
@@ -115,6 +121,21 @@ def get_reservation_settings(config: Dict[str, Any], restaurant: Dict[str, Any] 
         if restaurant.get("reservation_party_limit"):
             settings["max_party_size"] = restaurant["reservation_party_limit"]
     return settings
+
+
+def ai_reservations_enabled(restaurant: Dict[str, Any], config: Dict[str, Any] = None) -> bool:
+    """Whether the AI should take reservations on calls.
+
+    True only when reservations are enabled for the restaurant AND the owner
+    wants the AI to handle them (``ai_accepts_reservations``, default True so
+    existing customers keep their current behavior). Manual dashboard bookings
+    are gated on ``reservations_enabled`` alone, so a restaurant can keep taking
+    manual reservations while turning the AI's reservation-taking off.
+    """
+    config = config or {}
+    master = restaurant.get("reservations_enabled", config.get("reservations_enabled", False))
+    ai_ok = restaurant.get("ai_accepts_reservations", config.get("ai_accepts_reservations", True))
+    return bool(master and ai_ok)
 
 
 # ============================================================
@@ -523,6 +544,13 @@ async def dispatch_reservation(
             f"dispatch_reservation blocked — reservations disabled for {restaurant_id}"
         )
         return {"success": False, "reason": "reservations_disabled"}
+    # AI-call bookings additionally require the "AI takes reservations" opt-in.
+    # Manual dashboard bookings don't go through dispatch, so they're unaffected.
+    if not settings.get("ai_accepts_reservations", True):
+        logger.info(
+            f"dispatch_reservation blocked — AI reservations disabled for {restaurant_id}"
+        )
+        return {"success": False, "reason": "ai_reservations_disabled"}
 
     # Normalize the requested time to 24h "HH:MM" so the availability re-check
     # below matches the slot grid, and so the reservation is STORED in 24h for
@@ -722,7 +750,7 @@ def build_reservation_prompt_block(
     """
     Build the reservation-specific block for the AI system prompt.
     """
-    if not settings.get("reservations_enabled", False):
+    if not (settings.get("reservations_enabled", False) and settings.get("ai_accepts_reservations", True)):
         return ""
     
     max_party = settings.get("max_party_size", 8)

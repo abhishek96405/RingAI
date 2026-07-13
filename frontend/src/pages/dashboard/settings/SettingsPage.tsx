@@ -183,6 +183,9 @@ const SettingsPage = () => {
         restaurantFields.reservation_slot_duration = Number(restaurant?.reservation_slot_duration || 30);
         restaurantFields.reservation_max_per_slot = Number(restaurant?.reservation_max_per_slot || 5);
         restaurantFields.reservation_advance_booking_days = Number(restaurant?.reservation_advance_booking_days || 7);
+        // Independent sub-toggle: whether the AI takes reservations on calls.
+        // Defaults to on (true unless explicitly turned off).
+        restaurantFields.ai_accepts_reservations = restaurant?.ai_accepts_reservations !== false;
       }
       const configFields: Record<string, unknown> = {
         delivery_enabled: restaurant?.delivery_enabled,

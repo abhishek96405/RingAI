@@ -666,11 +666,10 @@ class CallSession:
             return
         if self._reservation_booked or not self.transcript:
             return
-        # Same toggle build_system_prompt uses; absent → off (opt-in/plan-gated).
-        _res_enabled = self.restaurant.get(
-            "reservations_enabled",
-            (self.config or {}).get("reservations_enabled", False),
-        )
+        # AI-call reservations require the master toggle AND the "AI takes
+        # reservations" opt-in. Manual dashboard bookings are gated separately.
+        from reservation_service import ai_reservations_enabled
+        _res_enabled = ai_reservations_enabled(self.restaurant, self.config)
         if not _res_enabled:
             return
         async with self._reservation_lock:
@@ -2537,12 +2536,13 @@ async def create_call_pipeline(
                             session._detected_order_type = "pickup"
                             logger.info(f"[{call_sid}] Order type locked: pickup (from customer)")
                         elif any(w in _tl for w in ["reservation", "reserve", "book a table", "table for"]):
-                            # Same signal build_system_prompt derives reservations_enabled
-                            # from (restaurant doc first, then config). When off, a table
-                            # mention must NOT engage reservation logic.
-                            _reservations_enabled = session.restaurant.get(
-                                "reservations_enabled",
-                                (session.config or {}).get("reservations_enabled", False),
+                            # AI reservations require the master toggle AND the
+                            # "AI takes reservations" opt-in. When off, a table
+                            # mention must NOT engage reservation logic (manual
+                            # dashboard bookings are gated separately).
+                            from reservation_service import ai_reservations_enabled
+                            _reservations_enabled = ai_reservations_enabled(
+                                session.restaurant, session.config
                             )
                             if not _reservations_enabled:
                                 # Reservations disabled — do NOT engage reservation

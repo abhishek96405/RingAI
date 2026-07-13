@@ -97,6 +97,16 @@ export default function FulfillmentTab({ restaurant, setRestaurant, config, setC
                 onChange={(e) => setRestaurant({ ...restaurant, reservation_advance_booking_days: parseInt(e.target.value) || 7 })} className="h-9" />
             </div>
           </div>
+          <div className="flex items-center justify-between gap-3 pt-3 border-t border-coral/15">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Let the AI take reservations on calls</p>
+              <p className="text-xs text-ink-soft">Off = you still add reservations manually here, but the AI won't book tables during phone calls.</p>
+            </div>
+            <Switch
+              checked={restaurant?.ai_accepts_reservations !== false}
+              onCheckedChange={(v) => setRestaurant({ ...restaurant, ai_accepts_reservations: v })}
+            />
+          </div>
         </div>
       )}
 

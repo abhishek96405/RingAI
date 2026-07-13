@@ -122,6 +122,7 @@ export interface Restaurant {
   delivery_enabled?: boolean;
   dine_in_enabled?: boolean;
   reservations_enabled?: boolean;
+  ai_accepts_reservations?: boolean;
   offers_delivery?: boolean;
   offers_reservations?: boolean;
   catering_enabled?: boolean;

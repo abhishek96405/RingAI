@@ -399,3 +399,72 @@ def test_prompt_block_lists_available_slots():
     )
     assert "6:00 PM" in out
     assert "7:00 PM" in out
+
+
+# ---------------------------------------------------------------------------
+# AI-reservations decoupling (ai_accepts_reservations)
+#
+# Manual dashboard bookings are gated on reservations_enabled alone; the AI's
+# reservation-taking on calls additionally requires ai_accepts_reservations
+# (default True so existing customers are unaffected).
+# ---------------------------------------------------------------------------
+
+def test_ai_reservations_enabled_helper():
+    from reservation_service import ai_reservations_enabled
+
+    # Reservations off entirely → AI off
+    assert ai_reservations_enabled({}, {}) is False
+    # Master on, AI sub-toggle absent → defaults on (preserves existing behavior)
+    assert ai_reservations_enabled({"reservations_enabled": True}, {}) is True
+    # Master on, AI sub-toggle explicitly off → AI off (the new decoupling)
+    assert ai_reservations_enabled(
+        {"reservations_enabled": True, "ai_accepts_reservations": False}, {}
+    ) is False
+    # Falls back to config when the restaurant doc is silent
+    assert ai_reservations_enabled({}, {"reservations_enabled": True}) is True
+
+
+def test_get_reservation_settings_ai_accepts_default_and_override():
+    from reservation_service import get_reservation_settings
+
+    # Absent → defaults to True
+    assert get_reservation_settings({}, {"reservations_enabled": True})["ai_accepts_reservations"] is True
+    # Restaurant doc override wins
+    settings = get_reservation_settings(
+        {}, {"reservations_enabled": True, "ai_accepts_reservations": False}
+    )
+    assert settings["ai_accepts_reservations"] is False
+
+
+def test_prompt_block_empty_when_ai_reservations_off():
+    from reservation_service import build_reservation_prompt_block
+    # Reservations enabled (manual works) but AI told not to take them → no block
+    out = build_reservation_prompt_block(
+        settings={"reservations_enabled": True, "ai_accepts_reservations": False},
+        available_slots=[],
+    )
+    assert out == ""
+
+
+async def test_dispatch_reservation_blocked_when_ai_reservations_off(async_db, monkeypatch):
+    from reservation_service import dispatch_reservation
+
+    sms = AsyncMock(return_value=_sms_success())
+    monkeypatch.setattr("telnyx_service.send_sms", sms)
+
+    result = await dispatch_reservation(
+        reservation_data={
+            "customer_name": "Joe",
+            "customer_phone": "+15551234567",
+            "party_size": 4,
+            "reservation_date": "2030-06-15",
+            "reservation_time": "18:00",
+        },
+        restaurant={"id": "rest_a", "name": "Tasty Bistro", "ai_accepts_reservations": False},
+        config={"reservations_enabled": True, "sms_enabled": True, "operating_hours": OPERATING_HOURS},
+        db=async_db,
+    )
+    assert result["success"] is False
+    assert result["reason"] == "ai_reservations_disabled"
+    # No booking persisted and no SMS sent
+    sms.assert_not_called()
