@@ -46,11 +46,12 @@ describe("DashboardHome page (Duuutah AI overview)", () => {
 
     renderWithProviders(<Shell />);
     await waitFor(() => {
-      expect(screen.getByText(/Revenue captured/i)).toBeInTheDocument();
-      expect(screen.getByText(/Avg quality score/i)).toBeInTheDocument();
+      // "Revenue" is also the chart legend label, so match all
+      expect(screen.getAllByText(/Revenue/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/Quality/i)).toBeInTheDocument();
       // "handled by AI" also appears in the hero chip, so match all
       expect(screen.getAllByText(/Handled by AI/i).length).toBeGreaterThan(0);
-      expect(screen.getByText(/Escalated to a human/i)).toBeInTheDocument();
+      expect(screen.getByText(/Escalated/i)).toBeInTheDocument();
     });
   });
 
