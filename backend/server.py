@@ -5499,6 +5499,7 @@ async def create_checkout_session(payload: BillingCheckoutRequest, user: Dict[st
         cancel_url=f"{frontend_url}{cancel_path}",
         metadata={"restaurant_id": restaurant["id"], "plan": plan_name},
         subscription_data={"trial_period_days": 7},
+        allow_promotion_codes=True,
     )
 
     return {"checkout_url": session.url}
