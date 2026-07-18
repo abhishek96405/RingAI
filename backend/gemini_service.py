@@ -411,6 +411,7 @@ class OrderItem:
     category: str
     unit_price: int       # cents
     quantity: int
+    pos_item_id: str = ""  # Clover/Square inventory item ID
     modifiers: List[str] = field(default_factory=list)
     modifier_total: int = 0  # per-unit sum of matched modifier price_deltas, cents (A7-6)
     special_instructions: str = ""
@@ -423,6 +424,7 @@ class OrderItem:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name, "menu_item_id": self.menu_item_id,
+            "pos_item_id": self.pos_item_id,
             "category": self.category, "unit_price": self.unit_price,
             "quantity": self.quantity, "modifiers": self.modifiers,
             "modifier_total": self.modifier_total,
@@ -610,6 +612,7 @@ JSON:"""
         order.items.append(OrderItem(
             name=menu_item["name"],
             menu_item_id=menu_item["id"],
+            pos_item_id=menu_item.get("pos_item_id", ""),
             category=menu_item.get("category", ""),
             unit_price=menu_item["price"],
             quantity=max(1, _safe_int(raw_item.get("quantity", 1), 1)),
@@ -824,7 +827,10 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) ->
             clover_order_id = clover_order.get("id")
             logger.info(f"Clover order created: {clover_order_id}")
 
-            # Step 2 — Add line items. These are ad-hoc CUSTOM line items
+            # Step 2 — Add line items. Items synced from Clover inventory are
+            # bound to the catalog via {"item": {"id": ...}} so Clover applies
+            # the catalog price, tax, and order total automatically; items
+            # without a pos_item_id fall back to ad-hoc CUSTOM line items
             # (name + price, no catalog binding). For countable items Clover
             # represents quantity by adding the line item once PER UNIT — one
             # POST per unit. `unitQty` is only for measure/weight-priced catalog
@@ -833,12 +839,31 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) ->
             failed_items = []
             for item in order.items:
                 _mods = f" ({', '.join(item.modifiers)})" if item.modifiers else ""
-                line_item = {
-                    "name": item.name + _mods,
-                    "price": max(0, item.unit_price + item.modifier_total),  # per-unit effective (A7-6)
-                }
-                if item.special_instructions:
-                    line_item["note"] = item.special_instructions
+
+                # If we have a POS inventory item ID, reference it so Clover
+                # handles pricing, tax, and order totals automatically. Fall
+                # back to a custom line item for manually-added menu items that
+                # don't exist in Clover's inventory.
+                if item.pos_item_id:
+                    line_item = {
+                        "item": {"id": item.pos_item_id},
+                    }
+                    # Append modifier text and special instructions as a note
+                    notes = []
+                    if _mods:
+                        notes.append(_mods.strip(" ()"))
+                    if item.special_instructions:
+                        notes.append(item.special_instructions)
+                    if notes:
+                        line_item["note"] = "; ".join(notes)
+                else:
+                    # Fallback: custom line item (no tax, no auto-total)
+                    line_item = {
+                        "name": item.name + _mods,
+                        "price": max(0, item.unit_price + item.modifier_total),  # per-unit effective (A7-6)
+                    }
+                    if item.special_instructions:
+                        line_item["note"] = item.special_instructions
 
                 # Guard: post at least once even if quantity is missing/0/negative.
                 units = item.quantity if (item.quantity and item.quantity > 0) else 1
