@@ -804,49 +804,25 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) ->
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
 
-            # Step 1 — Create empty order. `state: "open"` is required — orders
-            # created via REST without it do not appear in Clover Register (A7-2).
-            order_payload = {
-                "state": "open",
-                "title": f"Phone Order — {order.customer_name or 'Guest'}",
-                "note": f"RingAI | {order.order_type.upper()} | {order.special_instructions or ''}".strip(" |"),
-            }
-            resp = await client.post(
-                f"{base_url}/v3/merchants/{merchant_id}/orders",
-                headers=headers,
-                json=order_payload,
-            )
-            if resp.status_code not in (200, 201):
-                logger.error(f"Clover create order failed: {resp.status_code} {resp.text}")
-                return {"success": False, "order_id": "", "method": "clover",
-                        "error": f"Clover create order {resp.status_code}"}
-
-            clover_order = resp.json()
-            clover_order_id = clover_order.get("id")
-            logger.info(f"Clover order created: {clover_order_id}")
-
-            # Step 2 — Add line items. Items synced from Clover inventory are
-            # bound to the catalog via {"item": {"id": ...}} so Clover applies
-            # the catalog price, tax, and order total automatically; items
+            # Build line item elements for the atomic order. Items synced from
+            # Clover inventory are bound to the catalog via {"item": {"id": ...}}
+            # so Clover applies the catalog price and tax automatically; items
             # without a pos_item_id fall back to ad-hoc CUSTOM line items
-            # (name + price, no catalog binding). For countable items Clover
-            # represents quantity by adding the line item once PER UNIT — one
-            # POST per unit. `unitQty` is only for measure/weight-priced catalog
-            # items (sold by the pound, etc.); sending it on a custom countable
-            # item mis-renders quantity and pricing on the ticket and total.
-            failed_items = []
+            # (name + price, no catalog binding). `unitQty` works for both in
+            # the atomic endpoint — one element with unitQty: 2 creates 2 units,
+            # so no per-unit POST loop is needed.
+            line_elements = []
             for item in order.items:
                 _mods = f" ({', '.join(item.modifiers)})" if item.modifiers else ""
+                units = item.quantity if (item.quantity and item.quantity > 0) else 1
 
-                # If we have a POS inventory item ID, reference it so Clover
-                # handles pricing, tax, and order totals automatically. Fall
-                # back to a custom line item for manually-added menu items that
-                # don't exist in Clover's inventory.
                 if item.pos_item_id:
-                    line_item = {
+                    # Inventory-bound line item — Clover handles price + tax
+                    li = {
                         "item": {"id": item.pos_item_id},
+                        "unitQty": units,
                     }
                     # Append modifier text and special instructions as a note
                     notes = []
@@ -855,39 +831,52 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) ->
                     if item.special_instructions:
                         notes.append(item.special_instructions)
                     if notes:
-                        line_item["note"] = "; ".join(notes)
+                        li["note"] = "; ".join(notes)
                 else:
-                    # Fallback: custom line item (no tax, no auto-total)
-                    line_item = {
+                    # Fallback: custom/ad-hoc line item (no inventory binding)
+                    li = {
                         "name": item.name + _mods,
                         "price": max(0, item.unit_price + item.modifier_total),  # per-unit effective (A7-6)
+                        "unitQty": units,
                     }
                     if item.special_instructions:
-                        line_item["note"] = item.special_instructions
+                        li["note"] = item.special_instructions
 
-                # Guard: post at least once even if quantity is missing/0/negative.
-                units = item.quantity if (item.quantity and item.quantity > 0) else 1
-                for _ in range(units):
-                    li_resp = await client.post(
-                        f"{base_url}/v3/merchants/{merchant_id}/orders/{clover_order_id}/line_items",
-                        headers=headers,
-                        json=line_item,
-                    )
-                    if li_resp.status_code not in (200, 201):
-                        logger.warning(f"Clover line item failed for {item.name}: {li_resp.text}")
-                        failed_items.append(item.name)
+                line_elements.append(li)
 
-            # A7-3: a line-item POST failure leaves a partial order in Register.
-            # Reporting success would let the kitchen ship an incomplete order with
-            # no operator alert. Fail the dispatch so _apply_dispatch_result marks
-            # it DISPATCH_FAILED and fires the operator alert (A7-1 machinery).
-            if failed_items:
-                return {"success": False, "order_id": clover_order_id, "method": "clover",
-                        "printed": False,
-                        "error": f"Clover line items failed ({', '.join(failed_items)}); "
-                                 f"order {clover_order_id} is partial in Register — verify manually"}
+            # Build atomic order payload — creates the whole order in one call
+            # and calculates totals + taxes in real time (A7-2/A7-3: no partial
+            # orders, so no failed_items tracking needed — it's all-or-nothing).
+            atomic_payload = {
+                "orderCart": {
+                    "lineItems": {
+                        "elements": line_elements,
+                    },
+                    "groupLineItems": True,
+                    "note": f"RingAI | {order.order_type.upper()} | {order.special_instructions or ''}".strip(" |"),
+                },
+                "serviceType": order.order_type.upper() if order.order_type else "PICKUP",
+            }
 
-            logger.info(f"Clover order {clover_order_id} created with {len(order.items)} items")
+            # Add customer info if available
+            if order.customer_name:
+                atomic_payload["orderCart"]["title"] = f"Phone Order — {order.customer_name}"
+
+            resp = await client.post(
+                f"{base_url}/v3/merchants/{merchant_id}/atomic_order/orders",
+                headers=headers,
+                json=atomic_payload,
+            )
+
+            if resp.status_code not in (200, 201):
+                logger.error(f"Clover atomic order failed: {resp.status_code} {resp.text}")
+                return {"success": False, "order_id": "", "method": "clover",
+                        "error": f"Clover atomic order {resp.status_code}"}
+
+            clover_order = resp.json()
+            clover_order_id = clover_order.get("id")
+            logger.info(f"Clover atomic order created: {clover_order_id} "
+                        f"with {len(line_elements)} line item(s)")
 
             # Step 3 — Fire a print event so the order physically prints in the
             # kitchen. The order is already visible in Register, so a print
