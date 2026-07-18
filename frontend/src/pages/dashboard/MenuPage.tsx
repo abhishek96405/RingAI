@@ -11,11 +11,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   createMenuItem, deleteMenuItem, getMenuItems, toggleMenuItem, updateMenuItem,
   getModifierGroups, createModifierGroup, updateModifierGroup, deleteModifierGroup,
-  updateItemModifierAssignments, syncMenuFromPOS
+  updateItemModifierAssignments, syncMenuFromPOS,
+  parseMenu as parseMenuApi, confirmMenu
 } from "@/lib/api";
 import { useAppSession } from "@/context/AppSessionContext";
 import type { MenuItem, ModifierGroup } from "@/types";
-import { CheckCircle2, ChevronDown, ChevronUp, DollarSign, Edit2, GripVertical, Layers, Plus, RefreshCw, Search, Settings2, Trash2, UtensilsCrossed, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, DollarSign, Edit2, GripVertical, Layers, Plus, RefreshCw, Search, Settings2, Trash2, Upload, UtensilsCrossed, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -454,6 +455,12 @@ const MenuPage = () => {
   const [saving, setSaving] = useState(false);
   const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
 
+  // Import Menu dialog state (menu text → AI parse → confirm)
+  const [importOpen, setImportOpen] = useState(false);
+  const [menuText, setMenuText] = useState("");
+  const [parsedItems, setParsedItems] = useState<MenuItem[]>([]);
+  const [parsing, setParsing] = useState(false);
+
   // Legacy modifier state (kept for backward compat)
   const [newGroupName, setNewGroupName] = useState("");
   const [newOption, setNewOption] = useState<Record<number, string>>({});
@@ -685,6 +692,9 @@ const MenuPage = () => {
                 {syncing ? "Syncing..." : "Sync from POS"}
               </Button>
               {lastSync && <span className="text-xs text-ink-soft">Last synced: {lastSync}</span>}
+              <Button onClick={() => setImportOpen(true)} variant="outline" className="rounded-xl">
+                <Upload className="w-4 h-4 mr-2" /> Import Menu
+              </Button>
               <Button onClick={openAdd} className="bg-coral hover:bg-coral-deep text-white rounded-xl">
                 <Plus className="w-4 h-4 mr-2" /> Add Item
               </Button>
@@ -913,6 +923,93 @@ const MenuPage = () => {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving} className="bg-coral hover:bg-coral-deep text-white">
               {saving ? "Saving..." : editingItem ? "Update Item" : "Add Item"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Menu Dialog — paste text, AI parses, confirm to save */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import Menu</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Paste your menu text</Label>
+              <Textarea
+                value={menuText}
+                onChange={(e) => setMenuText(e.target.value)}
+                className="rounded-xl min-h-[200px]"
+                placeholder={`APPETIZERS\nBruschetta - $12.99\nCalamari - $14.99\n\nPASTA\nSpaghetti Bolognese - $18.99`}
+              />
+            </div>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={async () => {
+                if (!menuText.trim()) {
+                  toast.error("Please enter your menu text");
+                  return;
+                }
+                setParsing(true);
+                try {
+                  const res = await parseMenuApi({ menu_text: menuText, restaurant_id: restaurantId });
+                  setParsedItems(res.data.items || []);
+                  if (res.data.items?.length) {
+                    toast.success(`Parsed ${res.data.items.length} items!`);
+                  } else {
+                    toast.warning("No items could be parsed. Try a different format.");
+                  }
+                } catch {
+                  toast.error("Failed to parse menu");
+                } finally {
+                  setParsing(false);
+                }
+              }}
+              disabled={parsing}
+            >
+              {parsing ? "Parsing with AI..." : "Parse Menu"}
+            </Button>
+
+            {parsedItems.length > 0 && (
+              <div className="border rounded-xl overflow-hidden">
+                <div className="p-3 bg-cream text-sm font-medium">
+                  {parsedItems.length} items parsed
+                </div>
+                <div className="divide-y max-h-60 overflow-y-auto">
+                  {parsedItems.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
+                      <div>
+                        <p className="font-medium">{item.name}</p>
+                        <p className="text-xs text-ink-soft">{item.category}</p>
+                      </div>
+                      <span>{item.price ? `$${(item.price / 100).toFixed(2)}` : "--"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button
+              className="bg-coral hover:bg-coral-deep text-white rounded-xl"
+              disabled={parsedItems.length === 0}
+              onClick={async () => {
+                try {
+                  await confirmMenu(restaurantId, parsedItems);
+                  toast.success(`${parsedItems.length} items imported!`);
+                  setImportOpen(false);
+                  setMenuText("");
+                  setParsedItems([]);
+                  fetchItems(); // refresh the menu list
+                } catch {
+                  toast.error("Failed to save menu items");
+                }
+              }}
+            >
+              Import {parsedItems.length} Items
             </Button>
           </DialogFooter>
         </DialogContent>

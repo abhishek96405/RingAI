@@ -16,10 +16,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   activateRestaurant,
-  confirmMenu,
   createBillingCheckout,
   createRestaurant as createRestaurantApi,
-  parseMenu as parseMenuApi,
   setRestaurantId as persistRestaurantId,
   updateConfig,
 } from "@/lib/api";
@@ -42,7 +40,7 @@ import { SignOutButton } from "@clerk/clerk-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/errors";
-import type { Restaurant, Config, MenuItem } from "@/types";
+import type { Restaurant, Config } from "@/types";
 
 // Business type options for horizontal platform
 const businessTypeOptions = [
@@ -53,7 +51,6 @@ const businessTypeOptions = [
 const steps = [
   { icon: Briefcase, label: "Business Type" },
   { icon: Building2, label: "Business Info" },
-  { icon: Utensils, label: "Menu / Services" },
   { icon: Settings, label: "AI Configuration" },
   { icon: CreditCard, label: "Choose Plan" },
 ];
@@ -89,7 +86,6 @@ export default function Onboarding() {
   const [selectedPlan, setSelectedPlan] = useState<"STARTER" | "PRO">("PRO");
   const [restaurantId, setRestaurantId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [parsing, setParsing] = useState(false);
   const [activating, setActivating] = useState(false);
 
   // Business type — read from localStorage if pre-selected from landing page
@@ -128,8 +124,6 @@ export default function Onboarding() {
     reservation_party_limit: 8,
   });
 
-  const [menuText, setMenuText] = useState("");
-  const [parsedItems, setParsedItems] = useState<MenuItem[]>([]);
   const [aiConfig, setAiConfig] = useState<Config>({
     persona: "friendly",
     disclosure_text: "",
@@ -191,7 +185,7 @@ export default function Onboarding() {
     }));
 
     if (activeRestaurant.is_active) {
-      setCurrentStep(4);
+      setCurrentStep(3);
     }
   }, [activeRestaurant]);
 
@@ -246,57 +240,6 @@ export default function Onboarding() {
     }
   };
 
-  const parseMenu = async () => {
-    if (!restaurantId) {
-      toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
-      setCurrentStep(1);
-      return;
-    }
-
-    if (!menuText.trim()) {
-      toast.error(`Please enter your ${isAppointmentBusiness ? "services" : "menu"} text`);
-      return;
-    }
-
-    setParsing(true);
-    try {
-      const res = await parseMenuApi({ menu_text: menuText, restaurant_id: restaurantId });
-      setParsedItems(res.data.items || []);
-      if (res.data.items?.length > 0) {
-        toast.success(`Parsed ${res.data.items.length} items!`);
-      } else {
-        toast.warning("No items could be parsed. Try a different format.");
-      }
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, "Failed to parse"));
-    } finally {
-      setParsing(false);
-    }
-  };
-
-  const saveMenuAndProceed = async () => {
-    if (!restaurantId) {
-      toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
-      setCurrentStep(1);
-      return;
-    }
-    if (parsedItems.length === 0) {
-      toast.warning(`Parse your ${isAppointmentBusiness ? "services" : "menu"} first`);
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await confirmMenu(restaurantId, parsedItems);
-      toast.success(`${isAppointmentBusiness ? "Services" : "Menu"} saved!`);
-      setCurrentStep(3);
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, `Failed to save ${isAppointmentBusiness ? "services" : "menu"}`));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const saveConfigAndProceed = async () => {
     if (!restaurantId) {
       toast.error(`Create your ${getBusinessLabel().toLowerCase()} first`);
@@ -308,7 +251,7 @@ export default function Onboarding() {
     try {
       await updateConfig(restaurantId, aiConfig);
       toast.success("AI configuration saved!");
-      setCurrentStep(4);
+      setCurrentStep(3);
     } catch (err) {
       toast.error(getApiErrorMessage(err, "Failed to save config"));
     } finally {
@@ -348,7 +291,7 @@ export default function Onboarding() {
   };
 
   const handleNext = async () => {
-    if (submitting || parsing || activating) return;
+    if (submitting || activating) return;
 
     if (currentStep === 0) {
       localStorage.removeItem("ringai_selected_business_type");
@@ -356,13 +299,12 @@ export default function Onboarding() {
       return;
     }
     if (currentStep === 1) { await createRestaurant(); return; }
-    if (currentStep === 2) { await saveMenuAndProceed(); return; }
-    if (currentStep === 3) { await saveConfigAndProceed(); return; }
+    if (currentStep === 2) { await saveConfigAndProceed(); return; }
     await goLive();
   };
 
   const handleBack = () => {
-    if (submitting || parsing || activating) return;
+    if (submitting || activating) return;
     setCurrentStep((prev) => Math.max(0, prev - 1));
   };
 
@@ -538,48 +480,8 @@ export default function Onboarding() {
           </div>
         );
 
-      // ── STEP 2: Menu / Services ──
+      // ── STEP 2: AI Configuration ──
       case 2:
-        return (
-          <div className="space-y-5">
-            <div className="space-y-2">
-              <Label>{isAppointmentBusiness ? "Services Offered" : "Paste Menu Text"}</Label>
-              <Textarea
-                value={menuText}
-                onChange={(e) => setMenuText(e.target.value)}
-                className="rounded-xl min-h-[200px]"
-                placeholder={
-                  isAppointmentBusiness
-                    ? `SERVICES\nHaircut - $35 - 30 min\nColor Treatment - $120 - 90 min\nDeep Conditioning - $45 - 45 min`
-                    : `APPETIZERS\nBruschetta - $12.99\nCalamari - $14.99\n\nPASTA\nSpaghetti Bolognese - $18.99`
-                }
-              />
-            </div>
-            <Button type="button" variant="outline" className="rounded-xl" onClick={parseMenu} disabled={parsing || submitting}>
-              {parsing ? "Parsing with AI..." : `Parse ${isAppointmentBusiness ? "Services" : "Menu"}`}
-            </Button>
-
-            {parsedItems.length > 0 && (
-              <Card className="p-0 overflow-hidden border-line">
-                <div className="p-3 bg-cream text-sm font-medium">{parsedItems.length} items parsed</div>
-                <div className="divide-y divide-border max-h-72 overflow-y-auto">
-                  {parsedItems.map((item, i: number) => (
-                    <div key={i} className="flex items-center justify-between px-4 py-3 text-sm">
-                      <div>
-                        <p className="font-medium">{item.name}</p>
-                        <p className="text-xs text-ink-soft">{item.category}</p>
-                      </div>
-                      <span>{item.price ? `$${(item.price / 100).toFixed(2)}` : "--"}</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
-          </div>
-        );
-
-      // ── STEP 3: AI Configuration ──
-      case 3:
         return (
           <div className="space-y-5">
             <div className="space-y-2">
@@ -666,8 +568,8 @@ export default function Onboarding() {
           </div>
         );
 
-      // ── STEP 4: Choose Plan ──
-      case 4:
+      // ── STEP 3: Choose Plan ──
+      case 3:
         return (
           <div className="space-y-5">
             <div className="grid sm:grid-cols-2 gap-4">
@@ -788,9 +690,8 @@ export default function Onboarding() {
           <p className="text-sm text-ink-soft mb-6">
             {currentStep === 0 && "Select your business type to customize your AI experience."}
             {currentStep === 1 && `Tell us about your ${getBusinessLabel().toLowerCase()} so we can personalize your AI.`}
-            {currentStep === 2 && `${isAppointmentBusiness ? "List your services so the AI knows what to book." : "Paste your menu so the AI knows what to offer callers."}`}
-            {currentStep === 3 && "Customize how your AI sounds and behaves."}
-            {currentStep === 4 && "Start your 7-day free trial. No charge today."}
+            {currentStep === 2 && "Customize how your AI sounds and behaves."}
+            {currentStep === 3 && "Start your 7-day free trial. No charge today."}
           </p>
 
           <AnimatePresence mode="wait">
@@ -810,7 +711,7 @@ export default function Onboarding() {
               type="button"
               variant="ghost"
               onClick={handleBack}
-              disabled={currentStep === 0 || submitting || parsing || activating}
+              disabled={currentStep === 0 || submitting || activating}
               className="rounded-xl"
             >
               <ArrowLeft className="mr-2 w-4 h-4" />
@@ -820,7 +721,7 @@ export default function Onboarding() {
             <Button
               type="button"
               onClick={handleNext}
-              disabled={submitting || parsing || activating}
+              disabled={submitting || activating}
               className="bg-gradient-primary text-primary-foreground rounded-xl px-8 shadow-glow hover:opacity-90"
             >
               {currentStep === steps.length - 1
