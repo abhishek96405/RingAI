@@ -181,15 +181,21 @@ async def get_reservation_slots(
     # Get operating hours for this day
     day_name = target_date.strftime("%A").lower()
     day_hours = operating_hours.get(day_name, {})
-    
+
     # Check special hours override
     if date_str in settings.get("special_hours", {}):
         day_hours = settings["special_hours"][date_str]
-    
+
     if day_hours.get("closed", False):
         return []
-    
-    # Parse open/close times
+
+    # Split hours: a day may have multiple service periods (e.g. lunch + dinner).
+    # Reservations are a DINING-ROOM concept, so slots use the POSTED close
+    # (apply_last_call=False) — the kitchen last-call offset governs order-taking,
+    # not table bookings. normalize/get_effective_periods also read the OLD
+    # single {open,close} shape transparently as one period.
+    from gemini_service import get_effective_periods
+
     def parse_time(t: str) -> Optional[int]:
         """Convert time string to minutes since midnight."""
         if not t:
@@ -204,32 +210,40 @@ async def get_reservation_slots(
                 return parsed.hour * 60 + parsed.minute
             except ValueError:
                 return None
-    
-    open_minutes = parse_time(day_hours.get("open", ""))
-    close_minutes = parse_time(day_hours.get("close", ""))
 
-    # Missing/unparseable hours for this day → no slots. Don't fabricate a
-    # default window: the old `... or 17*60` silently showed every such day —
-    # and every midnight "00:00"/"12:00 AM" open (which parses to 0, a falsy
-    # value) — as a 5 PM start. Use explicit None checks and surface gaps.
-    if open_minutes is None or close_minutes is None:
+    periods = get_effective_periods(day_hours, apply_last_call=False)
+
+    # Build the list of (open, close) minute-windows to generate slots over.
+    windows: List[tuple] = []
+    for p in periods:
+        open_minutes = parse_time(p.get("open", ""))
+        close_minutes = parse_time(p.get("close", ""))
+
+        # Missing/unparseable hours for a period → skip it. Don't fabricate a
+        # default window: the old `... or 17*60` silently showed every such day —
+        # and every midnight "00:00"/"12:00 AM" open (which parses to 0, a falsy
+        # value) — as a 5 PM start. Use explicit None checks and surface gaps.
+        if open_minutes is None or close_minutes is None:
+            continue
+
+        # Overnight hours (e.g. 8 AM → 2 AM, or a midnight close): close is at/before
+        # open. Cap slot generation at end of day rather than wrapping into the next
+        # calendar day (which would make the reservation's date ambiguous). Without
+        # this, close <= open yields zero slots.
+        if close_minutes <= open_minutes:
+            close_minutes = 24 * 60
+
+        # Don't accept reservations within 1 hour of closing
+        close_minutes -= 60
+        windows.append((open_minutes, close_minutes))
+
+    if not windows:
         logger.warning(
             f"get_reservation_slots: missing/unparseable hours for {restaurant_id} "
-            f"on {date_str} (day={day_name}, open={day_hours.get('open')!r}, "
-            f"close={day_hours.get('close')!r}) — returning no slots"
+            f"on {date_str} (day={day_name}, day_hours={day_hours!r}) — returning no slots"
         )
         return []
 
-    # Overnight hours (e.g. 8 AM → 2 AM, or a midnight close): close is at/before
-    # open. Cap slot generation at end of day rather than wrapping into the next
-    # calendar day (which would make the reservation's date ambiguous). Without
-    # this, close <= open yields zero slots.
-    if close_minutes <= open_minutes:
-        close_minutes = 24 * 60
-
-    # Don't accept reservations within 1 hour of closing
-    close_minutes -= 60
-    
     # Get existing reservations for this date
     existing = await db.reservations.find({
         "restaurant_id": restaurant_id,
@@ -263,39 +277,49 @@ async def get_reservation_slots(
             now_minutes = local_now.hour * 60 + local_now.minute
     except Exception:
         pass
-    # Generate slots
+    # Generate slots — one pass per service period (split hours). Dedupe by
+    # slot time via `seen` so overlapping periods can't emit the same time twice.
     slots = []
+    seen: set = set()
     interval = settings.get("slot_interval_minutes", 30)
     capacity = settings.get("capacity_per_slot", 10)
-    current = open_minutes
-    while current <= close_minutes:
-        hour = current // 60
-        minute = current % 60
-        slot_time = f"{hour:02d}:{minute:02d}"
-        # Skip past slots for today
-        if now_minutes is not None and current <= now_minutes:
+    for open_minutes, close_minutes in windows:
+        current = open_minutes
+        while current <= close_minutes:
+            hour = current // 60
+            minute = current % 60
+            slot_time = f"{hour:02d}:{minute:02d}"
+            # Skip past slots for today
+            if now_minutes is not None and current <= now_minutes:
+                current += interval
+                continue
+            if slot_time in seen:
+                current += interval
+                continue
+            seen.add(slot_time)
+            # Format for display
+            display_hour = hour if hour <= 12 else hour - 12
+            if display_hour == 0:
+                display_hour = 12
+            ampm = "AM" if hour < 12 else "PM"
+            display_time = f"{display_hour}:{minute:02d} {ampm}"
+            # Check if blocked by owner
+            is_blocked = slot_time in blocked_slot_times
+            # Check capacity
+            booked = slot_counts.get(slot_time, 0)
+            remaining = max(0, capacity - booked)
+            slots.append({
+                "time": slot_time,
+                "display_time": display_time,
+                "available": not is_blocked and remaining > 0,
+                "remaining_capacity": 0 if is_blocked else remaining,
+                "total_capacity": capacity,
+                "blocked": is_blocked,
+            })
             current += interval
-            continue
-        # Format for display
-        display_hour = hour if hour <= 12 else hour - 12
-        if display_hour == 0:
-            display_hour = 12
-        ampm = "AM" if hour < 12 else "PM"
-        display_time = f"{display_hour}:{minute:02d} {ampm}"
-        # Check if blocked by owner
-        is_blocked = slot_time in blocked_slot_times
-        # Check capacity
-        booked = slot_counts.get(slot_time, 0)
-        remaining = max(0, capacity - booked)
-        slots.append({
-            "time": slot_time,
-            "display_time": display_time,
-            "available": not is_blocked and remaining > 0,
-            "remaining_capacity": 0 if is_blocked else remaining,
-            "total_capacity": capacity,
-            "blocked": is_blocked,
-        })
-        current += interval
+    # Split hours can emit dinner slots before lunch's tail if periods are out of
+    # order; sort by time so the API returns a chronological list.
+    slots.sort(key=lambda s: s["time"])
     return slots
 
 

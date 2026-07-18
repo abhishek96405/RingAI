@@ -789,14 +789,18 @@ class RestaurantConfig(BaseModel):
     escalation_phone_number: Optional[str] = None
     sms_enabled: bool = True
     sms_payment_enabled: bool = False
+    # New canonical shape: each day carries `closed`, a per-day kitchen last-call
+    # offset (0 = take orders until the posted close), and a list of service
+    # `periods` (split hours). Readers also accept the OLD {"open","close"} shape
+    # transparently, so existing stored configs keep working without migration.
     operating_hours: Dict[str, Any] = {
-        "monday": {"closed": False, "open": "09:00", "close": "21:00"},
-        "tuesday": {"closed": False, "open": "09:00", "close": "21:00"},
-        "wednesday": {"closed": False, "open": "09:00", "close": "21:00"},
-        "thursday": {"closed": False, "open": "09:00", "close": "21:00"},
-        "friday": {"closed": False, "open": "09:00", "close": "22:00"},
-        "saturday": {"closed": False, "open": "09:00", "close": "22:00"},
-        "sunday": {"closed": False, "open": "09:00", "close": "20:00"},
+        "monday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "21:00"}]},
+        "tuesday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "21:00"}]},
+        "wednesday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "21:00"}]},
+        "thursday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "21:00"}]},
+        "friday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "22:00"}]},
+        "saturday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "22:00"}]},
+        "sunday": {"closed": False, "last_call_offset_minutes": 0, "periods": [{"open": "09:00", "close": "20:00"}]},
     }
 
 

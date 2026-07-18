@@ -288,60 +288,72 @@ def calculate_available_slots(
     """
     day_name = date.strftime("%A").lower()
     day_hours = operating_hours.get(day_name, {})
-    
+
     if day_hours.get("closed", False):
         return []
-    
-    open_time_str = day_hours.get("open", "09:00")
-    close_time_str = day_hours.get("close", "17:00")
-    
-    # Parse hours
-    try:
-        open_hour, open_min = map(int, open_time_str.split(":"))
-        close_hour, close_min = map(int, close_time_str.split(":"))
-    except (ValueError, AttributeError):
-        logger.warning(f"Invalid operating hours format for {day_name}")
-        return []
-    
-    # Create datetime objects for business hours
-    business_start = date.replace(hour=open_hour, minute=open_min, second=0, microsecond=0)
-    business_end = date.replace(hour=close_hour, minute=close_min, second=0, microsecond=0)
-    
-    # Apply lead time constraint
-    now = datetime.now(timezone.utc)
-    earliest_booking = now + timedelta(hours=lead_time_hours)
-    if business_start < earliest_booking:
-        business_start = earliest_booking
-    
-    # Parse busy periods
+
+    # Split hours: a day may have multiple service periods. Calendar availability
+    # is a booking concept, so use the POSTED close (apply_last_call=False).
+    # get_effective_periods reads the OLD single {open,close} shape as one period.
+    from gemini_service import normalize_day_hours, get_effective_periods
+    norm = normalize_day_hours(day_hours)
+    if not norm["periods"]:
+        # No open/close configured at all → preserve this module's historical
+        # 09:00–17:00 default. (Configured-but-unparseable hours are NOT defaulted:
+        # they fall through to get_effective_periods → [] → no slots, as before.)
+        periods = [{"open": "09:00", "close": "17:00"}]
+    else:
+        periods = get_effective_periods(day_hours, apply_last_call=False)
+
+    # Parse busy periods once (shared across all service periods).
     busy_intervals = []
     for period in busy_periods:
         start = datetime.fromisoformat(period["start"].replace("Z", "+00:00"))
         end = datetime.fromisoformat(period["end"].replace("Z", "+00:00"))
         busy_intervals.append((start, end))
-    
-    # Generate slots
+
+    now = datetime.now(timezone.utc)
+    earliest_booking = now + timedelta(hours=lead_time_hours)
+
     slots = []
-    total_duration = service_duration_minutes + buffer_minutes
-    current_time = business_start
-    
-    while current_time + timedelta(minutes=service_duration_minutes) <= business_end:
-        slot_end = current_time + timedelta(minutes=service_duration_minutes)
-        
-        # Check if slot conflicts with any busy period
-        is_available = True
-        for busy_start, busy_end in busy_intervals:
-            if not (slot_end <= busy_start or current_time >= busy_end):
-                is_available = False
-                break
-        
-        if is_available:
-            slots.append({
-                "start": current_time.isoformat(),
-                "end": slot_end.isoformat(),
-                "display_time": current_time.strftime("%I:%M %p"),
-            })
-        
-        current_time += timedelta(minutes=slot_interval_minutes)
-    
+    seen_starts: set = set()
+    for period in periods:
+        try:
+            open_hour, open_min = map(int, period["open"].split(":"))
+            close_hour, close_min = map(int, period["close"].split(":"))
+        except (ValueError, AttributeError, KeyError):
+            logger.warning(f"Invalid operating hours format for {day_name}")
+            continue
+
+        # Create datetime objects for this service period's business hours
+        business_start = date.replace(hour=open_hour, minute=open_min, second=0, microsecond=0)
+        business_end = date.replace(hour=close_hour, minute=close_min, second=0, microsecond=0)
+
+        # Apply lead time constraint
+        if business_start < earliest_booking:
+            business_start = earliest_booking
+
+        current_time = business_start
+        while current_time + timedelta(minutes=service_duration_minutes) <= business_end:
+            slot_end = current_time + timedelta(minutes=service_duration_minutes)
+
+            # Check if slot conflicts with any busy period
+            is_available = True
+            for busy_start, busy_end in busy_intervals:
+                if not (slot_end <= busy_start or current_time >= busy_end):
+                    is_available = False
+                    break
+
+            start_iso = current_time.isoformat()
+            if is_available and start_iso not in seen_starts:
+                seen_starts.add(start_iso)
+                slots.append({
+                    "start": start_iso,
+                    "end": slot_end.isoformat(),
+                    "display_time": current_time.strftime("%I:%M %p"),
+                })
+
+            current_time += timedelta(minutes=slot_interval_minutes)
+
+    slots.sort(key=lambda s: s["start"])
     return slots

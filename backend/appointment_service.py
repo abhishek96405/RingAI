@@ -77,26 +77,43 @@ async def get_available_slots(
     if day_hours.get("closed"):
         return []
 
-    open_str = day_hours.get("open", "09:00")
-    close_str = day_hours.get("close", "17:00")
-    try:
-        open_h, open_m = map(int, open_str.split(":"))
-        close_h, close_m = map(int, close_str.split(":"))
-    except ValueError:
-        return []
+    # Split hours: a day may have multiple service periods. Appointment slots are
+    # a booking (dining-room-equivalent) concept, so use the POSTED close
+    # (apply_last_call=False). get_effective_periods reads the OLD single
+    # {open,close} shape transparently as one period.
+    from gemini_service import normalize_day_hours, get_effective_periods
+    norm = normalize_day_hours(day_hours)
+    if not norm["periods"]:
+        # No open/close configured at all → preserve this module's historical
+        # 09:00–17:00 default. (Configured-but-unparseable hours are NOT defaulted:
+        # they fall through to get_effective_periods → [] → no slots, as before.)
+        periods = [{"open": "09:00", "close": "17:00"}]
+    else:
+        periods = get_effective_periods(day_hours, apply_last_call=False)
 
-    # Generate slot grid
+    # Generate slot grid across every period, deduping identical start times.
     slots_grid: List[str] = []
-    cursor_total = open_h * 60 + open_m
-    close_total = close_h * 60 + close_m
-
-    while cursor_total + duration_minutes <= close_total:
-        h, m = divmod(cursor_total, 60)
-        slots_grid.append(f"{h:02d}:{m:02d}")
-        cursor_total += slot_interval
+    seen_grid: set = set()
+    for period in periods:
+        try:
+            open_h, open_m = map(int, period["open"].split(":"))
+            close_h, close_m = map(int, period["close"].split(":"))
+        except (ValueError, AttributeError, KeyError):
+            continue
+        cursor_total = open_h * 60 + open_m
+        close_total = close_h * 60 + close_m
+        while cursor_total + duration_minutes <= close_total:
+            h, m = divmod(cursor_total, 60)
+            key = f"{h:02d}:{m:02d}"
+            if key not in seen_grid:
+                seen_grid.add(key)
+                slots_grid.append(key)
+            cursor_total += slot_interval
 
     if not slots_grid:
         return []
+
+    slots_grid.sort()
 
     # Filter out past slots if the requested date is today
     import pytz
@@ -250,23 +267,46 @@ def build_appointment_prompt(
         current_day = local_now.strftime("%A").lower()
         current_minutes = local_now.hour * 60 + local_now.minute
         
-        # Check if open
+        # Check if open. Route through the shared hours helper so split hours and
+        # the last-call offset are honored here exactly as in the restaurant path.
+        # apply_last_call=True: an appointment business that sets an offset stops
+        # taking bookings before its posted close, mirroring calculate_is_open.
         is_open = True
         if operating_hours:
+            from gemini_service import normalize_day_hours, get_effective_periods
             day_hours = operating_hours.get(current_day, {})
-            if day_hours.get("closed"):
+            norm = normalize_day_hours(day_hours)
+            if norm["closed"]:
                 is_open = False
             else:
-                open_str = day_hours.get("open", "09:00")
-                close_str = day_hours.get("close", "17:00")
-                try:
-                    open_h, open_m = map(int, open_str.split(":"))
-                    close_h, close_m = map(int, close_str.split(":"))
-                    open_min = open_h * 60 + open_m
-                    close_min = close_h * 60 + close_m
-                    is_open = open_min <= current_minutes <= close_min
-                except:
+                periods = get_effective_periods(day_hours, apply_last_call=True)
+                if not periods:
+                    # Unparseable/collapsed hours — leave OPEN (this path defaults
+                    # to open on ambiguity rather than blocking every caller).
                     is_open = True
+                else:
+                    offset = norm["last_call_offset_minutes"]
+                    is_open = False
+                    for p in periods:
+                        try:
+                            open_h, open_m = map(int, p["open"].split(":"))
+                            close_h, close_m = map(int, p["close"].split(":"))
+                        except (ValueError, AttributeError, KeyError):
+                            continue
+                        open_min = open_h * 60 + open_m
+                        close_min = close_h * 60 + close_m
+                        if close_min <= open_min:
+                            if current_minutes >= open_min or current_minutes <= close_min:
+                                is_open = True
+                                break
+                        elif offset > 0:
+                            if open_min <= current_minutes < close_min:
+                                is_open = True
+                                break
+                        else:
+                            if open_min <= current_minutes <= close_min:
+                                is_open = True
+                                break
         open_status = "OPEN" if is_open else "CLOSED"
     except Exception as e:
         logger.error(f"Timezone error: {e}")
@@ -292,14 +332,21 @@ def build_appointment_prompt(
     # Build hours block
     hours_block = ""
     if operating_hours:
+        from gemini_service import normalize_day_hours
         days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         lines = []
         for day in days:
             h = operating_hours.get(day, {})
-            if h.get("closed"):
+            norm = normalize_day_hours(h)
+            if norm["closed"] or not norm["periods"]:
                 lines.append(f"  {day.capitalize()}: Closed")
             else:
-                lines.append(f"  {day.capitalize()}: {h.get('open', '?')} – {h.get('close', '?')}")
+                # Display the POSTED hours (every service period), not the
+                # kitchen-cut-off window.
+                spans = ", ".join(
+                    f"{p.get('open', '?')} – {p.get('close', '?')}" for p in norm["periods"]
+                )
+                lines.append(f"  {day.capitalize()}: {spans}")
         hours_block = "\n".join(lines)
     
     # Business-specific language

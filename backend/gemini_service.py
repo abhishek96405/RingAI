@@ -1470,6 +1470,129 @@ def _build_upsell_section(menu_index: "MenuIndex") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Operating-hours normalization (single source of truth)
+#
+# Every reader of a day's hours — "is open now" (calculate_is_open),
+# reservation slots, and appointment/calendar slots — routes through these two
+# helpers so they can never disagree about what a day's hours mean.
+#
+# Two features live here:
+#   1. Split hours: a day may have MULTIPLE service periods (lunch + dinner).
+#   2. Kitchen last-call offset: a per-day int that pulls each period's close
+#      EARLIER for the order-taking (is-open) path only — the AI stops taking
+#      orders before the dining room actually closes.
+#
+# Backward compatibility is mandatory: the OLD shape
+#     {"closed": False, "open": "09:00", "close": "21:00"}
+# must read as a single period with a 0-minute offset. No migration is required
+# for the app to work.
+# ---------------------------------------------------------------------------
+
+def _hours_time_to_minutes(t) -> Optional[int]:
+    """Parse 'HH:MM' (or 'H:MM AM/PM') to minutes since midnight. None if unparseable."""
+    if not t or not isinstance(t, str):
+        return None
+    t = t.strip()
+    from datetime import datetime as _dt
+    for fmt in ("%H:%M", "%I:%M %p"):
+        try:
+            parsed = _dt.strptime(t, fmt)
+            return parsed.hour * 60 + parsed.minute
+        except ValueError:
+            continue
+    return None
+
+
+def _hours_minutes_to_str(m: int) -> str:
+    """Render minutes-since-midnight back to 'HH:MM' (clamped to [00:00, 24:00])."""
+    m = max(0, min(24 * 60, int(m)))
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def normalize_day_hours(day_config: Optional[dict]) -> dict:
+    """Normalize one day's operating-hours config to the canonical shape:
+        {"closed": bool, "last_call_offset_minutes": int, "periods": [{"open","close"}, ...]}
+
+    Backward compatible: an old {"open","close"} day with no "periods" becomes a
+    single-period list. Missing offset -> 0. A day marked closed (or with no
+    usable periods) returns periods=[].
+    """
+    if not isinstance(day_config, dict):
+        # Missing/garbage day config → treat as closed (fail-closed for callers).
+        return {"closed": True, "last_call_offset_minutes": 0, "periods": []}
+
+    closed = bool(day_config.get("closed", False))
+
+    raw_offset = day_config.get("last_call_offset_minutes", 0)
+    try:
+        offset = int(raw_offset)
+    except (TypeError, ValueError):
+        offset = 0
+    if offset < 0:
+        offset = 0
+
+    if closed:
+        return {"closed": True, "last_call_offset_minutes": offset, "periods": []}
+
+    periods: List[dict] = []
+    raw_periods = day_config.get("periods")
+    if isinstance(raw_periods, list):
+        # New shape: explicit list of {open, close} periods.
+        for p in raw_periods:
+            if isinstance(p, dict) and p.get("open") and p.get("close"):
+                periods.append({"open": p["open"], "close": p["close"]})
+    else:
+        # Old shape: a single open/close pair on the day itself.
+        o = day_config.get("open")
+        c = day_config.get("close")
+        if o and c:
+            periods.append({"open": o, "close": c})
+
+    return {"closed": False, "last_call_offset_minutes": offset, "periods": periods}
+
+
+def get_effective_periods(day_config: Optional[dict], *, apply_last_call: bool) -> List[dict]:
+    """Return the day's [{open, close}] periods as 'HH:MM' strings.
+
+    When apply_last_call is True, each period's close is pulled EARLIER by
+    last_call_offset_minutes (the kitchen cut-off). A NORMAL (same-day) period
+    whose effective window collapses to <= 0 minutes is DROPPED — the offset
+    must never turn a real period into a spurious overnight/negative window.
+    Overnight periods (close <= open) are preserved and merely have the offset
+    subtracted from their close. Unparseable periods are skipped.
+    """
+    norm = normalize_day_hours(day_config)
+    if norm["closed"]:
+        return []
+
+    offset = norm["last_call_offset_minutes"] if apply_last_call else 0
+
+    result: List[dict] = []
+    for p in norm["periods"]:
+        open_min = _hours_time_to_minutes(p.get("open"))
+        close_min = _hours_time_to_minutes(p.get("close"))
+        if open_min is None or close_min is None:
+            continue
+
+        overnight = close_min <= open_min
+        eff_close = close_min - offset
+
+        if not overnight:
+            # Same-day period. If the offset pulls close back to/under open the
+            # kitchen window has vanished for the day — drop it (do NOT let it
+            # read as an overnight wrap).
+            if offset and eff_close <= open_min:
+                continue
+            result.append({"open": p["open"], "close": _hours_minutes_to_str(eff_close)})
+        else:
+            # Overnight window (e.g. 18:00–02:00). Preserve wrap semantics; the
+            # offset just moves the post-midnight close earlier.
+            result.append({"open": p["open"], "close": _hours_minutes_to_str(eff_close)})
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # System Prompt Builder (hardened)
 # ---------------------------------------------------------------------------
 
@@ -1489,36 +1612,43 @@ def calculate_is_open(operating_hours: Optional[Dict], restaurant_timezone: str 
         if not day_hours:
             logger.warning(f"calculate_is_open: '{current_day}' missing from configured hours → closed")
             return False
-        if day_hours.get("closed"):
+
+        norm = normalize_day_hours(day_hours)
+        if norm["closed"]:
             return False
-        def time_to_minutes(t):
-            if not t or not isinstance(t, str):
-                return None
-            t = t.strip()
-            try:
-                from datetime import datetime as dt
-                parsed = dt.strptime(t, "%H:%M")
-                return parsed.hour * 60 + parsed.minute
-            except ValueError:
-                pass
-            try:
-                from datetime import datetime as dt
-                parsed = dt.strptime(t, "%I:%M %p")
-                return parsed.hour * 60 + parsed.minute
-            except ValueError:
-                pass
-            return None
-        open_min = time_to_minutes(day_hours.get("open", ""))
-        close_min = time_to_minutes(day_hours.get("close", ""))
-        if open_min is None or close_min is None:
+
+        # Order-taking path: apply the kitchen last-call offset so the AI goes
+        # "closed" at (period_close − offset), not at the posted dining close.
+        offset = norm["last_call_offset_minutes"]
+        periods = get_effective_periods(day_hours, apply_last_call=True)
+        if not periods:
+            # Configured-but-unusable (all periods unparseable, or collapsed under
+            # the offset). Fail CLOSED — don't take an order the kitchen can't fill.
             logger.warning(
-                f"calculate_is_open: unparseable open/close for '{current_day}' "
-                f"({day_hours.get('open')!r}/{day_hours.get('close')!r}) → closed"
+                f"calculate_is_open: no usable periods for '{current_day}' "
+                f"({day_hours!r}) → closed"
             )
             return False
-        if close_min <= open_min:
-            return current_minutes >= open_min or current_minutes <= close_min
-        return open_min <= current_minutes <= close_min
+
+        for p in periods:
+            open_min = _hours_time_to_minutes(p["open"])
+            close_min = _hours_time_to_minutes(p["close"])
+            if open_min is None or close_min is None:
+                continue
+            if close_min <= open_min:
+                # Overnight window (preserved behavior): wraps past midnight.
+                if current_minutes >= open_min or current_minutes <= close_min:
+                    return True
+            elif offset > 0:
+                # Kitchen cut-off is EXCLUSIVE: "closed from close−offset onward".
+                # Last order-taking minute is (close − offset − 1).
+                if open_min <= current_minutes < close_min:
+                    return True
+            else:
+                # No offset → preserve the original inclusive posted-close boundary.
+                if open_min <= current_minutes <= close_min:
+                    return True
+        return False
     except Exception as e:
         # A code bug must not take every restaurant offline — keep open, but log loudly.
         logger.error(f"calculate_is_open failed ({e}) → defaulting open", exc_info=True)
@@ -1626,49 +1756,19 @@ This restaurant DOES take reservations, but reservations must be handled by our 
         tz = pytz.timezone(restaurant_timezone)
         local_now = datetime.now(tz)
         current_time_str = local_now.strftime("%A, %B %d %Y, %I:%M %p %Z")
-        current_day = local_now.strftime("%A").lower()
-        current_minutes = local_now.hour * 60 + local_now.minute
-        is_open = True
-        if operating_hours:
-            day_hours = operating_hours.get(current_day, {})
-            if day_hours.get("closed"):
-                is_open = False
-            else:
-                def time_to_minutes(t):
-                    if not t or not isinstance(t, str):
-                        return None
-                    t = t.strip()
-                    try:
-                        from datetime import datetime as dt
-                        parsed = dt.strptime(t, "%H:%M")
-                        return parsed.hour * 60 + parsed.minute
-                    except ValueError:
-                        pass
-                    try:
-                        from datetime import datetime as dt
-                        parsed = dt.strptime(t, "%I:%M %p")
-                        return parsed.hour * 60 + parsed.minute
-                    except ValueError:
-                        pass
-                    logger.warning(f"Could not parse time string: '{t}'")
-                    return None
-                open_min = time_to_minutes(day_hours.get("open", ""))
-                close_min = time_to_minutes(day_hours.get("close", ""))
-                if open_min is None or close_min is None:
-                    logger.warning(
-                        f"Time parse failure for {restaurant_timezone} on {current_day} "
-                        f"— defaulting to OPEN"
-                    )
-                    is_open = True
-                else:
-                    if close_min <= open_min:
-                        is_open = current_minutes >= open_min or current_minutes <= close_min
-                    else:
-                        is_open = open_min <= current_minutes <= close_min
+        # Single source of truth for "is the restaurant open right now": route
+        # through calculate_is_open, which reads the new split-hours `periods`
+        # shape (and the old {open,close} shape) via get_effective_periods,
+        # applies the per-day kitchen last-call offset, and already handles
+        # overnight wrap + closed days. (Previously duplicated here — that copy
+        # read only the old open/close keys and reported OPEN all day for a
+        # split-hours restaurant.)
+        is_open = calculate_is_open(operating_hours, restaurant_timezone)
         open_status = "OPEN" if is_open else "CLOSED"
     except Exception as e:
         logger.error(f"Timezone error for '{restaurant_timezone}': {e}", exc_info=True)
         current_time_str = datetime.now(timezone.utc).strftime("%A, %B %d %Y, %I:%M %p UTC")
+        is_open = True
         open_status = "OPEN"
         logger.warning("Defaulting to OPEN status due to timezone error")
 
@@ -1717,7 +1817,19 @@ This restaurant DOES take reservations, but reservations must be handled by our 
             if h.get("closed"):
                 lines.append(f"  {day.capitalize()}: Closed")
             else:
-                lines.append(f"  {day.capitalize()}: {h.get('open','?')} – {h.get('close','?')}")
+                # Posted dining-room hours across every service period (split
+                # hours). apply_last_call=False: spoken hours are the posted
+                # close a caller is told, NOT the kitchen order cut-off.
+                periods = get_effective_periods(h, apply_last_call=False)
+                if periods:
+                    spans = ", ".join(f"{p['open']} – {p['close']}" for p in periods)
+                    lines.append(f"  {day.capitalize()}: {spans}")
+                else:
+                    # No usable periods (missing/unparseable hours) — keep the
+                    # historical unknown rendering. Normal old-shape days never
+                    # reach here (they resolve to a single period above), so this
+                    # matches the previous "? – ?" output for empty/bad days.
+                    lines.append(f"  {day.capitalize()}: ? – ?")
         hours_block = "\n".join(lines)
 
     if not is_open:

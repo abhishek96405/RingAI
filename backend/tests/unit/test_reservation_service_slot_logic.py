@@ -167,6 +167,61 @@ async def test_uses_custom_slot_interval(async_db):
         assert h2 - h1 == 1
 
 
+# ---------------------------------------------------------------------------
+# Split hours (multiple service periods) — reservations use the POSTED close,
+# NOT the kitchen last-call offset (a table booking is a dining-room concept).
+# ---------------------------------------------------------------------------
+
+SPLIT_HOURS_SATURDAY = {
+    "saturday": {
+        "closed": False,
+        "last_call_offset_minutes": 30,  # order-taking only — must NOT affect slots
+        "periods": [
+            {"open": "10:00", "close": "15:00"},
+            {"open": "18:00", "close": "22:00"},
+        ],
+    }
+}
+
+
+async def test_split_hours_generates_slots_for_both_periods(async_db):
+    from reservation_service import get_reservation_slots
+    slots = await get_reservation_slots(
+        restaurant_id="rest_a",
+        date_str="2030-06-15",  # Saturday in far future (no past-slot filtering)
+        config={"reservations_enabled": True},
+        operating_hours=SPLIT_HOURS_SATURDAY,
+        db=async_db,
+    )
+    times = {s["time"] for s in slots}
+    # Lunch period (10:00 → 15:00, minus 1h buffer → last slot 14:00)
+    assert "10:00" in times
+    assert "14:00" in times
+    # Dinner period (18:00 → 22:00, minus 1h buffer → last slot 21:00). This also
+    # proves the 30-min last-call offset is NOT applied here — otherwise the last
+    # dinner slot would stop earlier than 21:00.
+    assert "18:00" in times
+    assert "21:00" in times
+
+
+async def test_split_hours_excludes_midday_gap(async_db):
+    from reservation_service import get_reservation_slots
+    slots = await get_reservation_slots(
+        restaurant_id="rest_a",
+        date_str="2030-06-15",  # Saturday
+        config={"reservations_enabled": True},
+        operating_hours=SPLIT_HOURS_SATURDAY,
+        db=async_db,
+    )
+    times = {s["time"] for s in slots}
+    # The midday gap (15:00–18:00) must produce no slots.
+    assert "16:00" not in times
+    assert "17:00" not in times
+    # Slots come back in chronological order across periods.
+    ordered = [s["time"] for s in slots]
+    assert ordered == sorted(ordered)
+
+
 async def test_existing_reservations_reduce_capacity(async_db):
     from reservation_service import get_reservation_slots, ReservationStatus
 

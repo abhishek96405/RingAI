@@ -168,10 +168,22 @@ export interface AdminCostAnalytics {
   per_restaurant?: AdminCostPerRestaurant[];
 }
 
+export interface HoursPeriod {
+  open: string;
+  close: string;
+}
+
 export interface DayHours {
+  closed?: boolean;
+  // NEW canonical shape: multiple service periods per day (split hours) plus a
+  // per-day kitchen last-call offset (order-taking stops this many minutes
+  // before each period's posted close).
+  periods?: HoursPeriod[];
+  last_call_offset_minutes?: number;
+  // OLD shape (single service period). Still read by the backend and the UI for
+  // backward compatibility; new writes use `periods`.
   open?: string;
   close?: string;
-  closed?: boolean;
 }
 
 export interface OperatingHours {
