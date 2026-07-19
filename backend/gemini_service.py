@@ -923,7 +923,7 @@ async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[in
         elif pos_type == "clover":
             clover_token = restaurant.get("clover_api_token", "")
             clover_mid = restaurant.get("clover_merchant_id", "")
-            clover_env = restaurant.get("pos_env", "sandbox")
+            clover_env = (restaurant or {}).get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
             if clover_token and clover_mid:
                 base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
                 import time as _time
@@ -938,6 +938,11 @@ async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[in
                         count = len(data.get("elements", []))
                         logger.info(f"Clover queue depth: {count} orders")
                         return count
+                    else:
+                        logger.warning(
+                            f"Clover queue depth failed: {resp.status_code} "
+                            f"(env={clover_env}, mid={clover_mid}) — ETA will skip queue multiplier"
+                        )
         
         elif pos_type == "square":
             square_token = restaurant.get("square_access_token", "")
@@ -959,7 +964,7 @@ async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[in
             clover_token = restaurant.get("clover_api_token", "")
             clover_mid = restaurant.get("clover_merchant_id", "")
             if clover_token and clover_mid:
-                clover_env = restaurant.get("pos_env", "sandbox")
+                clover_env = (restaurant or {}).get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
                 base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
                 import time as _time
                 window_ms = int((_time.time() - (restaurant.get("avg_prep_time_minutes", 20) * 60)) * 1000)
@@ -970,6 +975,11 @@ async def get_kitchen_queue_depth(restaurant: Dict, config: Dict) -> Optional[in
                     )
                     if resp.status_code == 200:
                         return len(resp.json().get("elements", []))
+                    else:
+                        logger.warning(
+                            f"Clover queue depth failed: {resp.status_code} "
+                            f"(env={clover_env}, mid={clover_mid}) — ETA will skip queue multiplier"
+                        )
             
             square_token = restaurant.get("square_access_token", "")
             if square_token:
