@@ -873,6 +873,7 @@ class ModifierOption(BaseModel):
     in_stock: bool = True
     display_order: int = 0
     ai_aliases: List[str] = []    # e.g. ["medium", "regular"] for "Medium"
+    clover_modifier_id: str = ""  # Clover modifier ID (set once pushed to Clover inventory)
 
 class ModifierGroupBase(BaseModel):
     name: str
@@ -883,6 +884,7 @@ class ModifierGroupBase(BaseModel):
     display_order: int = 0
     active: bool = True
     options: List[ModifierOption] = []
+    clover_modifier_group_id: str = ""  # Clover modifier group ID (set once pushed to Clover inventory)
 
 class ModifierGroupCreate(ModifierGroupBase):
     pass
@@ -1889,6 +1891,16 @@ async def create_modifier_group(
     await ensure_restaurant_access(restaurant_id, user)
     group = ModifierGroup(restaurant_id=restaurant_id, **data.model_dump())
     await db.modifier_groups.insert_one(group.model_dump())
+
+    # Push to Clover inventory if connected (fire-and-forget — dashboard save
+    # must not block on Clover). Stores Clover IDs back on the group/options.
+    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
+    if restaurant and restaurant.get("clover_connected"):
+        from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
+        from pos_sync import push_modifier_group_to_clover
+        restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
+        asyncio.create_task(push_modifier_group_to_clover(restaurant, group.model_dump(), db))
+
     return group.model_dump()
 
 @api_router.get("/restaurants/{restaurant_id}/modifier-groups")
@@ -1919,8 +1931,29 @@ async def update_modifier_group(
             o.model_dump() if hasattr(o, "model_dump") else o
             for o in update_data["options"]
         ]
+        # Preserve Clover modifier IDs the dashboard payload doesn't echo back.
+        # ModifierOption defaults clover_modifier_id to "", so a plain edit would
+        # otherwise wipe it and trigger duplicate modifier creation on re-push.
+        existing_clover_ids = {
+            o.get("id"): o.get("clover_modifier_id", "")
+            for o in group.get("options", [])
+        }
+        for o in update_data["options"]:
+            if not o.get("clover_modifier_id") and existing_clover_ids.get(o.get("id")):
+                o["clover_modifier_id"] = existing_clover_ids[o["id"]]
     await db.modifier_groups.update_one({"id": group_id}, {"$set": update_data})
-    return await db.modifier_groups.find_one({"id": group_id}, {"_id": 0})
+    updated = await db.modifier_groups.find_one({"id": group_id}, {"_id": 0})
+
+    # Re-push to Clover if connected (picks up new options / name changes).
+    # Options already carrying a clover_modifier_id are skipped inside the push.
+    restaurant = await db.restaurants.find_one({"id": updated["restaurant_id"]}, {"_id": 0})
+    if restaurant and restaurant.get("clover_connected"):
+        from encryption_utils import decrypt_sensitive_fields, ENCRYPTED_CREDENTIAL_FIELDS
+        from pos_sync import push_modifier_group_to_clover
+        restaurant = decrypt_sensitive_fields(restaurant, ENCRYPTED_CREDENTIAL_FIELDS)
+        asyncio.create_task(push_modifier_group_to_clover(restaurant, updated, db))
+
+    return updated
 
 @api_router.delete("/modifier-groups/{group_id}")
 async def delete_modifier_group(

@@ -492,6 +492,129 @@ async def sync_menu_from_square(restaurant_id: str, db, restaurant: Dict = None)
         return {"success": False, "error": str(e)}
 
 
+async def push_modifier_group_to_clover(
+    restaurant: Dict,
+    modifier_group: Dict,
+    db,
+) -> Dict[str, Any]:
+    """Push a Duuutah modifier group + its options to Clover inventory.
+
+    `restaurant` MUST be the already-decrypted doc (same contract as
+    get_valid_clover_token — callers decrypt via decrypt_sensitive_fields first).
+
+    Steps:
+    1. Create the modifier group in Clover (skipped if clover_modifier_group_id set)
+    2. Create each option that doesn't yet have a clover_modifier_id
+    3. Store the Clover IDs back on the group / options in MongoDB
+    4. Associate the group with every inventory-bound menu item that uses it
+
+    Idempotent: options already carrying a clover_modifier_id are skipped, so a
+    re-push after an option/name change only creates the new pieces.
+    """
+    import os
+
+    api_token = await get_valid_clover_token(restaurant, db)
+    merchant_id = restaurant.get("clover_merchant_id", "")
+    clover_env = restaurant.get("pos_env") or os.environ.get("CLOVER_ENV", "sandbox")
+
+    if not api_token or not merchant_id:
+        return {"success": False, "error": "Clover credentials not configured"}
+
+    base_url = "https://sandbox.dev.clover.com" if clover_env == "sandbox" else "https://api.clover.com"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+
+            # Step 1 — create or reuse the modifier group in Clover
+            clover_group_id = modifier_group.get("clover_modifier_group_id", "")
+
+            if not clover_group_id:
+                resp = await client.post(
+                    f"{base_url}/v3/merchants/{merchant_id}/modifier_groups",
+                    headers=headers,
+                    json={
+                        "name": modifier_group["name"],
+                        "minRequired": modifier_group.get("min_selections", 0),
+                        "maxAllowed": modifier_group.get("max_selections", 1),
+                        "showByDefault": True,
+                    },
+                )
+                if resp.status_code not in (200, 201):
+                    return {"success": False, "error": f"Create modifier group failed: {resp.status_code} {resp.text}"}
+
+                clover_group_id = resp.json().get("id")
+                logger.info(f"[Clover] Created modifier group '{modifier_group['name']}' -> {clover_group_id}")
+
+                await db.modifier_groups.update_one(
+                    {"id": modifier_group["id"]},
+                    {"$set": {"clover_modifier_group_id": clover_group_id}},
+                )
+
+            # Step 2 — create each option not already pushed
+            for option in modifier_group.get("options", []):
+                if option.get("clover_modifier_id"):
+                    continue  # already pushed
+
+                resp = await client.post(
+                    f"{base_url}/v3/merchants/{merchant_id}/modifier_groups/{clover_group_id}/modifiers",
+                    headers=headers,
+                    json={
+                        "name": option["name"],
+                        "price": option.get("price_delta", 0),  # cents
+                    },
+                )
+                if resp.status_code not in (200, 201):
+                    logger.warning(f"[Clover] Create modifier '{option['name']}' failed: {resp.status_code}")
+                    continue
+
+                clover_mod_id = resp.json().get("id")
+                logger.info(f"[Clover] Created modifier '{option['name']}' -> {clover_mod_id}")
+
+                # Positional $ updates the specific option in the array
+                await db.modifier_groups.update_one(
+                    {"id": modifier_group["id"], "options.id": option["id"]},
+                    {"$set": {"options.$.clover_modifier_id": clover_mod_id}},
+                )
+
+            # Step 3 — associate the group with every inventory-bound item using it
+            items_with_group = await db.menu_items.find(
+                {
+                    "restaurant_id": modifier_group["restaurant_id"],
+                    "modifier_group_assignments.modifier_group_id": modifier_group["id"],
+                    "pos_item_id": {"$exists": True, "$ne": ""},
+                },
+                {"pos_item_id": 1},
+            ).to_list(500)
+
+            if items_with_group:
+                elements = [
+                    {
+                        "modifierGroup": {"id": clover_group_id},
+                        "item": {"id": item["pos_item_id"]},
+                    }
+                    for item in items_with_group
+                ]
+                resp = await client.post(
+                    f"{base_url}/v3/merchants/{merchant_id}/item_modifier_groups",
+                    headers=headers,
+                    json={"elements": elements},
+                )
+                if resp.status_code not in (200, 201):
+                    logger.warning(f"[Clover] Associate modifier group failed: {resp.status_code} {resp.text}")
+                else:
+                    logger.info(f"[Clover] Associated modifier group {clover_group_id} with {len(elements)} item(s)")
+
+        return {"success": True, "clover_modifier_group_id": clover_group_id}
+
+    except Exception as e:
+        logger.error(f"[Clover] Push modifier group failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
 async def sync_menu_from_pos(restaurant_id: str, restaurant: Dict, db) -> Dict[str, Any]:
     """Route to correct POS sync based on restaurant pos_type."""
     pos_type = restaurant.get("pos_type")

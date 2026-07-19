@@ -294,6 +294,30 @@ def resolve_modifier_deltas(menu_item: Dict, modifier_names: list) -> tuple:
     return total, unmatched
 
 
+def _build_clover_modifier_lookup(menu_index: "MenuIndex") -> Dict[str, tuple]:
+    """Map normalized modifier-option name/alias -> (clover_modifier_id,
+    clover_modifier_group_id) across every item's resolved_modifiers. Only
+    fully-pushed options (both IDs present) are included; the caller treats a
+    miss as "unresolved" and prices it via the note/price fallback. Built once
+    per order push from the same menu_index the call was served with."""
+    lookup: Dict[str, tuple] = {}
+    if not menu_index:
+        return lookup
+    for item in menu_index.items.values():
+        for group in item.get("resolved_modifiers", []):
+            clover_gid = group.get("clover_modifier_group_id", "")
+            if not clover_gid:
+                continue
+            for opt in group.get("options", []):
+                clover_mid = opt.get("clover_modifier_id", "")
+                if not clover_mid:
+                    continue
+                for key in [opt.get("name", "")] + list(opt.get("ai_aliases", []) or []):
+                    if key:
+                        lookup[_normalize_match_key(key)] = (clover_mid, clover_gid)
+    return lookup
+
+
 class MenuIndex:
     """Pre-built lookup for a restaurant's menu. All item validation runs here."""
 
@@ -673,10 +697,14 @@ def detect_call_signals(ai_text: str) -> Dict[str, bool]:
 # Kitchen / POS dispatch
 # ---------------------------------------------------------------------------
 
-async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db=None) -> Dict[str, Any]:
+async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db=None, menu_index=None) -> Dict[str, Any]:
     """
     Dispatch order to POS based on pos_type configuration.
     Routes: pos_type → specific POS → webhook fallback → DB fallback
+
+    `menu_index` (optional) supplies the resolved_modifiers used to map ordered
+    modifiers to real Clover modifier IDs on the atomic order. Omitted on the
+    legacy/test paths, where modifiers fall back to price+note handling.
     """
     # `pos_type` may be present-but-None on non-restaurant docs (e.g. a salon
     # with `pos_type: null`); `or ""` guards against AttributeError on .lower() (A8-1).
@@ -707,7 +735,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db
         clover_mid = restaurant.get("clover_merchant_id", "")
         if clover_token and clover_mid:
             attempted_pos = "clover"
-            result = await _send_to_clover(order, restaurant, db)
+            result = await _send_to_clover(order, restaurant, db, menu_index)
             if result["success"]:
                 return {**result, "attempted_pos": "clover", "fallback_saved": False}
             pos_error = result.get("error", "Clover dispatch failed")
@@ -728,7 +756,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db
         clover_mid = restaurant.get("clover_merchant_id", "")
         if clover_token and clover_mid:
             attempted_pos = "clover"
-            result = await _send_to_clover(order, restaurant, db)
+            result = await _send_to_clover(order, restaurant, db, menu_index)
             if result["success"]:
                 return {**result, "attempted_pos": "clover", "fallback_saved": False}
             pos_error = result.get("error", "Clover dispatch failed")
@@ -778,7 +806,7 @@ async def send_order_to_kitchen(order: LiveOrder, restaurant: Dict[str, Any], db
     }
 
 
-async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) -> Dict[str, Any]:
+async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None, menu_index=None) -> Dict[str, Any]:
     """Create an order in Clover POS via REST API."""
     # When a db handle is threaded through (the live order-push path), refresh a
     # near-expiry Clover OAuth token before creating the order — mirrors
@@ -813,26 +841,59 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) ->
             # (name + price, no catalog binding). `unitQty` works for both in
             # the atomic endpoint — one element with unitQty: 2 creates 2 units,
             # so no per-unit POST loop is needed.
+            #
+            # Modifier pricing on inventory-bound lines (hybrid, revenue-safe):
+            #   • If EVERY ordered modifier maps to a real Clover modifier ID we
+            #     omit the price override and attach `modifications` — Clover
+            #     then itemizes each modifier and taxes the full line correctly.
+            #   • If ANY modifier is unresolved (not yet pushed to Clover, sync
+            #     lag, off-menu), we fall back to the price override
+            #     (base + full modifier_total) with the modifier names in the
+            #     note, so nothing is ever undercharged.
+            clover_mod_lookup = _build_clover_modifier_lookup(menu_index)
+
             line_elements = []
             for item in order.items:
                 _mods = f" ({', '.join(item.modifiers)})" if item.modifiers else ""
                 units = item.quantity if (item.quantity and item.quantity > 0) else 1
 
                 if item.pos_item_id:
-                    # Inventory-bound line item — Clover handles price + tax
+                    # Resolve ordered modifiers to Clover modifier IDs.
+                    clover_modifications = []
+                    unresolved_mods = []
+                    for mod_name in item.modifiers:
+                        key = _normalize_match_key(mod_name)
+                        hit = clover_mod_lookup.get(key)
+                        if hit:
+                            clover_modifications.append({"modifier": {"id": hit[0]}})
+                        else:
+                            unresolved_mods.append(mod_name)
+
+                    all_resolved = bool(item.modifiers) and not unresolved_mods
+
                     li = {
                         "item": {"id": item.pos_item_id},
                         "unitQty": units,
-                        "price": max(0, item.unit_price + item.modifier_total),  # include modifier delta
                     }
-                    # Append modifier text and special instructions as a note
-                    notes = []
-                    if _mods:
-                        notes.append(_mods.strip(" ()"))
-                    if item.special_instructions:
-                        notes.append(item.special_instructions)
-                    if notes:
-                        li["note"] = "; ".join(notes)
+
+                    if all_resolved:
+                        # Every modifier is a real Clover modifier — let Clover
+                        # price base + modifiers and apply tax to the full line.
+                        li["modifications"] = {"elements": clover_modifications}
+                        if item.special_instructions:
+                            li["note"] = item.special_instructions
+                    else:
+                        # Some/all modifiers unresolved (or none) — keep the price
+                        # override so the modifier deltas are still charged, and
+                        # carry the modifier text + instructions in the note.
+                        li["price"] = max(0, item.unit_price + item.modifier_total)
+                        notes = []
+                        if _mods:
+                            notes.append(_mods.strip(" ()"))
+                        if item.special_instructions:
+                            notes.append(item.special_instructions)
+                        if notes:
+                            li["note"] = "; ".join(notes)
                 else:
                     # Fallback: custom/ad-hoc line item (no inventory binding)
                     li = {
