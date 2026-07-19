@@ -823,6 +823,7 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None) ->
                     li = {
                         "item": {"id": item.pos_item_id},
                         "unitQty": units,
+                        "price": max(0, item.unit_price + item.modifier_total),  # include modifier delta
                     }
                     # Append modifier text and special instructions as a note
                     notes = []
