@@ -534,9 +534,12 @@ Menu (use EXACT names from this list only):
 )}
 
 Required JSON format:
-{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":["Large","Thin Crust"],"special_instructions":"no onions"}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
+{{"order_confirmed":true,"items":[{{"name":"EXACT menu name","quantity":1,"modifiers":["Extra Cheese","Thin Crust"],"special_instructions":"no onions"}}],"order_type":"pickup","customer_name":"","delivery_address":"","special_instructions":""}}
 
-- modifiers: list of confirmed modifier option names the customer chose (e.g. ["Large", "Thin Crust", "Extra Cheese"])
+- modifiers: ONLY option names that appear in that item's bracketed list in the menu
+  above. Example: "• Chicken Dum Biryani $15.99 [Protein Add-ons: Extra Chicken/Extra Goat]"
+  → the only valid modifiers for that item are "Extra Chicken" and "Extra Goat".
+  If an item has no bracketed list, its modifiers MUST be [].
 - special_instructions: any free-text customization the customer added (e.g. "no onions", "extra crispy")
 
 RULES:
@@ -553,6 +556,15 @@ RULES:
 - The AI's FINAL readback (e.g. "Let me read that back: one Chicken Biryani, two Samosas...") followed by customer confirmation ("yes","yeah","correct") is the MOST RELIABLE source. Always extract items from the confirmed readback even if some items don't appear in CUSTOMER lines.
 - Only include items from the FINAL order that the AI acknowledged
 - Never invent items not in the menu above
+- CRITICAL — never invent modifiers. A size or variant word the customer says
+  ("regular", "family", "large", "small", "half") is a modifier ONLY if it appears
+  in that item's bracketed option list. Otherwise it distinguishes two SEPARATE
+  menu items — pick the matching item name and leave modifiers empty.
+  Menu has "Chicken Dum Biryani" and "Chicken Dum Biryani (Family)".
+  Customer: "one regular chicken dum biryani"
+    correct → {{"name":"Chicken Dum Biryani","quantity":1,"modifiers":[]}}
+    wrong   → {{"name":"Chicken Dum Biryani","quantity":1,"modifiers":["Regular"]}}
+  An omitted modifier is recoverable. An invented one breaks POS pricing.
 - customer_name: always write in English/Latin characters, romanize if spoken in another script
   Example: "అభిషేక్" → "Abhishek", "अभिषेक" → "Abhishek", "அபிஷேக்" → "Abhishek"
 
