@@ -296,7 +296,8 @@ def resolve_modifier_deltas(menu_item: Dict, modifier_names: list) -> tuple:
 
 def _build_clover_modifier_lookup(menu_index: "MenuIndex") -> Dict[str, tuple]:
     """Map normalized modifier-option name/alias -> (clover_modifier_id,
-    clover_modifier_group_id) across every item's resolved_modifiers. Only
+    clover_modifier_group_id, option_name, price_delta_cents) across every
+    item's resolved_modifiers. Only
     fully-pushed options (both IDs present) are included; the caller treats a
     miss as "unresolved" and prices it via the note/price fallback. Built once
     per order push from the same menu_index the call was served with."""
@@ -312,9 +313,13 @@ def _build_clover_modifier_lookup(menu_index: "MenuIndex") -> Dict[str, tuple]:
                 clover_mid = opt.get("clover_modifier_id", "")
                 if not clover_mid:
                     continue
-                for key in [opt.get("name", "")] + list(opt.get("ai_aliases", []) or []):
+                opt_name = opt.get("name", "")
+                opt_amount = int(opt.get("price_delta", 0) or 0)
+                for key in [opt_name] + list(opt.get("ai_aliases", []) or []):
                     if key:
-                        lookup[_normalize_match_key(key)] = (clover_mid, clover_gid)
+                        lookup[_normalize_match_key(key)] = (
+                            clover_mid, clover_gid, opt_name, opt_amount,
+                        )
     return lookup
 
 
@@ -877,7 +882,11 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None, me
                         key = _normalize_match_key(mod_name)
                         hit = clover_mod_lookup.get(key)
                         if hit:
-                            clover_modifications.append({"modifier": {"id": hit[0]}})
+                            clover_modifications.append({
+                                "modifier": {"id": hit[0]},
+                                "name": hit[2],
+                                "amount": hit[3],
+                            })
                         else:
                             unresolved_mods.append(mod_name)
 
