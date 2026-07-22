@@ -41,7 +41,7 @@ try:
     except ImportError:
         _TELNYX_SERIALIZER_AVAILABLE = False
     from pipecat.services.google.gemini_live import GeminiLiveLLMService
-    from pipecat.frames.frames import TextFrame, EndFrame, InputTextRawFrame, LLMContextFrame
+    from pipecat.frames.frames import TextFrame, EndFrame, InputTextRawFrame, LLMContextFrame, OutputAudioRawFrame
     from pipecat.processors.aggregators.llm_response_universal import (
         LLMContextAggregatorPair,
         UserTurnStoppedMessage,
@@ -115,6 +115,43 @@ def _build_ambient_mixer():
         return _mixer
     except Exception as _mixer_init_err:
         logger.error(f"[ambient_noise] failed to initialize mixer: {_mixer_init_err}")
+        return None
+
+
+# Pre-roll latency mask — a short clip played the instant the media stream comes
+# up, covering the ~2s of silence before Gemini generates its first audio. The
+# asset must be 8kHz mono 16-bit PCM WAV to match audio_out_sample_rate=8000;
+# the loader rejects anything else rather than emitting garbled audio.
+from pathlib import Path as _Path
+import wave as _wave
+
+_PREROLL_PATH = _Path(__file__).parent / "assets" / "call_preroll_8k_mono.wav"
+_PREROLL_BYTES: Optional[bytes] = None
+_PREROLL_LOADED = False  # distinguishes "not yet loaded" from "loaded, absent/invalid"
+
+
+def _load_preroll() -> Optional[bytes]:
+    """Read the pre-roll clip once at first use; None disables the feature."""
+    global _PREROLL_BYTES, _PREROLL_LOADED
+    if _PREROLL_LOADED:
+        return _PREROLL_BYTES
+    _PREROLL_LOADED = True
+    if not _PREROLL_PATH.exists():
+        logger.warning(f"[preroll] asset not found at {_PREROLL_PATH}, disabling")
+        return None
+    try:
+        with _wave.open(str(_PREROLL_PATH), "rb") as w:
+            if w.getframerate() != 8000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
+                logger.warning(
+                    f"[preroll] expected 8kHz mono 16-bit, got "
+                    f"{w.getframerate()}Hz/{w.getnchannels()}ch/{w.getsampwidth() * 8}bit — disabling"
+                )
+                return None
+            _PREROLL_BYTES = w.readframes(w.getnframes())
+        logger.info(f"[preroll] loaded {len(_PREROLL_BYTES)} bytes from {_PREROLL_PATH}")
+        return _PREROLL_BYTES
+    except Exception as e:
+        logger.warning(f"[preroll] failed to load: {e}")
         return None
 
 
@@ -2633,6 +2670,28 @@ async def create_call_pipeline(
             if not _greeting_sent:
                 _greeting_sent = True
                 logger.info(f"[{call_sid}] Client connected — waiting for Gemini session")
+
+                # Pre-roll latency mask: queue a short clip the moment the media
+                # stream is up. Do NOT await playback — queue it, then let the
+                # Gemini poll + BEGIN_CALL run so the model generates *during*
+                # playback and its first audio lands right behind the clip.
+                if os.getenv("CALL_PREROLL_ENABLED", "true").lower() == "true":
+                    _pcm = _load_preroll()
+                    if _pcm:
+                        try:
+                            # 20ms chunks at 8kHz/16-bit mono = 320 bytes
+                            for _i in range(0, len(_pcm), 320):
+                                await task.queue_frame(
+                                    OutputAudioRawFrame(
+                                        audio=_pcm[_i:_i + 320],
+                                        sample_rate=8000,
+                                        num_channels=1,
+                                    )
+                                )
+                            logger.info(f"[{call_sid}] pre-roll queued")
+                        except Exception as _preroll_err:
+                            logger.warning(f"[{call_sid}] pre-roll failed: {_preroll_err}")
+
                 for _ in range(40):
                     if gemini_live._session is not None:
                         break
