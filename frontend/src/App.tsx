@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Restaurant } from "@/types";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -33,6 +33,9 @@ import TermsOfService from "./pages/TermsOfService";
 import EULA from "./pages/EULA";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { AppSessionProvider, useAppSession } from "@/context/AppSessionContext";
+import { activateRestaurant, getRestaurantId } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/errors";
+import { toast } from "sonner";
 
 const queryClient = new QueryClient();
 
@@ -168,6 +171,41 @@ function ProtectedAppRoute({ children }: { children: ReactNode }) {
     refreshSession,
   } = useAppSession();
 
+  const [searchParams] = useSearchParams();
+  const pendingActivation = searchParams.get("billing") === "success";
+  const [activationSettled, setActivationSettled] = useState(false);
+  const activationTried = useRef(false);
+
+  // Post-Stripe-checkout activation. The Stripe webhook sets billing_status/plan
+  // but never provisions the phone number — and phone_number is exactly what the
+  // guard below (via onboardingComplete) requires. Only POST /onboarding/activate
+  // provisions it, so it MUST run here, above the redirect: otherwise the guard
+  // sees the not-yet-provisioned restaurant and bounces the paying user to
+  // /onboarding before activation can ever fire (the original deadlock).
+  useEffect(() => {
+    if (!pendingActivation) return;
+    if (onboardingComplete) return; // already activated (e.g. after refresh remount)
+    if (activationTried.current) return; // guard StrictMode / re-render double-fire
+    if (bootstrapping) return; // wait for activeRestaurant to load
+
+    const restaurantId = activeRestaurant?.id || getRestaurantId();
+    if (!restaurantId) {
+      setActivationSettled(true);
+      return;
+    }
+
+    activationTried.current = true;
+    activateRestaurant(restaurantId)
+      .then(() => {
+        toast.success("Your AI phone agent is live!");
+        return refreshSession(); // re-read is_active + phone_number
+      })
+      .catch((err) => {
+        toast.error(getApiErrorMessage(err, "Couldn't activate your account"));
+      })
+      .finally(() => setActivationSettled(true));
+  }, [pendingActivation, onboardingComplete, bootstrapping, activeRestaurant, refreshSession]);
+
   if (!authLoaded) {
     return <FullPageLoader />;
   }
@@ -182,8 +220,18 @@ function ProtectedAppRoute({ children }: { children: ReactNode }) {
     return <SessionErrorScreen onRetry={() => void refreshSession()} />;
   }
 
+  // Hold the loader while a just-paid activation is in flight, so the guard below
+  // doesn't bounce the user to /onboarding before the phone number is provisioned.
+  // Once it settles (success flips onboardingComplete; failure sets the flag) the
+  // normal guard resumes — success falls through to children, failure redirects.
+  if (pendingActivation && !activationSettled && !onboardingComplete) {
+    return <FullPageLoader />;
+  }
+
   if (!activeRestaurant || !onboardingComplete) {
-    return <Navigate to="/onboarding" replace />;
+    // Preserve the query string so a failed activation reaches /onboarding with
+    // ?billing=success still attached rather than silently restarting at step 1.
+    return <Navigate to={`/onboarding${window.location.search}`} replace />;
   }
 
   return <>{children}</>;

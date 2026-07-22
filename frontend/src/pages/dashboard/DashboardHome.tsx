@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle, AudioLines, CheckCircle2, Download } from "lucide-react";
 import { activateRestaurant, exportAnalytics, getAnalyticsSummary, getRestaurantId } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/errors";
 import { useAppSession } from "@/context/AppSessionContext";
 import { toast } from "sonner";
 import type { DashboardStats } from "@/types";
@@ -71,14 +72,20 @@ const DashboardHome = () => {
   });
   const [exportEnd, setExportEnd] = useState(() => new Date().toISOString().slice(0, 10));
 
+  // Fallback activation for anyone who reaches the dashboard with the post-checkout
+  // signal still attached. In the normal flow ProtectedAppRoute has already run
+  // activation (and refreshed is_active) before we mount, so the is_active guard
+  // below makes this a no-op — it exists only to catch other entry paths and must
+  // never fire a second activateRestaurant (that would provision a phone twice).
   useEffect(() => {
     if (searchParams.get("billing") !== "success") return;
+    setSearchParams({}, { replace: true }); // clear the signal regardless
+    if (activeRestaurant?.is_active) return; // already activated by the route guard
     const restaurantId = activeRestaurant?.id || getRestaurantId();
     if (!restaurantId) return;
     activateRestaurant(restaurantId)
       .then(() => toast.success("Your AI phone agent is live!"))
-      .catch(() => {});
-    setSearchParams({}, { replace: true });
+      .catch((err) => toast.error(getApiErrorMessage(err, "Couldn't activate your account")));
   }, [searchParams, activeRestaurant, setSearchParams]);
 
   const handleExport = async () => {
