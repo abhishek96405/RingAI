@@ -21,6 +21,7 @@ Requires:
 import os
 import asyncio
 import base64
+import json
 import logging
 from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime, timezone
@@ -37,6 +38,11 @@ try:
 
     try:
         from pipecat.serializers.telnyx import TelnyxFrameSerializer
+        from pipecat.frames.frames import (
+            AudioRawFrame, CancelFrame, Frame, InputAudioRawFrame,
+            InputDTMFFrame, InterruptionFrame,
+        )
+        from pipecat.audio.dtmf.types import KeypadEntry
         _TELNYX_SERIALIZER_AVAILABLE = True
     except ImportError:
         _TELNYX_SERIALIZER_AVAILABLE = False
@@ -82,6 +88,77 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Same env var telnyx_service.start_streaming() reads — one switch rolls back
+# the Telnyx-side stream request, this serializer's encoding/wire rate, and
+# Gemini's/the pipeline's internal sample rate together. See AUDIO_CODEC in
+# telnyx_service.py for the full explanation.
+_AUDIO_CODEC = os.environ.get("AUDIO_CODEC", "L16")
+_AUDIO_SAMPLE_RATE = 8000 if _AUDIO_CODEC == "PCMU" else 16000
+
+
+if _TELNYX_SERIALIZER_AVAILABLE:
+    class L16TelnyxFrameSerializer(TelnyxFrameSerializer):
+        """TelnyxFrameSerializer with L16 (raw 16-bit linear PCM) support.
+
+        Pipecat's TelnyxFrameSerializer — true as of pipecat-ai 0.0.104 (pinned
+        here) and still true in the latest 1.6.0 — only implements PCMU/PCMA in
+        serialize()/deserialize(); passing outbound_encoding/inbound_encoding=
+        "L16" raises ValueError on every audio frame. L16 needs no codec at
+        all (it already *is* PCM), so the only work is resampling to/from
+        telnyx_sample_rate and base64-ing the raw bytes — everything else
+        (DTMF, hangup, interruption clearing) is inherited unchanged. Falls
+        through to super() when configured for PCMU/PCMA, so this class is a
+        safe drop-in replacement regardless of which encoding is selected.
+        """
+
+        async def serialize(self, frame: Frame) -> str | bytes | None:
+            if self._params.inbound_encoding != "L16":
+                return await super().serialize(frame)
+            if (
+                self._params.auto_hang_up
+                and not self._hangup_attempted
+                and isinstance(frame, (EndFrame, CancelFrame))
+            ):
+                self._hangup_attempted = True
+                await self._hang_up_call()
+                return None
+            elif isinstance(frame, InterruptionFrame):
+                return json.dumps({"event": "clear"})
+            elif isinstance(frame, AudioRawFrame):
+                data = frame.audio
+                if frame.sample_rate != self._telnyx_sample_rate:
+                    data = await self._output_resampler.resample(
+                        data, frame.sample_rate, self._telnyx_sample_rate
+                    )
+                if not data:
+                    return None
+                payload = base64.b64encode(data).decode("utf-8")
+                return json.dumps({"event": "media", "media": {"payload": payload}})
+            return None
+
+        async def deserialize(self, data: str | bytes) -> Frame | None:
+            if self._params.outbound_encoding != "L16":
+                return await super().deserialize(data)
+            message = json.loads(data)
+            if message["event"] == "media":
+                payload = base64.b64decode(message["media"]["payload"])
+                if self._telnyx_sample_rate != self._sample_rate:
+                    payload = await self._input_resampler.resample(
+                        payload, self._telnyx_sample_rate, self._sample_rate
+                    )
+                if not payload:
+                    return None
+                return InputAudioRawFrame(
+                    audio=payload, num_channels=1, sample_rate=self._sample_rate
+                )
+            elif message["event"] == "dtmf":
+                digit = message.get("dtmf", {}).get("digit")
+                try:
+                    return InputDTMFFrame(KeypadEntry(digit))
+                except ValueError:
+                    return None
+            return None
+
 
 def _build_ambient_mixer():
     """Construct a SoundfileMixer for cafe ambient noise, or return None.
@@ -96,7 +173,7 @@ def _build_ambient_mixer():
         return None
     try:
         from pathlib import Path
-        _ambient_path = Path(__file__).parent / "assets" / "cafe_ambience_8k_mono.wav"
+        _ambient_path = Path(__file__).parent / "assets" / "cafe_ambience_16k_mono.wav"
         if not _ambient_path.exists():
             logger.warning(f"[ambient_noise] asset file not found at {_ambient_path}, disabling")
             return None
@@ -120,12 +197,12 @@ def _build_ambient_mixer():
 
 # Pre-roll latency mask — a short clip played the instant the media stream comes
 # up, covering the ~2s of silence before Gemini generates its first audio. The
-# asset must be 8kHz mono 16-bit PCM WAV to match audio_out_sample_rate=8000;
+# asset must be 16kHz mono 16-bit PCM WAV to match audio_out_sample_rate=16000;
 # the loader rejects anything else rather than emitting garbled audio.
 from pathlib import Path as _Path
 import wave as _wave
 
-_PREROLL_PATH = _Path(__file__).parent / "assets" / "call_preroll_8k_mono.wav"
+_PREROLL_PATH = _Path(__file__).parent / "assets" / "call_preroll_16k_mono.wav"
 _PREROLL_BYTES: Optional[bytes] = None
 _PREROLL_LOADED = False  # distinguishes "not yet loaded" from "loaded, absent/invalid"
 
@@ -141,9 +218,9 @@ def _load_preroll() -> Optional[bytes]:
         return None
     try:
         with _wave.open(str(_PREROLL_PATH), "rb") as w:
-            if w.getframerate() != 8000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
+            if w.getframerate() != 16000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
                 logger.warning(
-                    f"[preroll] expected 8kHz mono 16-bit, got "
+                    f"[preroll] expected 16kHz mono 16-bit, got "
                     f"{w.getframerate()}Hz/{w.getnchannels()}ch/{w.getsampwidth() * 8}bit — disabling"
                 )
                 return None
@@ -2091,13 +2168,17 @@ async def create_call_pipeline(
         # in-progress transfers (race window between transfer-accepted and
         # bridge-established); explicit ownership lets the escalation path
         # cancel the pipeline AFTER call.bridged without ending the A-leg.
-        _serializer = TelnyxFrameSerializer(
+        _serializer = L16TelnyxFrameSerializer(
             stream_id=stream_sid or call_sid,
-            outbound_encoding="PCMU",
-            inbound_encoding="PCMU",
+            outbound_encoding=_AUDIO_CODEC,
+            inbound_encoding=_AUDIO_CODEC,
             call_control_id=call_sid,
             api_key=os.environ.get("TELNYX_API_KEY", ""),
-            params=TelnyxFrameSerializer.InputParams(auto_hang_up=False),
+            params=TelnyxFrameSerializer.InputParams(
+                auto_hang_up=False,
+                telnyx_sample_rate=_AUDIO_SAMPLE_RATE,
+                sample_rate=16000,
+            ),
         )
         # ── Ambient noise mixer (optional, env-gated, graceful) ─────────────────
         # AMBIENT_NOISE_ENABLED=false in env disables. Mixer creation failures
@@ -2237,7 +2318,7 @@ async def create_call_pipeline(
             tools=_tools_list,
             params=InputParams(
                 thinking=ThinkingConfig(thinking_level="LOW"),
-                output_sample_rate=8000,   # match Telnyx PCMU — no resampling needed
+                output_sample_rate=_AUDIO_SAMPLE_RATE,  # tracks AUDIO_CODEC — 16000 (native, no downsampling) unless rolled back to PCMU/8000
                 vad=GeminiVADParams(
                     start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
                     end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
@@ -2622,7 +2703,7 @@ async def create_call_pipeline(
             params=PipelineParams(
                 allow_interruptions=True,
                 enable_metrics=True,
-                audio_out_sample_rate=8000,
+                audio_out_sample_rate=_AUDIO_SAMPLE_RATE,
             ),
         )
         # Give session references it needs for hangup + record saving
@@ -2679,12 +2760,12 @@ async def create_call_pipeline(
                     _pcm = _load_preroll()
                     if _pcm:
                         try:
-                            # 20ms chunks at 8kHz/16-bit mono = 320 bytes
-                            for _i in range(0, len(_pcm), 320):
+                            # 20ms chunks at 16kHz/16-bit mono = 640 bytes
+                            for _i in range(0, len(_pcm), 640):
                                 await task.queue_frame(
                                     OutputAudioRawFrame(
-                                        audio=_pcm[_i:_i + 320],
-                                        sample_rate=8000,
+                                        audio=_pcm[_i:_i + 640],
+                                        sample_rate=16000,
                                         num_channels=1,
                                     )
                                 )

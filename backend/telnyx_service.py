@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 
 TELNYX_API_BASE = "https://api.telnyx.com/v2"
 
+# Single switch for the whole Telnyx<->Gemini audio path. "L16" = uncompressed
+# 16-bit PCM at 16kHz (Gemini Live's native rate). "PCMU" = mu-law at 8kHz,
+# the old narrowband PSTN default. call_pipeline.py reads this same env var
+# independently for its TelnyxFrameSerializer construction (and for the
+# Gemini/pipeline internal sample rates), so setting AUDIO_CODEC=PCMU rolls
+# the entire pipeline back to the pre-upgrade behavior without touching code.
+AUDIO_CODEC = os.environ.get("AUDIO_CODEC", "L16")
+AUDIO_SAMPLE_RATE = 8000 if AUDIO_CODEC == "PCMU" else 16000
+
 
 def _auth_headers() -> dict:
     return {
@@ -362,19 +371,33 @@ async def speak_text(call_control_id: str, text: str, voice: str = "female", lan
 async def start_streaming(
     call_control_id: str,
     stream_url: str,
-    codec: str = "PCMU",
+    codec: str = AUDIO_CODEC,
+    sample_rate: int = AUDIO_SAMPLE_RATE,
     client_state: Optional[str] = None,
 ) -> bool:
     """
     Start bidirectional media streaming on an answered call.
     Telnyx will open a WebSocket to stream_url and exchange audio frames there.
-    PCMU = μ-law 8kHz, the standard PSTN codec (matches what Pipecat expects).
+
+    Defaults come from the AUDIO_CODEC env var (default "L16"/16kHz), matching
+    Gemini Live's native audio format — no downsample-then-upsample round trip
+    through narrowband PCMU. Telnyx bills media streaming per-minute
+    regardless of codec, so this costs nothing extra over the old PCMU/8kHz
+    setup.
+
+    To restore the old narrowband behavior, set AUDIO_CODEC=PCMU in the
+    environment rather than passing codec="PCMU" here directly — call_pipeline.py's
+    serializer construction and Gemini/pipeline sample rates read the same env
+    var, so the env var is the one switch that rolls back the whole pipeline
+    consistently. Passing codec explicitly still works for one-off calls but
+    won't flip those other pieces.
     """
     body: Dict[str, Any] = {
         "stream_url": stream_url,
         "stream_track": "inbound_track",
         "stream_bidirectional_mode": "rtp",
         "stream_bidirectional_codec": codec,
+        "stream_bidirectional_sampling_rate": sample_rate,
     }
     if client_state:
         body["client_state"] = client_state
@@ -387,7 +410,10 @@ async def start_streaming(
                 timeout=10.0,
             )
             resp.raise_for_status()
-            logger.info(f"[Telnyx] Streaming started for {call_control_id} -> {stream_url}")
+            logger.info(
+                f"[Telnyx] Streaming started for {call_control_id} -> {stream_url} "
+                f"(codec={codec}, sample_rate={sample_rate})"
+            )
             return True
     except Exception as e:
         logger.error(f"[Telnyx] Streaming start failed for {call_control_id}: {e}")

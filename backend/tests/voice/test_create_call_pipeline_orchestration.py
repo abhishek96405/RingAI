@@ -126,6 +126,7 @@ def pipecat_mocks(monkeypatch):
     monkeypatch.setattr(call_pipeline, "FastAPIWebsocketTransport", FakeTransport)
     monkeypatch.setattr(call_pipeline, "FastAPIWebsocketParams", lambda **kw: kw)
     monkeypatch.setattr(call_pipeline, "TelnyxFrameSerializer", FakeSerializer)
+    monkeypatch.setattr(call_pipeline, "L16TelnyxFrameSerializer", FakeSerializer)
     monkeypatch.setattr(call_pipeline, "Pipeline", FakePipeline)
     monkeypatch.setattr(call_pipeline, "PipelineTask", FakeTask)
     monkeypatch.setattr(call_pipeline, "PipelineRunner", FakeRunner)
