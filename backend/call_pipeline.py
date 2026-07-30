@@ -582,6 +582,8 @@ class CallSession:
         self._reservation_unavailable: Optional[Dict[str, Any]] = None  # last availability failure, for a single end-of-call apology
         self._reservation_notified = False  # guard: at most one reservation-outcome SMS per call
         self._appointment_total  = 0      # price_cents sum for booked services
+        self._order_tax_cents = None            # cents, from POS dispatch — None if unknown
+        self._order_total_with_tax_cents = None # cents, POS grand total — None if unknown
         self._sms_count         = 0      # number of SMS sent this call (for cost tracking)
         self._detected_order_type = None  # "pickup", "delivery", or "reservation" — locked from conversation
         self._call_timer_task = None     # auto-escalation after max duration
@@ -1452,6 +1454,8 @@ class CallSession:
         """
         if result.get("success"):
             self.order.kitchen_order_id = result["order_id"]
+            self._order_tax_cents = result.get("tax_cents")
+            self._order_total_with_tax_cents = result.get("total_with_tax_cents")
             self.order.transition(
                 OrderState.COMPLETED,
                 f"{result['method']}: {result['order_id']}",
@@ -1677,6 +1681,8 @@ class CallSession:
                 if self.business_type in ("clinic", "salon", "home_services", "legal")
                 else self.order.total
             ),
+            "order_tax":               self._order_tax_cents,
+            "order_total_with_tax":    self._order_total_with_tax_cents,
             "kitchen_order_id":   self.order.kitchen_order_id,
             "quality_eval":       quality,
             "business_type":      self.business_type,  # Track business type

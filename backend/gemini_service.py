@@ -981,8 +981,59 @@ async def _send_to_clover(order: LiveOrder, restaurant: Dict = None, db=None, me
             except Exception as pe_err:
                 logger.warning(f"Clover print_event error (non-fatal): {pe_err}")
 
+            # Step 4 — tax + grand-total enrichment. Best-effort and never fails
+            # the dispatch (the order already exists and prints regardless of
+            # what happens below). NOT verified against a real Clover response —
+            # no test-merchant credentials were available while building this, so
+            # we couldn't confirm field names empirically as instructed. The
+            # atomic-order create response may or may not carry a computed
+            # `total`; if it doesn't, fall back to a GET on the created order.
+            # Either way the raw JSON is logged once so a real production order
+            # surfaces the actual keys. tax_cents is derived as
+            # (Clover's authoritative grand total) minus (our own known,
+            # already-correct pre-tax subtotal) rather than reading a
+            # taxAmount-style field directly, since that field's existence/name
+            # is unconfirmed — this still uses Clover's total as the source of
+            # truth, it just isn't a hardcoded-rate guess.
+            # TODO(verify): run one real order through this path and confirm the
+            # extracted tax_cents/total_with_tax_cents match Clover's dashboard
+            # before relying on these for anything customer-facing.
+            tax_cents = None
+            total_with_tax_cents = None
+            try:
+                grand_total = clover_order.get("total")
+                if isinstance(grand_total, int):
+                    logger.info(f"Clover atomic-order create response carried total={grand_total}")
+                else:
+                    detail_resp = await client.get(
+                        f"{base_url}/v3/merchants/{merchant_id}/orders/{clover_order_id}",
+                        headers=headers,
+                    )
+                    if detail_resp.status_code == 200:
+                        detail = detail_resp.json()
+                        logger.info(f"Clover order-detail response (tax lookup): {detail}")
+                        grand_total = detail.get("total")
+                    else:
+                        logger.warning(
+                            f"Clover order-detail lookup for tax failed: "
+                            f"{detail_resp.status_code} {detail_resp.text}"
+                        )
+
+                subtotal = order.total  # our known pre-tax subtotal, cents
+                if isinstance(grand_total, int) and grand_total >= subtotal:
+                    total_with_tax_cents = grand_total
+                    tax_cents = grand_total - subtotal
+                elif grand_total is not None:
+                    logger.warning(
+                        f"Clover total ({grand_total}) inconsistent with our subtotal "
+                        f"({subtotal}) — leaving tax/total unknown"
+                    )
+            except Exception as tax_err:
+                logger.warning(f"Clover tax/total lookup failed (non-fatal): {tax_err}")
+
             return {"success": True, "order_id": clover_order_id, "method": "clover",
-                    "printed": printed, "error": ""}
+                    "printed": printed, "error": "",
+                    "tax_cents": tax_cents, "total_with_tax_cents": total_with_tax_cents}
 
     except Exception as e:
         logger.error(f"Clover dispatch error: {e}", exc_info=True)
@@ -1193,9 +1244,20 @@ async def _send_to_square(order: LiveOrder, restaurant: Dict[str, Any], db=None)
             resp = await _do_request(token)
         data = resp.json()
         if resp.status_code == 200:
-            oid = data.get("order", {}).get("id", "")
+            order_obj = data.get("order", {}) or {}
+            oid = order_obj.get("id", "")
+            # Square's order-create response synchronously includes computed
+            # totals as Money objects (documented, stable field names — unlike
+            # Clover's atomic-order endpoint, no live-order verification needed
+            # here). .get() throughout so a missing/renamed field degrades to
+            # None instead of raising or fabricating a number.
+            total_money = order_obj.get("total_money") or {}
+            tax_money = order_obj.get("total_tax_money") or {}
+            tax_cents = tax_money.get("amount")
+            total_with_tax_cents = total_money.get("amount")
             return {"success": True, "order_id": oid, "method": "square",
-                    "error": ""}
+                    "error": "", "tax_cents": tax_cents,
+                    "total_with_tax_cents": total_with_tax_cents}
         # Short, PII-free error reason (Square error codes/categories only).
         detail = ""
         try:
@@ -2794,6 +2856,8 @@ async def send_order_sms(
     restaurant: Optional[Dict] = None,
     config: Optional[Dict] = None,
     menu_items: Optional[List[Dict]] = None,
+    tax_cents: Optional[int] = None,
+    total_with_tax_cents: Optional[int] = None,
 ) -> bool:
     if not order.items:
         logger.warning("SMS not sent — no items in order")
@@ -2813,6 +2877,11 @@ async def send_order_sms(
         lines.append(f"{qty_prefix}{item.name}{mods} — ${item_total:.2f}")
 
     total = f"${order.total / 100:.2f}"
+    has_pos_tax = tax_cents is not None and total_with_tax_cents is not None
+    if has_pos_tax:
+        subtotal_str = f"${order.total / 100:.2f}"
+        tax_str = f"${tax_cents / 100:.2f}"
+        total_with_tax_str = f"${total_with_tax_cents / 100:.2f}"
 
     # Calculate dynamic ETA using item-level prep times
     eta_minutes = prep_time_minutes
@@ -2857,11 +2926,20 @@ async def send_order_sms(
             f"Please call back if you'd like to add something else.\n\n"
         )
 
+    if has_pos_tax:
+        totals_block = (
+            f"\n\nSubtotal: {subtotal_str}"
+            f"\nTax: {tax_str}"
+            f"\nTotal: {total_with_tax_str}"
+        )
+    else:
+        totals_block = f"\n\nTotal: {total}"
+
     body = (
         f"{dropped_notice}"
         f"{name_line}Your {restaurant_name} order:\n\n"
         + "\n".join(lines)
-        + f"\n\nTotal: {total}"
+        + totals_block
         + eta_line
     )
 

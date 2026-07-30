@@ -72,3 +72,75 @@ async def test_order_sms_no_modifiers_unchanged(monkeypatch):
     assert "2x Samosa" in body
     assert "$10.00" in body                        # 500 * 2, no modifier drift
     assert "Total: $10.00" in body
+
+
+async def test_order_sms_shows_subtotal_tax_total_when_pos_tax_present(monkeypatch):
+    """When the POS dispatch returned tax_cents/total_with_tax_cents, the SMS
+    shows the three-line Subtotal/Tax/Total breakdown, and subtotal + tax ==
+    the grand total (the lines must reconcile)."""
+    import telnyx_service
+    from telnyx_service import SMSResult
+    from gemini_service import LiveOrder, OrderItem, send_order_sms
+
+    captured = {}
+
+    async def fake_send_sms(to, body, **kwargs):
+        captured["body"] = body
+        return SMSResult(success=True, message_id="m1")
+
+    monkeypatch.setattr(telnyx_service, "send_sms", fake_send_sms)
+
+    order = LiveOrder(restaurant_id="r", call_sid="c", caller_number="+15551234567")
+    order.items.append(OrderItem(
+        name="Samosa", menu_item_id="1", category="Starters",
+        unit_price=500, quantity=2,
+    ))
+    assert order.total == 1000  # subtotal, pre-tax
+
+    ok = await send_order_sms(
+        caller_number="+15551234567", order=order,
+        restaurant_name="Bawarchi", restaurant=None,
+        tax_cents=88, total_with_tax_cents=1088,
+    )
+    assert ok is True
+    body = captured["body"]
+    assert "Subtotal: $10.00" in body
+    assert "Tax: $0.88" in body
+    assert "Total: $10.88" in body
+    # subtotal + tax == grand total, and old single-Total format is gone
+    assert 1000 + 88 == 1088
+    assert "Total: $10.00" not in body
+
+
+async def test_order_sms_falls_back_to_single_total_when_tax_unknown(monkeypatch):
+    """Explicit tax_cents=None (the default, e.g. non-POS or a POS result that
+    omitted the fields) must keep today's single-Total line — no Subtotal/Tax
+    lines and no fabricated zero."""
+    import telnyx_service
+    from telnyx_service import SMSResult
+    from gemini_service import LiveOrder, OrderItem, send_order_sms
+
+    captured = {}
+
+    async def fake_send_sms(to, body, **kwargs):
+        captured["body"] = body
+        return SMSResult(success=True, message_id="m1")
+
+    monkeypatch.setattr(telnyx_service, "send_sms", fake_send_sms)
+
+    order = LiveOrder(restaurant_id="r", call_sid="c", caller_number="+15551234567")
+    order.items.append(OrderItem(
+        name="Samosa", menu_item_id="1", category="Starters",
+        unit_price=500, quantity=2,
+    ))
+
+    ok = await send_order_sms(
+        caller_number="+15551234567", order=order,
+        restaurant_name="Bawarchi", restaurant=None,
+        tax_cents=None, total_with_tax_cents=None,
+    )
+    assert ok is True
+    body = captured["body"]
+    assert "Total: $10.00" in body
+    assert "Subtotal:" not in body
+    assert "Tax:" not in body

@@ -988,6 +988,8 @@ class CallRecord(BaseModel):
     claude_tokens_used: int = 0
     caller_name: Optional[str] = None
     order_total: Optional[int] = None  # cents
+    order_tax: Optional[int] = None            # cents, from POS (Clover) — None if unknown
+    order_total_with_tax: Optional[int] = None # cents, POS grand total — None if unknown
 
     # ── Internal cost tracking (admin only — never exposed to business owners) ──
     cost_voice_cents: Optional[float] = None   # $0.0085/min inbound
@@ -3197,6 +3199,8 @@ async def get_analytics_summary(restaurant_id: str, user: Dict[str, Any] = Depen
         "duration_seconds": c.get("duration_seconds"),
         "quality_score": c.get("quality_score"),
         "order_total": c.get("order_total"),
+        "order_tax": c.get("order_tax"),
+        "order_total_with_tax": c.get("order_total_with_tax"),
         "started_at": c.get("started_at"),
     } for c in recent]
 
@@ -5176,6 +5180,8 @@ async def _on_call_complete_impl(
             quality_score=analysis.get("quality_score"),
             analysis_json={**analysis, "rule_eval": quality_eval if session else {}},
             order_total=order_total,
+            order_tax=record_data.get("order_tax"),
+            order_total_with_tax=record_data.get("order_total_with_tax"),
         )
         await db.call_records.insert_one(call.model_dump())
         primary_insert_done = True
@@ -5269,6 +5275,8 @@ async def _on_call_complete_impl(
                 payment_link=payment_link,
                 restaurant=restaurant,
                 config=config,
+                tax_cents=session._order_tax_cents,
+                total_with_tax_cents=session._order_total_with_tax_cents,
             )
             if session:
                 session._sms_count += 1
