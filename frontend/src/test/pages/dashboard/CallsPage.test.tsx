@@ -115,6 +115,84 @@ describe("CallsPage", () => {
     expect(screen.getByText(/I want a pizza/i)).toBeInTheDocument();
   });
 
+  it("shows a Subtotal/Tax/Total breakdown when the call has POS tax data", async () => {
+    server.use(
+      http.get("*/api/restaurants/:id/calls", () =>
+        HttpResponse.json(SAMPLE_LIST)
+      ),
+      http.get("*/api/calls/call_1", () =>
+        HttpResponse.json({
+          id: "call_1",
+          caller_name: "Alice Detailed",
+          caller_number: "+15555550100",
+          status: "COMPLETED",
+          duration_seconds: 90,
+          quality_score: 92,
+          order_tax: 190,
+          order_total_with_tax: 2487,
+          order_json: {
+            items: [
+              { name: "Apollo Fish", quantity: 1, subtotal: 2297, modifiers: [] },
+            ],
+            total: 2297,
+            order_type: "pickup",
+          },
+          transcript: [],
+        })
+      )
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<Shell />);
+
+    const row = await screen.findByTestId("call-row-call_1");
+    await user.click(row);
+
+    expect(await screen.findByText("Subtotal")).toBeInTheDocument();
+    expect(screen.getByText("Tax")).toBeInTheDocument();
+    // "$22.97" appears twice — once as the item line, once as the Subtotal line.
+    expect(screen.getAllByText("$22.97")).toHaveLength(2);
+    expect(screen.getByText("$1.90")).toBeInTheDocument();
+    expect(screen.getByText("$24.87")).toBeInTheDocument();
+  });
+
+  it("falls back to a single Total line when tax is unknown", async () => {
+    server.use(
+      http.get("*/api/restaurants/:id/calls", () =>
+        HttpResponse.json(SAMPLE_LIST)
+      ),
+      http.get("*/api/calls/call_1", () =>
+        HttpResponse.json({
+          id: "call_1",
+          caller_name: "Alice Detailed",
+          caller_number: "+15555550100",
+          status: "COMPLETED",
+          duration_seconds: 90,
+          quality_score: 92,
+          order_json: {
+            items: [
+              { name: "Samosa", quantity: 2, subtotal: 1000, modifiers: [] },
+            ],
+            total: 1000,
+            order_type: "pickup",
+          },
+          transcript: [],
+        })
+      )
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<Shell />);
+
+    const row = await screen.findByTestId("call-row-call_1");
+    await user.click(row);
+
+    // "$10.00" appears twice — once as the item line, once as the single Total line.
+    expect(await screen.findAllByText("$10.00")).toHaveLength(2);
+    expect(screen.queryByText("Subtotal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tax")).not.toBeInTheDocument();
+  });
+
   it("filters by status through the dropdown", async () => {
     let observedStatus: string | null = null;
     server.use(

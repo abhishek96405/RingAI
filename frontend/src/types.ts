@@ -46,6 +46,8 @@ export interface Call {
   duration_seconds?: number;
   quality_score?: number;
   order_total?: number;
+  order_tax?: number;
+  order_total_with_tax?: number;
   contained_by_ai?: boolean;
   escalated_to_human?: boolean;
   payment_status?: string;

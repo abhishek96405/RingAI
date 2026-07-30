@@ -377,7 +377,15 @@ const CallsPage = () => {
                           </div>
                         ))}
                         <Separator />
-                        <div className="flex justify-between text-sm font-semibold"><span>Total</span><span>${(selectedCall.order_json.total / 100).toFixed(2)}</span></div>
+                        {selectedCall.order_tax != null && selectedCall.order_total_with_tax != null ? (
+                          <>
+                            <div className="flex justify-between text-sm"><span className="text-ink-soft">Subtotal</span><span>${(selectedCall.order_json.total / 100).toFixed(2)}</span></div>
+                            <div className="flex justify-between text-sm"><span className="text-ink-soft">Tax</span><span>${(selectedCall.order_tax / 100).toFixed(2)}</span></div>
+                            <div className="flex justify-between text-sm font-semibold"><span>Total</span><span>${(selectedCall.order_total_with_tax / 100).toFixed(2)}</span></div>
+                          </>
+                        ) : (
+                          <div className="flex justify-between text-sm font-semibold"><span>Total</span><span>${(selectedCall.order_json.total / 100).toFixed(2)}</span></div>
+                        )}
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <span className="chip b-muted">{orderTypeLabel(selectedCall.order_json.order_type)}</span>
                           {selectedCall.order_json.state === "DISPATCH_FAILED" && (

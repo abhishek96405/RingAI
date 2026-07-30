@@ -490,12 +490,31 @@ const OrdersPage = () => {
                     )}
                   </div>
 
-                  <div className="border-t border-line pt-3 flex items-center justify-between">
-                    <span className="text-sm font-semibold">Total</span>
-                    <span className="text-lg font-display font-bold text-[#2f7d5e]">
-                      ${((selectedOrder.order_total || 0) / 100).toFixed(2)}
-                    </span>
-                  </div>
+                  {selectedOrder.order_tax != null && selectedOrder.order_total_with_tax != null ? (
+                    <div className="border-t border-line pt-3 space-y-1.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-ink-soft">Subtotal</span>
+                        <span>${((selectedOrder.order_total || 0) / 100).toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-ink-soft">Tax</span>
+                        <span>${(selectedOrder.order_tax / 100).toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold">Total</span>
+                        <span className="text-lg font-display font-bold text-[#2f7d5e]">
+                          ${(selectedOrder.order_total_with_tax / 100).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border-t border-line pt-3 flex items-center justify-between">
+                      <span className="text-sm font-semibold">Total</span>
+                      <span className="text-lg font-display font-bold text-[#2f7d5e]">
+                        ${((selectedOrder.order_total || 0) / 100).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Special instructions */}
